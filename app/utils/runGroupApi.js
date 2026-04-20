@@ -23,6 +23,23 @@ const buildRunGroupPayload = (runGroupData) => ({
     runGroupData?.value,
 });
 
+const buildApiError = (error, fallbackMessage) => ({
+  status: error.response?.status,
+  message:
+    error.response?.data?.detail ||
+    error.response?.data?.message ||
+    error.response?.data?.error ||
+    error.message ||
+    fallbackMessage,
+  error:
+    error.response?.data?.detail ||
+    error.response?.data?.message ||
+    error.response?.data?.error ||
+    error.message ||
+    fallbackMessage,
+  data: error.response?.data,
+});
+
 export const setRunGroup = async (runGroupData) => {
   try {
     const response = await axiosInstance.post(
@@ -41,7 +58,7 @@ export const setRunGroup = async (runGroupData) => {
       status: error.response?.status,
       responseData: error.response?.data
     });
-    throw error.response?.data || error.message;
+    throw buildApiError(error, "Failed to save run group");
   }
 }
 
@@ -60,7 +77,7 @@ export const getRunGroup = async (eventId) => {
       status: error.response?.status,
       data: error.response?.data
     });
-    throw error.response?.data || error.message;
+    throw buildApiError(error, "Failed to load run group");
   }
 }
 
@@ -79,7 +96,7 @@ export const getRunGroupByEvent = async (eventId) => {
       status: error.response?.status,
       data: error.response?.data
     });
-    throw error.response?.data || error.message;
+    throw buildApiError(error, "Failed to load run group");
   }
 }
 
@@ -112,7 +129,7 @@ export const updateRunGroup = async (runGroupData) => {
       status: error.response?.status,
       data: error.response?.data
     });
-    throw error.response?.data || error.message;
+    throw buildApiError(error, "Failed to update run group");
   }
 }
 

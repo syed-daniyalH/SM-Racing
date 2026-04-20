@@ -26,6 +26,8 @@ export const normalizeUser = (user) => {
     ...user,
     id,
     _id: id,
+    role: user.role || user.userRole || "MECHANIC",
+    isActive: user.is_active ?? user.isActive ?? true,
     activeEventId: user.active_event_id || user.activeEventId || null,
     createdAt: user.created_at || user.createdAt || null,
     updatedAt: user.updated_at || user.updatedAt || null,
@@ -45,6 +47,7 @@ export const normalizeEvent = (event) => {
     endDate: event.end_date || event.endDate || null,
     createdById: event.created_by_id || event.createdById || null,
     isActive: event.is_active ?? event.isActive ?? true,
+    notes: event.notes || event.description || event.event_notes || null,
     createdAt: event.created_at || event.createdAt || null,
     updatedAt: event.updated_at || event.updatedAt || null,
   };
@@ -66,6 +69,122 @@ export const normalizeRunGroup = (runGroup) => {
     locked: runGroup.locked ?? false,
     createdAt: runGroup.created_at || runGroup.createdAt || null,
     updatedAt: runGroup.updated_at || runGroup.updatedAt || null,
+  };
+};
+
+const normalizeStringList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+export const normalizeDriver = (driver) => {
+  if (!driver) return null;
+
+  const id = driver.id || driver._id || driver.driver_id || driver.driverId || null;
+  const firstName = driver.first_name || driver.firstName || "";
+  const lastName = driver.last_name || driver.lastName || "";
+  const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+  const displayName =
+    driver.display_name ||
+    driver.displayName ||
+    driver.team_name ||
+    driver.teamName ||
+    "";
+
+  return {
+    ...driver,
+    id,
+    _id: id,
+    firstName,
+    lastName,
+    fullName: fullName || driver.driver_name || driver.driverName || displayName || "",
+    displayName,
+    teamName: driver.team_name || driver.teamName || displayName || "",
+    licenseNumber: driver.license_number || driver.licenseNumber || "",
+    aliases: normalizeStringList(driver.aliases || driver.alias_list || driver.aliasList),
+    notes: driver.notes || driver.description || "",
+    isActive: driver.is_active ?? driver.isActive ?? true,
+    createdById: driver.created_by_id || driver.createdById || null,
+    createdAt: driver.created_at || driver.createdAt || null,
+    updatedAt: driver.updated_at || driver.updatedAt || null,
+  };
+};
+
+export const normalizeVehicle = (vehicle) => {
+  if (!vehicle) return null;
+
+  const id = vehicle.id || vehicle._id || vehicle.vehicle_id || vehicle.vehicleId || null;
+
+  return {
+    ...vehicle,
+    id,
+    _id: id,
+    driverId: vehicle.driver_id || vehicle.driverId || null,
+    make: vehicle.make || "",
+    model: vehicle.model || "",
+    year: vehicle.year ?? null,
+    vin: vehicle.vin || vehicle.vehicle_identification_number || "",
+    registrationNumber:
+      vehicle.registration_number ||
+      vehicle.registrationNumber ||
+      vehicle.car_number ||
+      vehicle.carNumber ||
+      "",
+    vehicleClass:
+      vehicle.vehicle_class || vehicle.class || vehicle.vehicleClass || "",
+    wheelbaseMm: vehicle.wheelbase_mm ?? vehicle.wheelbaseMm ?? null,
+    notes: vehicle.notes || vehicle.description || "",
+    isActive: vehicle.is_active ?? vehicle.isActive ?? true,
+    createdAt: vehicle.created_at || vehicle.createdAt || null,
+    updatedAt: vehicle.updated_at || vehicle.updatedAt || null,
+  };
+};
+
+export const normalizeTrack = (track) => {
+  if (!track) return null;
+
+  const id = track.id || track._id || track.track_id || track.trackId || null;
+  const trackName = track.track_name || track.trackName || "";
+  const displayName =
+    track.display_name ||
+    track.displayName ||
+    track.name ||
+    trackName;
+  const shortCode = track.short_code || track.shortCode || track.code || "";
+  const country = track.country || track.country_name || track.countryName || "";
+  const isActive =
+    track.is_active ??
+    track.isActive ??
+    track.active ??
+    (typeof track.status === "string" ? track.status.toLowerCase() !== "archived" : true);
+
+  return {
+    ...track,
+    id,
+    _id: id,
+    trackName,
+    displayName: displayName || trackName,
+    shortCode: String(shortCode || "").toUpperCase(),
+    country,
+    latitude: track.latitude ?? track.lat ?? null,
+    longitude: track.longitude ?? track.lng ?? track.lon ?? null,
+    notes: track.notes || track.description || "",
+    status: String(track.status || "").toLowerCase() || (isActive ? "active" : "archived"),
+    isActive,
+    createdAt: track.created_at || track.createdAt || null,
+    updatedAt: track.updated_at || track.updatedAt || null,
+    archivedAt: track.archived_at || track.archivedAt || null,
   };
 };
 

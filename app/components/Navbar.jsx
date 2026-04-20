@@ -43,17 +43,35 @@ export default function Navbar() {
           <div className="navbar-menu">
             {isAdmin() ? (
               <>
-                <button 
-                  className={`nav-link ${pathname === '/admin/users' ? 'active' : ''}`}
-                  onClick={() => router.push('/admin/users')}
-                >
-                  Users
-                </button>
-                <button 
-                  className={`nav-link ${pathname === '/admin/events' ? 'active' : ''}`}
-                  onClick={() => router.push('/admin/events')}
-                >
-                  Events
+              <button 
+                className={`nav-link ${pathname === '/admin/users' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/users')}
+              >
+                Users
+              </button>
+              <button 
+                className={`nav-link ${pathname === '/admin/drivers' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/drivers')}
+              >
+                Drivers
+              </button>
+              <button 
+                className={`nav-link ${pathname === '/admin/vehicles' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/vehicles')}
+              >
+                Vehicles
+              </button>
+              <button 
+                className={`nav-link ${pathname === '/admin/tracks' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/tracks')}
+              >
+                Tracks
+              </button>
+              <button 
+                className={`nav-link ${pathname === '/admin/events' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/events')}
+              >
+                Events
                 </button>
               </>
             ) : (

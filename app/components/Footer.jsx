@@ -36,6 +36,9 @@ export default function Footer() {
               {isAdmin() ? (
                 <>
                   <li><button onClick={() => router.push('/admin/users')}>User Management</button></li>
+                  <li><button onClick={() => router.push('/admin/drivers')}>Driver Management</button></li>
+                  <li><button onClick={() => router.push('/admin/vehicles')}>Vehicle Management</button></li>
+                  <li><button onClick={() => router.push('/admin/tracks')}>Track Management</button></li>
                   <li><button onClick={() => router.push('/admin/events')}>Event Management</button></li>
                 </>
               ) : (
