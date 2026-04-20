@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext";
 import ProtectedRoute from "../../../components/ProtectedRoute";
+import ScreenBackButton from "../../../components/Common/ScreenBackButton";
+import VoiceInputControl from "../../../components/Common/VoiceInputControl";
 import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { createSubmission } from "../../../utils/submissionApi";
@@ -44,6 +46,7 @@ export default function NotesSubmission() {
   const [detailConfidence, setDetailConfidence] = useState(0.85);
   const [quickImage, setQuickImage] = useState(null);
   const [detailImage, setDetailImage] = useState(null);
+  const quickRawTextRef = useRef(null);
 
   const [quickForm, setQuickForm] = useState({
     date: "",
@@ -320,13 +323,11 @@ export default function NotesSubmission() {
 
     const isQuick = activeTab === "quick";
     const formState = isQuick ? quickForm : detailForm;
-    // const rawTextValue = isQuick ? quickRawText : detailRawText
-    const rawTextValue = isQuick ? quickRawText : undefined;
-    const imageValue = isQuick ? quickImage : undefined;
+    const rawTextValue = isQuick ? quickRawText : detailRawText;
+    const imageValue = isQuick ? quickImage : detailImage;
     const actionValue = isQuick ? quickAction : detailAction;
     const confidenceValue = isQuick ? quickConfidence : detailConfidence;
     const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
-    // const imageValue = isQuick ? quickImage : detailImage
 
     try {
       const submissionId = generateUUID();
@@ -347,17 +348,13 @@ export default function NotesSubmission() {
         action: actionValue,
         confidence: Number(confidenceValue),
         data,
-        ...(isQuick && {
-          raw_text: quickRawText?.trim() || undefined,
-          image: quickImage || undefined,
-        }),
-        // raw_text: rawTextValue.trim() || undefined,
-        // image: imageValue || undefined,
+        raw_text: rawTextValue?.trim() || undefined,
+        image_url: imageValue || undefined,
       };
 
       const response = await createSubmission(payload);
 
-      if (response.success || response.submission || response.message) {
+      if (response.success) {
         setSubmissionStatus("sent");
         setQuickRawText("");
         setDetailRawText("");
@@ -464,7 +461,9 @@ export default function NotesSubmission() {
       } else {
         setSubmissionStatus("failed");
         setError(
-          response.message || "Failed to submit notes. Please try again.",
+          response.message ||
+            response.submission?.errorMessage ||
+            "Failed to submit notes. Please try again.",
         );
       }
     } catch (error) {
@@ -517,12 +516,7 @@ export default function NotesSubmission() {
       <div className="notes-submission-page">
         <div className="page-header">
           <div className="header-content">
-            <button
-              onClick={() => router.push(`/event/${eventId}`)}
-              className="back-button"
-            >
-              ← Back
-            </button>
+            <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
             <h1 className="page-title">Submit Notes</h1>
           </div>
         </div>
@@ -1648,13 +1642,21 @@ export default function NotesSubmission() {
             {/* RawTextModaL */}
             {isQuickTab && (
               <div className="form-group">
-                <label className="form-label">Race Notes (Raw Text)</label>
+                <div className="raw-notes-header">
+                  <label className="form-label">Race Notes (Raw Text)</label>
+                  <VoiceInputControl
+                    textareaRef={quickRawTextRef}
+                    onValueChange={setRawTextValue}
+                    disabled={isSubmitting}
+                  />
+                </div>
                 <textarea
                   className="textarea"
                   placeholder='e.g. "s1 30min nico gt4 Y-S3 pf 27 wb 2450"'
                   value={rawTextValue}
                   onChange={(e) => setRawTextValue(e.target.value)}
                   rows={6}
+                  ref={quickRawTextRef}
                 />
 
                 {/* //image file uploader */}
@@ -1670,7 +1672,8 @@ export default function NotesSubmission() {
                 </div>
                 <p className="form-hint">
                   Unstructured notes from the mechanic (this becomes{" "}
-                  <code>raw_text</code>)
+                  <code>raw_text</code>). Voice input appends into the same
+                  field so it can still be reviewed and edited before submit.
                 </p>
               </div>
             )}

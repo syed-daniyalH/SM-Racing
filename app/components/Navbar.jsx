@@ -1,15 +1,53 @@
-'use client'
+"use client"
 
-import { useRouter, usePathname } from 'next/navigation'
-import { useAuth } from '../context/AuthContext'
-import './Navbar.css'
+import { useEffect, useState } from "react"
+import { useRouter, usePathname } from "next/navigation"
+import { useAuth } from "../context/AuthContext"
+import { getActiveEvent } from "../utils/eventApi"
+import "./Navbar.css"
+
+const getEventId = (event) =>
+  event?.id || event?._id || event?.eventId || event?.event_id || null
 
 export default function Navbar() {
   const router = useRouter()
   const pathname = usePathname()
   const { user, isAdmin, logout } = useAuth()
+  const [activeEventId, setActiveEventId] = useState(null)
 
-  const isAuthPage = pathname === '/login' || pathname === '/admin/login' || pathname === '/signup'
+  const isAuthPage =
+    pathname === "/login" || pathname === "/admin/login" || pathname === "/signup"
+
+  const currentEventIdMatch = pathname.match(/^\/event\/([^/]+)/)
+  const currentEventId = currentEventIdMatch?.[1] || null
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadActiveEvent = async () => {
+      if (!user || isAdmin()) {
+        setActiveEventId(null)
+        return
+      }
+
+      try {
+        const activeEvent = await getActiveEvent()
+        if (!cancelled) {
+          setActiveEventId(getEventId(activeEvent))
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setActiveEventId(null)
+        }
+      }
+    }
+
+    loadActiveEvent()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user, isAdmin, pathname])
 
   if (isAuthPage || !user) {
     return null
@@ -18,6 +56,17 @@ export default function Navbar() {
   const handleLogout = () => {
     logout()
     router.push('/login')
+  }
+
+  const handleMechanicSubmissions = () => {
+    const targetEventId = currentEventId || activeEventId
+
+    if (targetEventId) {
+      router.push(`/event/${targetEventId}/submissions`)
+      return
+    }
+
+    router.push('/events')
   }
 
   const handleDashboard = () => {
@@ -73,6 +122,12 @@ export default function Navbar() {
               >
                 Events
                 </button>
+              <button 
+                className={`nav-link ${pathname === '/admin/submissions' ? 'active' : ''}`}
+                onClick={() => router.push('/admin/submissions')}
+              >
+                Submissions
+              </button>
               </>
             ) : (
               <>
@@ -81,6 +136,13 @@ export default function Navbar() {
                   onClick={() => router.push('/events')}
                 >
                   Events
+                </button>
+                <button
+                  className={`nav-link ${pathname.startsWith('/event/') && pathname.endsWith('/submissions') ? 'active' : ''}`}
+                  onClick={handleMechanicSubmissions}
+                  title={activeEventId ? 'Open submissions for the active event' : 'Select an event first to view submissions'}
+                >
+                  Submissions
                 </button>
               </>
             )}

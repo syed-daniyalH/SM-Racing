@@ -6,6 +6,7 @@ import TextField from "@mui/material/TextField";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
+import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
@@ -741,6 +742,7 @@ export default function VehiclesManagementPage() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
+              <ScreenBackButton fallbackHref="/admin/drivers" />
               <h1 className="fleet-page-title">Vehicle Management</h1>
               <p className="fleet-page-subtitle">
                 Manage vehicles, assignments, and specifications in a premium motorsport admin workspace.

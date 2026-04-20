@@ -2,6 +2,7 @@
 
 import CloseIcon from "@mui/icons-material/Close";
 import EventNoteIcon from "@mui/icons-material/EventNote";
+import { getRunGroupPreview } from "./eventManagementHelpers";
 
 export default function EventFormDrawer({
   open,
@@ -20,7 +21,8 @@ export default function EventFormDrawer({
   const subtitle =
     mode === "edit"
       ? "Update the event details, lifecycle state, or internal notes."
-      : "Set up a new race event with the correct track and schedule.";
+      : "Set up a new race event with the correct track, schedule, and required run group.";
+  const runGroupPreview = getRunGroupPreview(values.runGroup || "");
 
   const updateField = (field) => (event) => {
     onChange(field, event.target.value);
@@ -89,6 +91,52 @@ export default function EventFormDrawer({
                 autoComplete="off"
               />
             </div>
+
+            {mode === "create" ? (
+              <div className="form-group">
+                <label className="form-label" htmlFor="event-run-group">
+                  Run Group <span className="required-marker">*</span>
+                </label>
+                <input
+                  id="event-run-group"
+                  className="input"
+                  type="text"
+                  placeholder="RED"
+                  value={values.runGroup}
+                  onChange={updateField("runGroup")}
+                  autoComplete="off"
+                  required
+                />
+                <div
+                  className={`run-group-preview ${
+                    runGroupPreview.isValid ? "valid" : "invalid"
+                  }`}
+                >
+                  <div className="run-group-preview-label">
+                    Normalized preview
+                  </div>
+                  <div className="run-group-preview-value">
+                    {runGroupPreview.isValid
+                      ? runGroupPreview.resolved
+                      : "Not configured yet"}
+                  </div>
+                  <p className="form-hint">{runGroupPreview.hint}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="form-label">Run Group</label>
+                <div className="readonly-field">
+                  {values.runGroup
+                    ? `Configured as ${values.runGroup}`
+                    : "Not configured yet."}
+                </div>
+                <p className="form-hint">
+                  Run groups are managed in the dedicated Setup Run Group
+                  workspace.
+                </p>
+              </div>
+            )}
 
             <div className="form-row">
               <div className="form-group">

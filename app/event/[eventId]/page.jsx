@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '../../context/AuthContext'
 import ProtectedRoute from '../../components/ProtectedRoute'
+import ScreenBackButton from '../../components/Common/ScreenBackButton'
 import { getEventById, selectActiveEvent } from '../../utils/eventApi'
 import { getRunGroup } from '../../utils/runGroupApi'
 import './EventDetail.css'
@@ -146,9 +147,7 @@ export default function EventDetail() {
       <div className="event-detail-page">
         <div className="page-header">
           <div className="header-content">
-            <button onClick={() => router.push('/events')} className="back-button">
-              ← Back
-            </button>
+            <ScreenBackButton fallbackHref="/events" label="Back" />
           </div>
         </div>
 

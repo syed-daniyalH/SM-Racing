@@ -7,6 +7,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import EmptyState from "../../components/Common/EmptyState";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
+import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import {
   archiveEvent,
   createEvent,
@@ -24,6 +25,7 @@ import {
   getEventId,
   getEventLifecycle,
   getEventSummaryCounts,
+  getRunGroupPreview,
   getRunGroupStatus,
   isNotFoundError,
   mergeStoredEventNotesList,
@@ -217,6 +219,7 @@ export default function EventsManagementPage() {
 
     const name = drawerValues.name.trim();
     const track = drawerValues.track.trim();
+    const runGroup = drawerValues.runGroup.trim();
     const startDate = drawerValues.startDate;
     const endDate = drawerValues.endDate;
 
@@ -224,6 +227,17 @@ export default function EventsManagementPage() {
       setDrawerError("Please complete the event name, track, and date range.");
       setSavingEvent(false);
       return;
+    }
+
+    if (drawerMode === "create") {
+      const runGroupPreview = getRunGroupPreview(runGroup);
+      if (!runGroupPreview.isValid) {
+        setDrawerError(
+          "Run group is required during event creation and must normalize to RED, BLUE, YELLOW, or GREEN.",
+        );
+        setSavingEvent(false);
+        return;
+      }
     }
 
     if (new Date(startDate) > new Date(endDate)) {
@@ -240,6 +254,10 @@ export default function EventsManagementPage() {
         endDate,
         status: drawerValues.status,
       };
+
+      if (drawerMode === "create") {
+        payload.runGroup = runGroup;
+      }
 
       if (drawerMode === "create") {
         const response = await createEvent(payload);
@@ -485,6 +503,7 @@ export default function EventsManagementPage() {
         <div className="admin-page-shell">
           <header className="admin-page-header">
             <div className="admin-page-header-copy">
+              <ScreenBackButton fallbackHref="/admin/tracks" />
               <div className="admin-page-eyebrow">Admin Operations</div>
               <h1 className="admin-page-title">Event Management</h1>
               <p className="admin-page-subtitle">

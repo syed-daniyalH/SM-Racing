@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
+import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
@@ -605,6 +606,7 @@ export default function DriversManagementPage() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
+              <ScreenBackButton fallbackHref="/admin/users" />
               <h1 className="fleet-page-title">Driver Management</h1>
               <p className="fleet-page-subtitle">
                 Manage drivers, assignments, and performance records in a clean operations

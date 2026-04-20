@@ -3,6 +3,7 @@ import { Box, Typography } from "@mui/material";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import ProtectedRoute from "../../../components/ProtectedRoute";
+import ScreenBackButton from "../../../components/Common/ScreenBackButton";
 import { getSubmissionsByEvent } from "../../../utils/submissionApi";
 import SubmissionsTable from "../../../components/Submissions/SubmissionTable";
 import SubmissionDrawer from "../../../components/Submissions/SubmissionDrawer";
@@ -42,9 +43,19 @@ export default function SubmissionsPage() {
           mb: 3,
           py: 2,
           px: 3,
-          textAlign: "center",
+          maxWidth: 1400,
+          mx: "auto",
         }}
       >
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "flex-start",
+            mb: 1.5,
+          }}
+        >
+          <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
+        </Box>
         <Typography
           variant="h4"
           fontWeight={800}

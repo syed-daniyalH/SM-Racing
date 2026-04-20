@@ -1,0 +1,1026 @@
+import { normalizeSubmission } from "../../../utils/apiTransforms";
+import { formatEntityId } from "../../fleet/_components/fleetManagementHelpers";
+
+const nowIso = () => new Date().toISOString();
+
+const normalizeText = (value) => String(value || "").trim();
+
+const normalizeLower = (value) => normalizeText(value).toLowerCase();
+
+const hasDetailedSections = (data = {}) =>
+  Boolean(
+    data.suspension ||
+      data.alignment ||
+      data.tire_temperatures ||
+      data.tire_inventory,
+  );
+
+const toNumber = (value) => {
+  if (value === "" || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatConfidence = (value) => {
+  const numeric = toNumber(value);
+  if (numeric === null) return null;
+  const percent = numeric <= 1 ? numeric * 100 : numeric;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+};
+
+const formatPercentLabel = (value) => {
+  const numeric = formatConfidence(value);
+  return numeric === null ? "-" : `${numeric}%`;
+};
+
+const formatDateTimeLabel = (value) => {
+  if (!value) return "-";
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+};
+
+const formatShortDateLabel = (value) => {
+  if (!value) return "-";
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+};
+
+const sourceTypeCatalog = {
+  quick: { label: "Quick Submission", tone: "accent" },
+  detail: { label: "Detailed Submission", tone: "info" },
+  ocr: { label: "OCR Submission", tone: "warning" },
+  photo: { label: "Photo Submission", tone: "success" },
+};
+
+const reviewStateCatalog = {
+  pending_review: { label: "Pending Review", tone: "warning" },
+  reviewed: { label: "Reviewed", tone: "neutral" },
+  approved: { label: "Validated", tone: "success" },
+  flagged: { label: "Validation Failed", tone: "danger" },
+  archived: { label: "Archived", tone: "neutral" },
+};
+
+const syncStateCatalog = {
+  pending: { label: "Pending Sync", tone: "warning" },
+  sent: { label: "Synced", tone: "success" },
+  failed: { label: "Sync Failed", tone: "danger" },
+};
+
+const validationStateCatalog = {
+  pending_review: { label: "Pending Review", tone: "warning" },
+  reviewed: { label: "Reviewed", tone: "neutral" },
+  validated: { label: "Validated", tone: "success" },
+  failed: { label: "Validation Failed", tone: "danger" },
+  archived: { label: "Archived", tone: "neutral" },
+};
+
+const validationSeverityCatalog = {
+  clean: { label: "Clean", tone: "success" },
+  warning: { label: "Review Recommended", tone: "warning" },
+  failed: { label: "Failed", tone: "danger" },
+};
+
+const parseSourceTypeKey = (submission, data, analysisResult) => {
+  const explicit = normalizeLower(
+    analysisResult.source_type ||
+      analysisResult.sourceType ||
+      analysisResult.source_channel ||
+      analysisResult.sourceChannel ||
+      submission.source_type ||
+      submission.sourceType,
+  );
+
+  if (explicit) {
+    if (explicit.includes("ocr")) return "ocr";
+    if (explicit.includes("photo")) return "photo";
+    if (explicit.includes("detail")) return "detail";
+    if (explicit.includes("quick")) return "quick";
+  }
+
+  if (
+    analysisResult.ocr_text ||
+    analysisResult.ocrText ||
+    analysisResult.ocr_result ||
+    analysisResult.ocrResult
+  ) {
+    return "ocr";
+  }
+
+  if (submission.image || submission.image_url) {
+    return hasDetailedSections(data) ? "photo" : "photo";
+  }
+
+  if (hasDetailedSections(data)) {
+    return "detail";
+  }
+
+  return "quick";
+};
+
+const parseReviewStateKey = (analysisResult, validationStateKey) => {
+  const explicit = normalizeLower(
+    analysisResult.review_state || analysisResult.reviewState || analysisResult.review,
+  );
+
+  if (explicit) {
+    if (explicit.includes("archiv")) return "archived";
+    if (explicit.includes("flag")) return "flagged";
+    if (explicit.includes("approv") || explicit.includes("valid")) return "approved";
+    if (explicit.includes("review")) return "reviewed";
+  }
+
+  if (validationStateKey === "failed") {
+    return "pending_review";
+  }
+
+  if (validationStateKey === "validated") {
+    return "reviewed";
+  }
+
+  return "pending_review";
+};
+
+const buildCorners = (pressures = {}) => {
+  const corners = ["fl", "fr", "rl", "rr"];
+  const selectedSet = pressures.cold || pressures.hot || {};
+
+  return corners.map((corner) => ({
+    corner,
+    value: selectedSet[corner],
+    present: selectedSet[corner] !== null && selectedSet[corner] !== undefined && selectedSet[corner] !== "",
+    numeric: toNumber(selectedSet[corner]),
+  }));
+};
+
+const getSubmissionTrack = (submission, data) =>
+  normalizeText(
+    data.track ||
+      submission.track ||
+      submission.event?.track ||
+      submission.event?.track_name ||
+      submission.event?.trackName ||
+      "",
+  );
+
+const getSubmissionDriverId = (submission, data) =>
+  submission.driver?.id ||
+  submission.driver?.driverId ||
+  submission.driver?.driver_id ||
+  data.driver_id ||
+  data.driverId ||
+  submission.driver_id ||
+  null;
+
+const getSubmissionVehicleId = (submission, data) =>
+  submission.vehicle?.id ||
+  submission.vehicle?.vehicleId ||
+  submission.vehicle?.vehicle_id ||
+  data.vehicle_id ||
+  data.vehicleId ||
+  submission.vehicle_id ||
+  null;
+
+const getSubmissionEventId = (submission) =>
+  submission.event?.id || submission.eventId || submission.event_id || null;
+
+const getSubmissionRawText = (submission) =>
+  normalizeText(
+    submission.raw_text ||
+      submission.rawText ||
+      submission.analysis_result?.raw_text ||
+      submission.analysisResult?.raw_text ||
+      "",
+  );
+
+const getSubmissionOcrText = (analysisResult) =>
+  normalizeText(
+    analysisResult.ocr_text ||
+      analysisResult.ocrText ||
+      analysisResult.ocr_result?.text ||
+      analysisResult.ocrResult?.text ||
+      analysisResult.extracted_text ||
+      analysisResult.extractedText ||
+      "",
+  );
+
+const getDuplicateCandidate = (submission, allSubmissions = []) => {
+  const currentId = String(submission.id || submission._id || submission.submissionId || "");
+  const currentEventId = String(getSubmissionEventId(submission) || "");
+  const currentDriverId = String(getSubmissionDriverId(submission, submission.data || submission.payload || {}) || "");
+  const currentVehicleId = String(getSubmissionVehicleId(submission, submission.data || submission.payload || {}) || "");
+  const currentRawText = normalizeLower(getSubmissionRawText(submission));
+  const currentDate = normalizeText(submission.data?.date || submission.payload?.date || "");
+  const currentTime = normalizeText(submission.data?.time || submission.payload?.time || "");
+
+  const match = allSubmissions.find((candidate) => {
+    const candidateId = String(candidate.id || candidate._id || candidate.submissionId || "");
+    if (!candidateId || candidateId === currentId) return false;
+
+    const candidateEventId = String(getSubmissionEventId(candidate) || "");
+    if (currentEventId && candidateEventId && candidateEventId !== currentEventId) {
+      return false;
+    }
+
+    const candidateDriverId = String(
+      getSubmissionDriverId(candidate, candidate.data || candidate.payload || {}) || "",
+    );
+    const candidateVehicleId = String(
+      getSubmissionVehicleId(candidate, candidate.data || candidate.payload || {}) || "",
+    );
+    const candidateRawText = normalizeLower(getSubmissionRawText(candidate));
+    const candidateDate = normalizeText(candidate.data?.date || candidate.payload?.date || "");
+    const candidateTime = normalizeText(candidate.data?.time || candidate.payload?.time || "");
+
+    const samePair =
+      currentDriverId &&
+      currentVehicleId &&
+      candidateDriverId === currentDriverId &&
+      candidateVehicleId === currentVehicleId &&
+      candidateDate === currentDate &&
+      candidateTime === currentTime;
+
+    const sameRaw = currentRawText && candidateRawText && candidateRawText === currentRawText;
+
+    return samePair || sameRaw;
+  });
+
+  if (!match) {
+    return {
+      isDuplicate: false,
+      message: "No duplicate detected.",
+      matchedSubmissionId: null,
+    };
+  }
+
+  return {
+    isDuplicate: true,
+    message: `Possible duplicate of ${formatEntityId("SUB", match.id || match._id || match.submissionId)}`,
+    matchedSubmissionId: match.id || match._id || match.submissionId || null,
+  };
+};
+
+export const buildSubmissionSearchText = (submission) =>
+  [
+    submission.submissionId,
+    submission.submission_ref,
+    submission.event?.name,
+    submission.event?.track,
+    submission.driver?.firstName,
+    submission.driver?.lastName,
+    submission.driver?.teamName,
+    submission.vehicle?.make,
+    submission.vehicle?.model,
+    submission.vehicle?.registrationNumber,
+    submission.raw_text,
+    submission.data?.track,
+    submission.data?.session_type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+export const getSubmissionId = (submission) =>
+  submission.id || submission._id || submission.submissionId || submission.submission_ref || null;
+
+export const getSubmissionEventLabel = (submission) =>
+  normalizeText(submission.event?.name || submission.data?.event_name || submission.eventId || "Unknown Event");
+
+export const getSubmissionDriverLabel = (submission) => {
+  const driver = submission.driver || {};
+  const fromName = [driver.firstName || driver.first_name, driver.lastName || driver.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return (
+    fromName ||
+    driver.fullName ||
+    driver.displayName ||
+    driver.teamName ||
+    normalizeText(submission.data?.driver_id || submission.driver_id || "Unknown Driver")
+  );
+};
+
+export const getSubmissionVehicleLabel = (submission) => {
+  const vehicle = submission.vehicle || {};
+  const carLabel = normalizeText(vehicle.registrationNumber || vehicle.registration_number || "");
+  const vehicleLabel = [vehicle.make, vehicle.model].filter(Boolean).join(" ").trim();
+
+  return (
+    carLabel ||
+    vehicleLabel ||
+    normalizeText(submission.data?.vehicle_id || submission.vehicle_id || "Unknown Vehicle")
+  );
+};
+
+export const getSubmissionTrackLabel = (submission) =>
+  normalizeText(
+    submission.data?.track ||
+      submission.event?.track ||
+      submission.event?.track_name ||
+      submission.event?.trackName ||
+      "Unknown Track",
+  );
+
+export const getSourceTypeMeta = (submission) => {
+  const normalized = normalizeSubmission(submission);
+  if (!normalized) {
+    return sourceTypeCatalog.quick;
+  }
+
+  const data = normalized.data || normalized.payload || {};
+  const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const key = parseSourceTypeKey(normalized, data, analysisResult);
+  return sourceTypeCatalog[key] || sourceTypeCatalog.quick;
+};
+
+export const getSyncStateMeta = (submission) => {
+  const key = normalizeLower(submission.status || "pending");
+  return syncStateCatalog[key] || syncStateCatalog.pending;
+};
+
+export const getReviewStateMeta = (submission) => {
+  const normalized = normalizeSubmission(submission);
+  if (!normalized) return reviewStateCatalog.pending_review;
+
+  const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const validationStateKey = getValidationStateKey(normalized);
+  const key = parseReviewStateKey(analysisResult, validationStateKey);
+  return reviewStateCatalog[key] || reviewStateCatalog.pending_review;
+};
+
+export const getValidationStateKey = (submission) => {
+  const normalized = normalizeSubmission(submission);
+  if (!normalized) return "pending_review";
+
+  const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const reviewKey = parseReviewStateKey(analysisResult, "pending_review");
+  if (reviewKey === "archived") return "archived";
+  if (reviewKey === "approved") return "validated";
+  if (reviewKey === "flagged") return "failed";
+
+  const data = normalized.data || normalized.payload || {};
+  const sourceTypeKey = parseSourceTypeKey(normalized, data, analysisResult);
+  const confidence = formatConfidence(analysisResult.confidence ?? analysisResult.confidence_score ?? normalized.confidence);
+  const hardIssues = [];
+  const warnings = [];
+
+  const requiredFields = [
+    ["date", data.date],
+    ["time", data.time],
+    ["track", data.track],
+    ["driver_id", data.driver_id],
+    ["vehicle_id", data.vehicle_id],
+    ["session_type", data.session_type],
+    ["session_number", data.session_number],
+    ["duration_min", data.duration_min],
+  ];
+
+  requiredFields.forEach(([field, value]) => {
+    if (value === null || value === undefined || value === "") {
+      hardIssues.push(field);
+    }
+  });
+
+  const pressures = data.pressures || {};
+  const corners = buildCorners(pressures);
+  const missingCorners = corners.filter((corner) => !corner.present).map((corner) => corner.corner.toUpperCase());
+  if (missingCorners.length) {
+    hardIssues.push(...missingCorners.map((corner) => `pressure:${corner}`));
+  }
+
+  const driver = normalized.driver || {};
+  const vehicle = normalized.vehicle || {};
+  const driverId = getSubmissionDriverId(normalized, data);
+  const vehicleId = getSubmissionVehicleId(normalized, data);
+  if (driverId && vehicleId && vehicle.driverId && String(vehicle.driverId) !== String(driverId)) {
+    hardIssues.push("vehicle-driver-mismatch");
+  }
+
+  const eventTrack = normalizeLower(normalized.event?.track || normalized.event?.track_name || "");
+  const submissionTrack = normalizeLower(getSubmissionTrack(normalized, data));
+  if (eventTrack && submissionTrack && eventTrack !== submissionTrack) {
+    warnings.push("track-normalization");
+  }
+
+  const runGroup = normalized.run_group || normalized.runGroup || {};
+  const runGroupValue = normalizeLower(runGroup.normalized || runGroup.rawText || normalized.runGroup || "");
+  const payloadRunGroup = normalizeLower(data.run_group || data.runGroup || analysisResult.run_group || analysisResult.runGroup || "");
+  if (runGroupValue && payloadRunGroup && runGroupValue !== payloadRunGroup) {
+    warnings.push("run-group-normalization");
+  }
+
+  const duplicate = getDuplicateCandidate(normalized, Array.isArray(analysisResult.allSubmissions) ? analysisResult.allSubmissions : []);
+  if (duplicate.isDuplicate) {
+    warnings.push("duplicate-detection");
+  }
+
+  if (confidence !== null && confidence < 80) {
+    warnings.push("low-confidence");
+  }
+
+  if (
+    sourceTypeKey === "ocr" ||
+    sourceTypeKey === "photo" ||
+    getSubmissionOcrText(analysisResult)
+  ) {
+    warnings.push("ocr-backed");
+  }
+
+  if (hardIssues.length) {
+    return "failed";
+  }
+
+  if (analysisResult.validation_state || analysisResult.validationState) {
+    const explicit = normalizeLower(analysisResult.validation_state || analysisResult.validationState);
+    if (explicit.includes("fail")) return "failed";
+    if (explicit.includes("valid")) return "validated";
+    if (explicit.includes("review")) return "reviewed";
+  }
+
+  if (warnings.length) {
+    return "pending_review";
+  }
+
+  return reviewKey === "reviewed" ? "reviewed" : "validated";
+};
+
+export const getValidationStateMeta = (submission) => {
+  const key = getValidationStateKey(submission);
+  return validationStateCatalog[key] || validationStateCatalog.pending_review;
+};
+
+export const getConfidenceValue = (submission) => {
+  const normalized = normalizeSubmission(submission);
+  if (!normalized) return null;
+
+  const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const confidence = analysisResult.confidence ?? analysisResult.confidence_score ?? normalized.confidence;
+  const numeric = formatConfidence(confidence);
+  return numeric === null ? null : numeric;
+};
+
+export const buildSubmissionSummaryCounts = (submissions = []) => {
+  const rows = submissions.map((submission) => buildSubmissionMonitorRecord(submission, submissions));
+
+  return {
+    total: rows.length,
+    pendingReview: rows.filter((submission) => submission.validationStateKey === "pending_review").length,
+    validationFailed: rows.filter((submission) => submission.validationStateKey === "failed").length,
+    synced: rows.filter((submission) => submission.syncStateKey === "sent").length,
+    media: rows.filter((submission) => submission.sourceTypeKey === "ocr" || submission.sourceTypeKey === "photo").length,
+  };
+};
+
+export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) => {
+  const normalized = normalizeSubmission(submission);
+  if (!normalized) return null;
+
+  const data = normalized.data || normalized.payload || {};
+  const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const sourceTypeKey = parseSourceTypeKey(normalized, data, analysisResult);
+  const sourceTypeMeta = sourceTypeCatalog[sourceTypeKey] || sourceTypeCatalog.quick;
+  const syncStateKey = normalizeLower(normalized.status || "pending");
+  const confidence = getConfidenceValue(normalized);
+
+  const hardIssues = [];
+  const warnings = [];
+
+  const requiredFields = [
+    ["date", data.date],
+    ["time", data.time],
+    ["track", data.track],
+    ["driver_id", data.driver_id],
+    ["vehicle_id", data.vehicle_id],
+    ["session_type", data.session_type],
+    ["session_number", data.session_number],
+    ["duration_min", data.duration_min],
+  ];
+  const missingFields = requiredFields.filter(([, value]) => value === null || value === undefined || value === "").map(([field]) => field);
+  if (missingFields.length) {
+    hardIssues.push(...missingFields.map((field) => `missing:${field}`));
+  }
+
+  const pressures = data.pressures || {};
+  const corners = buildCorners(pressures);
+  const missingCorners = corners.filter((corner) => !corner.present).map((corner) => corner.corner.toUpperCase());
+  if (missingCorners.length) {
+    hardIssues.push(...missingCorners.map((corner) => `pressure:${corner}`));
+  }
+
+  const driverId = getSubmissionDriverId(normalized, data);
+  const vehicleId = getSubmissionVehicleId(normalized, data);
+  const vehicleDriverId = normalized.vehicle?.driverId || normalized.vehicle?.driver_id || null;
+  const driverVehicleMismatch =
+    Boolean(driverId && vehicleId && vehicleDriverId && String(vehicleDriverId) !== String(driverId));
+  if (driverVehicleMismatch) {
+    hardIssues.push("vehicle-driver-mismatch");
+  }
+
+  const eventTrack = normalizeLower(normalized.event?.track || normalized.event?.track_name || "");
+  const submissionTrack = normalizeLower(getSubmissionTrack(normalized, data));
+  const trackNormalizationWarning =
+    Boolean(eventTrack && submissionTrack && eventTrack !== submissionTrack);
+  if (trackNormalizationWarning) {
+    warnings.push("track-normalization");
+  }
+
+  const runGroup = normalized.run_group || normalized.runGroup || {};
+  const runGroupValue = normalizeLower(runGroup.normalized || runGroup.rawText || normalized.runGroup || "");
+  const payloadRunGroup = normalizeLower(
+    data.run_group || data.runGroup || analysisResult.run_group || analysisResult.runGroup || "",
+  );
+  const runGroupNormalizationWarning =
+    Boolean(runGroupValue && payloadRunGroup && runGroupValue !== payloadRunGroup);
+  if (runGroupNormalizationWarning) {
+    warnings.push("run-group-normalization");
+  }
+
+  const duplicate = getDuplicateCandidate(normalized, allSubmissions);
+  if (duplicate.isDuplicate) {
+    warnings.push("duplicate-detection");
+  }
+
+  if (confidence !== null && confidence < 80) {
+    warnings.push("low-confidence");
+  }
+
+  const ocrText = getSubmissionOcrText(analysisResult);
+  if (sourceTypeKey === "ocr" || sourceTypeKey === "photo" || ocrText) {
+    warnings.push("ocr-backed");
+  }
+
+  const analysisValidationState = normalizeLower(
+    analysisResult.validation_state || analysisResult.validationState || "",
+  );
+  const reviewStateKey = parseReviewStateKey(analysisResult, analysisValidationState || "pending_review");
+  const explicitValidationState = normalizeLower(
+    analysisResult.validation_state || analysisResult.validationState || "",
+  );
+
+  let validationStateKey = "pending_review";
+  if (reviewStateKey === "archived") {
+    validationStateKey = "archived";
+  } else if (reviewStateKey === "flagged" || explicitValidationState.includes("fail") || hardIssues.length) {
+    validationStateKey = "failed";
+  } else if (
+    reviewStateKey === "approved" ||
+    explicitValidationState.includes("valid")
+  ) {
+    validationStateKey = "validated";
+  } else if (reviewStateKey === "reviewed") {
+    validationStateKey = "reviewed";
+  }
+
+  const validationStateMeta = validationStateCatalog[validationStateKey] || validationStateCatalog.pending_review;
+  const syncStateMeta = syncStateCatalog[syncStateKey] || syncStateCatalog.pending;
+
+  const validationMessages = [];
+  if (missingFields.length) {
+    validationMessages.push(`Missing required fields: ${missingFields.join(", ")}`);
+  }
+  if (missingCorners.length) {
+    validationMessages.push(`Incomplete pressure data for: ${missingCorners.join(", ")}`);
+  }
+  if (driverVehicleMismatch) {
+    validationMessages.push("Selected vehicle does not belong to the selected driver.");
+  }
+  if (trackNormalizationWarning) {
+    validationMessages.push("Track value differs from the event track and may need normalization.");
+  }
+  if (runGroupNormalizationWarning) {
+    validationMessages.push("Run group value differs from the event run group.");
+  }
+  if (duplicate.isDuplicate) {
+    validationMessages.push(duplicate.message);
+  }
+  if (confidence !== null && confidence < 80) {
+    validationMessages.push(`Confidence is ${confidence}%, which is below the preferred review threshold.`);
+  }
+
+  const structuredIssues = [...hardIssues, ...warnings];
+  const validationSeverityKey = hardIssues.length ? "failed" : warnings.length ? "warning" : "clean";
+  const validationSeverityMeta = validationSeverityCatalog[validationSeverityKey] || validationSeverityCatalog.clean;
+  const recommendation =
+    validationStateKey === "failed"
+      ? "Correct the failed fields, then retry validation before approval."
+      : validationMessages.length
+        ? "Review the parsed data against the raw input and approve once it matches."
+        : "Submission looks clean and can be approved or marked reviewed.";
+
+  const auditSnippet =
+    normalizeText(analysisResult.audit_snippet || analysisResult.auditSnippet) ||
+    `Synced ${syncStateMeta.label.toLowerCase()} with ${validationStateMeta.label.toLowerCase()} state.`;
+
+  return {
+    ...normalized,
+    data,
+    analysisResult,
+    analysis_result: analysisResult,
+    sourceTypeKey,
+    sourceTypeLabel: sourceTypeMeta.label,
+    sourceTypeTone: sourceTypeMeta.tone,
+    syncStateKey,
+    syncStateLabel: syncStateMeta.label,
+    syncStateTone: syncStateMeta.tone,
+    reviewStateKey,
+    reviewStateLabel: reviewStateCatalog[reviewStateKey]?.label || reviewStateCatalog.pending_review.label,
+    validationStateKey,
+    validationStateLabel: validationStateMeta.label,
+    validationStateTone: validationStateMeta.tone,
+    validationSeverityKey,
+    validationSeverityLabel: validationSeverityMeta.label,
+    validationSeverityTone: validationSeverityMeta.tone,
+    confidence,
+    confidenceLabel: formatPercentLabel(confidence),
+    rawText: getSubmissionRawText(normalized),
+    imageUrl: normalized.image || normalized.image_url || null,
+    ocrText,
+    parserVersion:
+      analysisResult.parser_version ||
+      analysisResult.parserVersion ||
+      analysisResult.version ||
+      "admin-monitor-1.0",
+    processedAt: analysisResult.processed_at || analysisResult.processedAt || normalized.updatedAt || normalized.createdAt,
+    sourceChannel:
+      analysisResult.source_channel ||
+      analysisResult.sourceChannel ||
+      sourceTypeMeta.label,
+    validationMessages,
+    failedFields: missingFields,
+    missingFields,
+    warnings,
+    duplicateDetection: duplicate,
+    driverVehicleMismatch,
+    trackNormalizationWarning,
+    runGroupNormalizationWarning,
+    isArchived: reviewStateKey === "archived",
+    auditSnippet,
+    recommendation,
+    structuredIssues,
+    hasMedia: Boolean(normalized.image || normalized.image_url || ocrText),
+    submittedAt: normalized.createdAt || normalized.updatedAt || null,
+    submittedAtLabel: formatDateTimeLabel(normalized.createdAt || normalized.updatedAt || null),
+    dateLabel: formatShortDateLabel(normalized.createdAt || normalized.updatedAt || null),
+  };
+};
+
+export const buildReviewAnalysisPatch = ({
+  submission,
+  allSubmissions = [],
+  reviewState = "REVIEWED",
+  reviewerId = null,
+  reviewerName = null,
+  note = "",
+}) => {
+  const snapshot = buildSubmissionMonitorRecord(submission, allSubmissions);
+  const analysisResult = {
+    ...(submission?.analysisResult || submission?.analysis_result || {}),
+    source_type: snapshot.sourceTypeKey,
+    source_channel: snapshot.sourceChannel,
+    parser_version: snapshot.parserVersion,
+    processed_at: nowIso(),
+    validation_state: snapshot.validationStateKey,
+    validation_state_label: snapshot.validationStateLabel,
+    validation_messages: snapshot.validationMessages,
+    failed_fields: snapshot.failedFields,
+    missing_fields: snapshot.missingFields,
+    warnings: snapshot.warnings,
+    duplicate_detection: snapshot.duplicateDetection,
+    confidence: snapshot.confidence ?? submission?.confidence ?? null,
+    audit_snippet:
+      note ||
+      snapshot.auditSnippet ||
+      `Reviewed via Submission Monitor as ${reviewState.toLowerCase()}.`,
+    review_state: reviewState,
+    reviewed_at: nowIso(),
+  };
+
+  if (reviewerId) {
+    analysisResult.reviewed_by_id = reviewerId;
+  }
+  if (reviewerName) {
+    analysisResult.reviewed_by_name = reviewerName;
+  }
+  if (reviewState === "APPROVED") {
+    analysisResult.validation_state = "VALIDATED";
+    analysisResult.validation_state_label = "Validated";
+  }
+  if (reviewState === "FLAGGED") {
+    analysisResult.validation_state = "FAILED";
+    analysisResult.validation_state_label = "Validation Failed";
+  }
+  if (reviewState === "ARCHIVED") {
+    analysisResult.archived_at = nowIso();
+  }
+
+  return {
+    analysis_result: analysisResult,
+  };
+};
+
+export const buildSubmissionExportRows = (submissions = []) =>
+  submissions.map((submission) => {
+    const record = buildSubmissionMonitorRecord(submission, submissions) || submission;
+
+    return {
+      submissionId: formatEntityId("SUB", getSubmissionId(record)),
+      dateTime: record.submittedAtLabel,
+      event: getSubmissionEventLabel(record),
+      driver: getSubmissionDriverLabel(record),
+      vehicle: getSubmissionVehicleLabel(record),
+      track: getSubmissionTrackLabel(record),
+      sourceType: record.sourceTypeLabel,
+      validationStatus: record.validationStateLabel,
+      syncStatus: record.syncStateLabel,
+      confidence: record.confidenceLabel,
+      status: record.syncStateKey?.toUpperCase() || "PENDING",
+      rawText: record.rawText || "",
+      reviewedAt: formatDateTimeLabel(record.analysisResult?.reviewed_at || record.processedAt || record.updatedAt),
+    };
+  });
+
+export const mockSubmissions = [
+  {
+    id: "sub_mock_001",
+    submission_ref: "SUB-MOCK-001",
+    event_id: "evt_mock_001",
+    event: {
+      id: "evt_mock_001",
+      name: "Spring Championship",
+      track: "Sebring International Raceway",
+      start_date: "2026-05-12T00:00:00Z",
+      end_date: "2026-05-14T00:00:00Z",
+      is_active: true,
+    },
+    run_group: {
+      id: "rg_mock_001",
+      event_id: "evt_mock_001",
+      raw_text: "Red",
+      normalized: "RED",
+      locked: false,
+    },
+    driver: {
+      id: "drv_mock_001",
+      first_name: "Jules",
+      last_name: "Bianchi",
+      team_name: "Jules Racing",
+    },
+    vehicle: {
+      id: "veh_mock_001",
+      driver_id: "drv_mock_001",
+      make: "Porsche",
+      model: "911 GT3 R",
+      registration_number: "JUL-911",
+    },
+    created_by_id: "usr_mock_001",
+    raw_text: "s1 30min jules gt3 y-s3 pf 27 wb 2450",
+    image_url: null,
+    payload: {
+      date: "2026-05-12",
+      time: "10:12",
+      track: "Sebring International Raceway",
+      driver_id: "drv_mock_001",
+      vehicle_id: "veh_mock_001",
+      session_type: "Practice",
+      session_number: 1,
+      duration_min: 30,
+      tire_set: "Y-S3",
+      wheelbase_mm: 2450,
+      pressures: {
+        unit: "psi",
+        cold: { fl: 27, fr: 27, rl: 29, rr: 29 },
+      },
+    },
+    analysis_result: {
+      source_type: "quick",
+      confidence: 0.96,
+      validation_state: "VALIDATED",
+      review_state: "APPROVED",
+      parser_version: "monitor-demo-1.0",
+      audit_snippet: "Quick submission parsed and synced successfully.",
+    },
+    status: "SENT",
+    created_at: "2026-05-12T10:13:00Z",
+    updated_at: "2026-05-12T10:14:00Z",
+  },
+  {
+    id: "sub_mock_002",
+    submission_ref: "SUB-MOCK-002",
+    event_id: "evt_mock_002",
+    event: {
+      id: "evt_mock_002",
+      name: "Night Sprint Round 3",
+      track: "Bathurst GP",
+      start_date: "2026-06-02T00:00:00Z",
+      end_date: "2026-06-03T00:00:00Z",
+      is_active: true,
+    },
+    run_group: {
+      id: "rg_mock_002",
+      event_id: "evt_mock_002",
+      raw_text: "Blue",
+      normalized: "BLUE",
+      locked: false,
+    },
+    driver: {
+      id: "drv_mock_002",
+      first_name: "Ava",
+      last_name: "Morris",
+      team_name: "Apex Garage",
+    },
+    vehicle: {
+      id: "veh_mock_002",
+      driver_id: "drv_mock_002",
+      make: "Toyota",
+      model: "GR Supra",
+      registration_number: "AVA-992",
+    },
+    created_by_id: "usr_mock_001",
+    raw_text: "photo-backed setup sheet sent from pit wall",
+    image_url: "https://images.unsplash.com/photo-1517524008697-84bbe3c3fd98?auto=format&fit=crop&w=1200&q=80",
+    payload: {
+      date: "2026-06-02",
+      time: "20:45",
+      track: "Bathurst GP",
+      driver_id: "drv_mock_002",
+      vehicle_id: "veh_mock_002",
+      session_type: "Qualifying",
+      session_number: 2,
+      duration_min: 20,
+      tire_set: "S7",
+      wheelbase_mm: 2550,
+      pressures: {
+        unit: "psi",
+        hot: { fl: 30, fr: 30, rl: 32, rr: 32 },
+      },
+      suspension: {
+        rebound_f: 7,
+        rebound_r: 5,
+        bump_f: 3,
+        bump_r: 4,
+      },
+    },
+    analysis_result: {
+      source_type: "photo",
+      confidence: 0.86,
+      validation_state: "REVIEWED",
+      review_state: "REVIEWED",
+      ocr_text: "S2 20min bathurst photo note",
+      parser_version: "monitor-demo-1.0",
+      audit_snippet: "Photo submission awaits final approval.",
+    },
+    status: "SENT",
+    created_at: "2026-06-02T20:46:00Z",
+    updated_at: "2026-06-02T20:47:00Z",
+  },
+  {
+    id: "sub_mock_003",
+    submission_ref: "SUB-MOCK-003",
+    event_id: "evt_mock_003",
+    event: {
+      id: "evt_mock_003",
+      name: "Summer Endurance",
+      track: "Spa Francorchamps",
+      start_date: "2026-07-10T00:00:00Z",
+      end_date: "2026-07-12T00:00:00Z",
+      is_active: true,
+    },
+    run_group: {
+      id: "rg_mock_003",
+      event_id: "evt_mock_003",
+      raw_text: "Yellow",
+      normalized: "YELLOW",
+      locked: false,
+    },
+    driver: {
+      id: "drv_mock_003",
+      first_name: "Noah",
+      last_name: "Chen",
+      team_name: "Northline Motorsports",
+    },
+    vehicle: {
+      id: "veh_mock_003",
+      driver_id: "drv_mock_999",
+      make: "Ferrari",
+      model: "296 GT3",
+      registration_number: "NCH-296",
+    },
+    created_by_id: "usr_mock_002",
+    raw_text: "driver and vehicle mismatch detected",
+    image_url: null,
+    payload: {
+      date: "2026-07-10",
+      time: "13:20",
+      track: "Spa Francorchamps",
+      driver_id: "drv_mock_003",
+      vehicle_id: "veh_mock_003",
+      session_type: "Race",
+      session_number: 4,
+      duration_min: 45,
+      pressures: {
+        unit: "psi",
+        cold: { fl: 26, fr: 26 },
+      },
+      alignment: {
+        camber_fl: -2.4,
+        camber_fr: -2.2,
+      },
+    },
+    analysis_result: {
+      source_type: "detailed",
+      confidence: 0.73,
+      validation_state: "FAILED",
+      review_state: "FLAGGED",
+      failed_fields: ["vehicle-driver-mismatch", "pressure:RL", "pressure:RR"],
+      validation_messages: [
+        "Vehicle does not belong to the selected driver.",
+        "Rear pressure values are missing.",
+      ],
+      parser_version: "monitor-demo-1.0",
+      audit_snippet: "Validation failed and requires correction.",
+    },
+    status: "FAILED",
+    error_message: "Webhook delivery failed: timeout",
+    created_at: "2026-07-10T13:21:00Z",
+    updated_at: "2026-07-10T13:22:00Z",
+  },
+  {
+    id: "sub_mock_004",
+    submission_ref: "SUB-MOCK-004",
+    event_id: "evt_mock_004",
+    event: {
+      id: "evt_mock_004",
+      name: "Autumn Club Race",
+      track: "Silverstone National",
+      start_date: "2026-09-18T00:00:00Z",
+      end_date: "2026-09-19T00:00:00Z",
+      is_active: true,
+    },
+    run_group: {
+      id: "rg_mock_004",
+      event_id: "evt_mock_004",
+      raw_text: "Green",
+      normalized: "GREEN",
+      locked: false,
+    },
+    driver: {
+      id: "drv_mock_004",
+      first_name: "Mia",
+      last_name: "Lopez",
+      team_name: "Lopez Racing",
+    },
+    vehicle: {
+      id: "veh_mock_004",
+      driver_id: "drv_mock_004",
+      make: "BMW",
+      model: "M4 GT4",
+      registration_number: "MIA-444",
+    },
+    created_by_id: "usr_mock_003",
+    raw_text: "archived admin review note",
+    image_url: null,
+    payload: {
+      date: "2026-09-18",
+      time: "09:05",
+      track: "Silverstone National",
+      driver_id: "drv_mock_004",
+      vehicle_id: "veh_mock_004",
+      session_type: "Practice",
+      session_number: 1,
+      duration_min: 30,
+      tire_set: "Y-7",
+      pressures: {
+        unit: "psi",
+        cold: { fl: 27, fr: 27, rl: 28, rr: 28 },
+      },
+    },
+    analysis_result: {
+      source_type: "quick",
+      confidence: 0.92,
+      validation_state: "VALIDATED",
+      review_state: "ARCHIVED",
+      archived_at: "2026-09-18T12:10:00Z",
+      parser_version: "monitor-demo-1.0",
+      audit_snippet: "Submission archived after post-session audit.",
+    },
+    status: "SENT",
+    created_at: "2026-09-18T09:06:00Z",
+    updated_at: "2026-09-19T11:45:00Z",
+  },
+];

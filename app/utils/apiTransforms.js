@@ -195,6 +195,7 @@ export const normalizeSubmission = (submission) => {
   const runGroup = normalizeRunGroup(submission.run_group || submission.runGroup);
   const event = normalizeEvent(submission.event);
   const payload = submission.payload || submission.data || {};
+  const analysisResult = submission.analysis_result || submission.analysisResult || {};
 
   return {
     ...submission,
@@ -216,6 +217,14 @@ export const normalizeSubmission = (submission) => {
     image: submission.image_url || submission.image || null,
     data: payload,
     payload,
+    analysis_result: analysisResult,
+    analysisResult,
+    confidence:
+      analysisResult?.confidence ??
+      analysisResult?.confidence_score ??
+      submission.confidence ??
+      payload?.confidence ??
+      null,
     status: submission.status || "PENDING",
     errorMessage: submission.error_message || submission.errorMessage || null,
     createdAt: submission.created_at || submission.createdAt || null,

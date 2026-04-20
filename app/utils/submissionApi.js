@@ -74,9 +74,14 @@ export const createSubmission = async (submissionData) => {
       "/submissions",
       await buildSubmissionPayload(submissionData),
     );
+    const submission = unwrapSubmission(response.data);
+    const success = submission?.status !== "FAILED";
     return {
-      success: true,
-      submission: unwrapSubmission(response.data),
+      success,
+      submission,
+      message: success
+        ? null
+        : submission?.errorMessage || "Submission validation failed.",
     };
   } catch (error) {
     console.error("Create Submission API Error:", {
@@ -114,9 +119,14 @@ export const getAllSubmissions = async () => {
 export const retryFailedSubmission = async (submissionId) => {
   try {
     const response = await axiosInstance.post(`/submissions/${submissionId}/retry`);
+    const submission = unwrapSubmission(response.data);
+    const success = submission?.status !== "FAILED";
     return {
-      success: true,
-      submission: unwrapSubmission(response.data),
+      success,
+      submission,
+      message: success
+        ? null
+        : submission?.errorMessage || "Retry validation failed.",
     };
   } catch (error) {
     console.error("Retry Failed Submission API Error:", {

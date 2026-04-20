@@ -6,6 +6,33 @@ import { useAuth } from "../context/AuthContext";
 import { loginUser } from "../utils/authApi";
 import "./Login.css";
 
+const isHtmlLikeError = (value) => {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const text = value.trim();
+  return (
+    text.startsWith("<!DOCTYPE html") ||
+    text.startsWith("<html") ||
+    text.includes("__next_f") ||
+    text.includes("This page could not be found")
+  );
+};
+
+const safeErrorMessage = (value, fallback) => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const text = value.trim();
+  if (!text || isHtmlLikeError(text)) {
+    return fallback;
+  }
+
+  return text;
+};
+
 export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -71,8 +98,8 @@ export default function LoginContent() {
         // Show error with response details for debugging
         console.error("Login failed - Invalid response structure:", response);
         setError(
-          response.message ||
-            response.error ||
+          safeErrorMessage(response.message, "") ||
+            safeErrorMessage(response.error, "") ||
             "Login failed. Invalid response from server."
         );
       }
@@ -81,20 +108,24 @@ export default function LoginContent() {
       console.error("Login error:", error);
 
       let errorMessage = "Invalid email or password";
+      const status = error?.status ?? error?.response?.status;
+      const rawCandidate =
+        error?.message ||
+        error?.error ||
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        (typeof error === "string" ? error : "");
 
-      if (error?.response?.status === 404) {
+      if (status === 404) {
         errorMessage =
-          "API endpoint not found. Please check if backend server is running and URL is correct.";
-      } else if (error?.response?.status === 500) {
+          "Authentication service unavailable. Please check the backend server and API URL.";
+      } else if (status === 500) {
         errorMessage = "Server error. Please try again later.";
-      } else if (error?.response?.status === 401) {
+      } else if (status === 401) {
         errorMessage = "Invalid email or password";
-      } else if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.error) {
-        errorMessage = error.error;
-      } else if (typeof error === "string") {
-        errorMessage = error;
+      } else {
+        errorMessage = safeErrorMessage(rawCandidate, errorMessage);
       }
 
       setError(errorMessage);

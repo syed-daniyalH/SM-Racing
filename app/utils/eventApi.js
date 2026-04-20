@@ -6,7 +6,8 @@ const unwrapEvent = (data) => normalizeEvent(data?.event || data?.data || data);
 const unwrapEvents = (data) =>
   normalizeList(data?.events || data?.data || data, normalizeEvent);
 
-const buildEventPayload = (eventData) => {
+const buildEventPayload = (eventData, options = {}) => {
+  const { includeRunGroup = false } = options;
   const payload = {
     name: eventData?.name?.trim(),
     track: eventData?.track?.trim(),
@@ -25,6 +26,17 @@ const buildEventPayload = (eventData) => {
 
   if (typeof isActive === "boolean") {
     payload.is_active = isActive;
+  }
+
+  if (includeRunGroup) {
+    const runGroupRawText =
+      eventData?.run_group_raw_text ||
+      eventData?.runGroupRawText ||
+      eventData?.runGroup;
+
+    if (typeof runGroupRawText === "string") {
+      payload.run_group_raw_text = runGroupRawText.trim();
+    }
   }
 
   return payload;
@@ -79,7 +91,7 @@ export const createEvent = async (eventData) => {
   try {
     const response = await axiosInstance.post(
       "/events",
-      buildEventPayload(eventData),
+      buildEventPayload(eventData, { includeRunGroup: true }),
     );
     return {
       success: true,

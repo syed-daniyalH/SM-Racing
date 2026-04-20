@@ -69,15 +69,33 @@ export const toLocalDateInput = (value) => {
 export const createBlankEventFormValues = () => ({
   name: "",
   track: "",
+  runGroup: "",
   startDate: "",
   endDate: "",
   status: "active",
   notes: "",
 });
 
+export const getEventRunGroupText = (event) => {
+  const runGroup = event?.runGroup || event?.run_group || null;
+  if (!runGroup) return "";
+
+  if (typeof runGroup === "string") {
+    return runGroup.trim();
+  }
+
+  return (
+    runGroup.rawText ||
+    runGroup.raw_text ||
+    runGroup.normalized ||
+    ""
+  ).trim();
+};
+
 export const toEventFormValues = (event = null) => ({
   name: event?.name || "",
   track: event?.track || "",
+  runGroup: getEventRunGroupText(event),
   startDate: toLocalDateInput(event?.startDate || event?.start_date),
   endDate: toLocalDateInput(event?.endDate || event?.end_date),
   status: event && event.isActive === false ? "archived" : "active",
@@ -315,6 +333,7 @@ export const getEventSummaryCounts = (events = []) => {
 export const getEventFormPayload = (values) => ({
   name: values?.name?.trim(),
   track: values?.track?.trim(),
+  runGroup: values?.runGroup?.trim() || "",
   startDate: values?.startDate,
   endDate: values?.endDate,
   status: values?.status || "active",
@@ -324,6 +343,7 @@ export const getEventFormPayload = (values) => ({
 export const toEventApiPayload = (values) => ({
   name: values?.name?.trim(),
   track: values?.track?.trim(),
+  run_group_raw_text: values?.runGroup?.trim() || undefined,
   startDate: values?.startDate,
   endDate: values?.endDate,
   is_active: values?.status ? values.status !== "archived" : undefined,
