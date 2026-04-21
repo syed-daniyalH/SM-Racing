@@ -1699,52 +1699,19 @@ export default function NotesSubmission() {
               </>
             )}
 
-            <div className="form-group">
-              {/* <label className="form-label">Submission Meta</label> */}
-              <div className="grid-2">
-                <div>
-                  {/* <label className="form-label sub-label">Action</label> */}
-                  {/* <input
-                    className="input"
-                    type="text"
-                    value={actionValue}
-                    onChange={(e) => setActionValue(e.target.value)}
-                  /> */}
-                </div>
-                <div>
-                  {/* <label className="form-label sub-label">Confidence</label> */}
-                  {/* <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={confidenceValue}
-                    onChange={(e) => setConfidenceValue(e.target.value)}
-                  /> */}
-                </div>
-              </div>
-              <p className="form-hint">
-                If your backend calculates confidence, you can ignore this
-                field.
-              </p>
-            </div>
-            {/* RawTextModaL */}
             {isQuickTab && (
               <div className="form-group">
                 <div className="raw-notes-header">
                   <label className="form-label">Race Notes (Raw Text)</label>
                 </div>
                 <textarea
-                  className="textarea"
+                  className="textarea raw-notes-textarea"
                   placeholder='e.g. "s1 30min nico gt4 Y-S3 pf 27 wb 2450"'
                   value={rawTextValue}
                   onChange={(e) => setRawTextValue(e.target.value)}
-                  rows={6}
+                  rows={4}
                   ref={quickRawTextRef}
                 />
-
-                {/* //image file uploader */}
 
                 <div style={{ marginTop: "0.5rem" }}>
                   <label className="form-label sub-label">Photo</label>

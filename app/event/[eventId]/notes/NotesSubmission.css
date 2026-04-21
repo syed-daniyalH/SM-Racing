@@ -78,7 +78,7 @@
   background: linear-gradient(135deg, var(--color-primary-light) 0%, var(--color-secondary) 100%);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 1.5rem;
+  padding: 1.35rem 1.4rem 1.4rem;
 }
 
 .tab-toggle {
@@ -142,7 +142,7 @@
 }
 
 .form-group {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.15rem;
 }
 
 .form-label {
@@ -171,7 +171,7 @@
 
 .textarea {
   width: 100%;
-  padding: 1rem;
+  padding: 0.9rem 1rem;
   font-size: 0.9375rem;
   background: var(--color-primary);
   border: 1px solid var(--color-border);
@@ -181,7 +181,12 @@
   transition: all 0.2s ease;
   font-family: inherit;
   resize: vertical;
-  min-height: 200px;
+  min-height: 150px;
+  line-height: 1.5;
+}
+
+.raw-notes-textarea {
+  min-height: 150px;
 }
 
 .textarea:focus {
@@ -194,7 +199,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.55rem;
 }
 
 .raw-notes-header .form-label {
@@ -393,11 +398,12 @@
 .form-hint {
   font-size: 0.75rem;
   color: var(--color-text-muted);
-  margin-top: 0.5rem;
+  margin-top: 0.4rem;
+  line-height: 1.45;
 }
 
 .submission-status {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.2rem;
 }
 
 .status-message {
@@ -428,7 +434,7 @@
 
 .form-actions {
   display: flex;
-  gap: 1rem;
+  gap: 0.75rem;
   justify-content: flex-end;
   align-items: flex-end;
   flex-wrap: wrap;
@@ -436,13 +442,14 @@
 
 .form-actions-with-voice {
   justify-content: space-between;
+  align-items: stretch;
 }
 
 .form-action-buttons {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 1rem;
+  gap: 0.75rem;
   margin-left: auto;
 }
 
@@ -457,9 +464,9 @@
 }
 
 .btn-large {
-  min-width: 150px;
-  padding: 1rem;
-  font-size: 1rem;
+  min-width: 148px;
+  padding: 0.95rem 1rem;
+  font-size: 0.98rem;
 }
 
 .btn:disabled {
@@ -468,7 +475,7 @@
 }
 
 .offline-indicator {
-  margin-top: 2rem;
+  margin-top: 1.5rem;
   padding: 1rem;
   background: rgba(240, 83, 35, 0.1);
   border: 1px solid #F05323;
