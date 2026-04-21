@@ -1776,12 +1776,6 @@ export default function NotesSubmission() {
               </div>
             </div>
           </form>
-
-          <div className="offline-indicator">
-            <p className="offline-text">
-              📡 Offline mode: Notes will sync when connection is restored
-            </p>
-          </div>
         </div>
       </div>
     </ProtectedRoute>
