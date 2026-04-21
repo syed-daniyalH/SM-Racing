@@ -101,13 +101,11 @@ export default function SubmissionsPage() {
             </div>
           ) : null}
 
-          <section className="submissions-table-panel submissions-notes-panel">
-            <SubmissionsTable
-              submissions={submissions}
-              loading={loading}
-              onView={(id) => setSelectedId(id)}
-            />
-          </section>
+          <SubmissionsTable
+            submissions={submissions}
+            loading={loading}
+            onView={(id) => setSelectedId(id)}
+          />
         </div>
 
         <SubmissionDrawer
