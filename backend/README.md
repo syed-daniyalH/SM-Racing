@@ -74,7 +74,7 @@ Use these values when creating the Render Web Service:
 
 - **Root directory:** `backend`
 - **Build command:** `pip install -r requirements.txt`
-- **Start command:** `sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"`
+- **Start command:** `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - **Python version:** `3.11.11`
 
 Set these environment variables on Render:
