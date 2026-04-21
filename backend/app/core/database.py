@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.core.config import get_settings
@@ -19,31 +19,10 @@ class UUIDMixin:
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
 
-def get_database_schema() -> str:
-    schema = (settings.database_schema or "").strip()
-    if schema and not schema.replace("_", "").isalnum():
-        raise ValueError("DATABASE_SCHEMA must contain only letters, numbers, and underscores")
-    return schema
-
-
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _set_search_path(dbapi_connection, _connection_record) -> None:
-    schema = get_database_schema()
-    if not schema or schema == "public":
-        return
-
-    with dbapi_connection.cursor() as cursor:
-        cursor.execute(f"SET search_path TO {_quote_identifier(schema)}, public")
-
-
 def get_engine():
     global _engine
     if _engine is None:
         _engine = create_engine(settings.database_url, pool_pre_ping=True)
-        event.listen(_engine, "connect", _set_search_path)
     return _engine
 
 

@@ -12,8 +12,6 @@ services:
         value: 3.11.11
       - key: ENVIRONMENT
         value: production
-      - key: DATABASE_SCHEMA
-        value: sm
       - key: CORS_ORIGIN_REGEX
         value: '^https://.*\.vercel\.app$'
       - key: DATABASE_URL

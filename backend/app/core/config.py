@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     database_url: str = Field(default="postgresql+psycopg://USER:PASSWORD@NEON_HOST/DB?sslmode=require&channel_binding=require")
-    database_schema: str = "sm"
     jwt_secret_key: str = Field(default="change-me")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30

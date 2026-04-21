@@ -40,15 +40,6 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        schema = (settings.database_schema or "").strip()
-        if schema and schema != "public":
-            if not schema.replace("_", "").isalnum():
-                raise ValueError("DATABASE_SCHEMA must contain only letters, numbers, and underscores")
-
-            quoted_schema = f'"{schema}"'
-            connection.exec_driver_sql(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
-            connection.exec_driver_sql(f"SET search_path TO {quoted_schema}, public")
-
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
