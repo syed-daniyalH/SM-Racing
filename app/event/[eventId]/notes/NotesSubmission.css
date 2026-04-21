@@ -204,12 +204,58 @@
 .voice-input-control {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 0.45rem;
-  min-width: 220px;
+  align-items: stretch;
+  gap: 0.5rem;
+  min-width: 360px;
+  max-width: 420px;
+}
+
+.voice-input-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "copy action"
+    "copy status";
+  align-items: center;
+  gap: 0.7rem 0.9rem;
+  padding: 0.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(240, 83, 35, 0.28);
+  background:
+    radial-gradient(circle at top right, rgba(240, 83, 35, 0.22), transparent 42%),
+    linear-gradient(135deg, rgba(240, 83, 35, 0.12), rgba(255, 255, 255, 0.025));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 14px 30px rgba(0, 0, 0, 0.24);
+}
+
+.voice-input-card-listening {
+  border-color: rgba(255, 107, 53, 0.78);
+  background:
+    radial-gradient(circle at top right, rgba(255, 107, 53, 0.3), transparent 45%),
+    linear-gradient(135deg, rgba(240, 83, 35, 0.18), rgba(255, 149, 0, 0.08));
+  box-shadow:
+    0 0 0 3px rgba(240, 83, 35, 0.14),
+    0 16px 34px rgba(240, 83, 35, 0.14);
+}
+
+.voice-input-copy {
+  grid-area: copy;
+  min-width: 0;
+}
+
+.voice-input-eyebrow {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #ffb08c;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .voice-input-actions {
+  grid-area: action;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -223,25 +269,36 @@
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  padding: 0.6rem 0.85rem;
-  border-radius: 10px;
-  border: 1px solid rgba(240, 83, 35, 0.28);
-  background: linear-gradient(135deg, rgba(240, 83, 35, 0.16), rgba(255, 149, 0, 0.08));
-  color: var(--color-text);
+  min-height: 46px;
+  padding: 0.68rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 140, 66, 0.55);
+  background: linear-gradient(135deg, #ff6b35, #ff9500);
+  color: #ffffff;
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   font-weight: 900;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 12px 24px rgba(240, 83, 35, 0.22);
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.voice-input-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 1rem;
 }
 
 .voice-input-button:hover:not(:disabled),
 .voice-input-retry:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(255, 149, 0, 0.48);
-  background: linear-gradient(135deg, rgba(240, 83, 35, 0.22), rgba(255, 149, 0, 0.14));
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+  transform: translateY(-2px) scale(1.01);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: linear-gradient(135deg, #ff7a3d, #ffac1f);
+  box-shadow: 0 16px 30px rgba(240, 83, 35, 0.28);
 }
 
 .voice-input-button:disabled,
@@ -253,23 +310,30 @@
 }
 
 .voice-input-button-listening {
-  border-color: rgba(255, 149, 0, 0.5);
-  box-shadow: 0 0 0 3px rgba(240, 83, 35, 0.12);
+  border-color: rgba(255, 255, 255, 0.38);
+  background: linear-gradient(135deg, #ef4444, #ff6b35);
+  box-shadow:
+    0 0 0 4px rgba(239, 68, 68, 0.16),
+    0 16px 30px rgba(239, 68, 68, 0.22);
 }
 
 .voice-input-button-processing {
   border-color: rgba(255, 193, 7, 0.5);
+  background: linear-gradient(135deg, #ff9500, #ffb84d);
 }
 
 .voice-input-button-success {
-  border-color: rgba(52, 199, 89, 0.45);
+  border-color: rgba(52, 199, 89, 0.55);
+  background: linear-gradient(135deg, #10b981, #34c759);
 }
 
 .voice-input-button-error {
-  border-color: rgba(255, 59, 48, 0.45);
+  border-color: rgba(255, 59, 48, 0.55);
+  background: linear-gradient(135deg, #ef4444, #ff6b35);
 }
 
 .voice-input-status-row {
+  grid-area: status;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -288,17 +352,21 @@
 
 .voice-input-message {
   margin: 0;
-  font-size: 0.74rem;
-  color: var(--color-text-light);
-  text-align: right;
+  font-size: 0.78rem;
+  color: #ffffff;
+  text-align: left;
   line-height: 1.4;
 }
 
 .voice-input-preview {
   margin: 0;
-  font-size: 0.74rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 107, 53, 0.2);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.76rem;
   color: #ffb08c;
-  text-align: right;
+  text-align: left;
   line-height: 1.45;
 }
 
@@ -402,12 +470,25 @@
   .voice-input-control {
     width: 100%;
     min-width: 0;
+    max-width: none;
     align-items: stretch;
+  }
+
+  .voice-input-card {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "copy"
+      "action"
+      "status";
   }
 
   .voice-input-actions,
   .voice-input-status-row {
     justify-content: flex-start;
+  }
+
+  .voice-input-button {
+    width: 100%;
   }
 
   .voice-input-message,

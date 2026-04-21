@@ -357,62 +357,69 @@ export default function VoiceInputControl({
   const buttonLabel = !isSupported
     ? "Unavailable"
     : status === "listening"
-      ? "Stop"
+      ? "Stop Recording"
       : status === "processing"
-        ? "Working"
+        ? "Processing"
         : status === "success"
-          ? "Added"
+          ? "Voice Added"
       : status === "error"
-        ? "Retry"
-        : "Mic";
+        ? "Retry Voice"
+        : "Start Voice Note";
 
   return (
     <div className={`voice-input-control ${className}`.trim()}>
-      <div className="voice-input-actions">
-        <button
-          type="button"
-          className={`voice-input-button voice-input-button-${status}`}
-          onClick={handleToggle}
-          disabled={disabled || !isSupported || status === "processing" || status === "success"}
-          aria-pressed={status === "listening"}
-          aria-label={buttonLabel}
-          title={meta.message}
-        >
-          {status === "listening" ? (
-            <StopRoundedIcon fontSize="inherit" />
-          ) : (
-            <MicRoundedIcon fontSize="inherit" />
-          )}
-          <span>{buttonLabel}</span>
-        </button>
+      <div className={`voice-input-card voice-input-card-${status}`}>
+        <div className="voice-input-copy">
+          <span className="voice-input-eyebrow">Voice Input</span>
+          <p className="voice-input-message" aria-live="polite">
+            {isSupported ? message : badgeMessage}
+          </p>
+        </div>
 
-        {status === "error" && isSupported && (
+        <div className="voice-input-actions">
           <button
             type="button"
-            className="voice-input-retry"
-            onClick={startRecognition}
-            disabled={disabled}
-            aria-label="Retry voice input"
-            title="Retry"
+            className={`voice-input-button voice-input-button-${status}`}
+            onClick={handleToggle}
+            disabled={disabled || !isSupported || status === "processing" || status === "success"}
+            aria-pressed={status === "listening"}
+            aria-label={buttonLabel}
+            title={meta.message}
           >
-            <ReplayRoundedIcon fontSize="inherit" />
-            <span>Retry</span>
+            <span className="voice-input-icon">
+              {status === "listening" ? (
+                <StopRoundedIcon fontSize="inherit" />
+              ) : (
+                <MicRoundedIcon fontSize="inherit" />
+              )}
+            </span>
+            <span>{buttonLabel}</span>
           </button>
-        )}
-      </div>
 
-      <div className="voice-input-status-row">
-        <StatusBadge
-          label={badgeLabel}
-          tone={badgeTone}
-          title={badgeMessage}
-        />
-        {status === "listening" && <span className="voice-input-dot" />}
-      </div>
+          {status === "error" && isSupported && (
+            <button
+              type="button"
+              className="voice-input-retry"
+              onClick={startRecognition}
+              disabled={disabled}
+              aria-label="Retry voice input"
+              title="Retry"
+            >
+              <ReplayRoundedIcon fontSize="inherit" />
+              <span>Retry</span>
+            </button>
+          )}
+        </div>
 
-      <p className="voice-input-message" aria-live="polite">
-        {isSupported ? message : badgeMessage}
-      </p>
+        <div className="voice-input-status-row">
+          <StatusBadge
+            label={badgeLabel}
+            tone={badgeTone}
+            title={badgeMessage}
+          />
+          {status === "listening" && <span className="voice-input-dot" />}
+        </div>
+      </div>
 
       {preview ? (
         <p className="voice-input-preview">Heard: “{preview}”</p>
