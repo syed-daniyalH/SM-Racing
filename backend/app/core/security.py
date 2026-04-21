@@ -3,21 +3,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import jwt
-from passlib.context import CryptContext
+from passlib.hash import pbkdf2_sha256
 
 from app.core.config import get_settings
 
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # PBKDF2 is fully supported in hosted environments and avoids bcrypt backend issues.
+    return pbkdf2_sha256.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return pbkdf2_sha256.verify(plain_password, hashed_password)
 
 
 def create_access_token(subject: str, additional_claims: dict[str, Any] | None = None) -> str:
