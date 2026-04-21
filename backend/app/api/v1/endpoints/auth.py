@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from secrets import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, oauth2_scheme
@@ -65,27 +66,35 @@ def bootstrap_admin(
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    Base.metadata.create_all(bind=get_engine())
+    try:
+        Base.metadata.create_all(bind=get_engine())
 
-    email = "admin@smracing.com"
-    user = db.scalar(select(User).where(User.email == email))
-    if user is None:
-        user = User(
-            name="Admin",
-            email=email,
-            hashed_password=hash_password("123456"),
-            role=UserRole.ADMIN,
-            is_active=True,
-        )
-        db.add(user)
-    else:
-        user.name = "Admin"
-        user.hashed_password = hash_password("123456")
-        user.role = UserRole.ADMIN
-        user.is_active = True
+        email = "admin@smracing.com"
+        user = db.scalar(select(User).where(User.email == email))
+        if user is None:
+            user = User(
+                name="Admin",
+                email=email,
+                hashed_password=hash_password("123456"),
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            db.add(user)
+        else:
+            user.name = "Admin"
+            user.hashed_password = hash_password("123456")
+            user.role = UserRole.ADMIN
+            user.is_active = True
 
-    db.commit()
-    db.refresh(user)
+        db.commit()
+        db.refresh(user)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database bootstrap failed: {exc}",
+        ) from exc
+
     return build_token_for_user(user)
 
 
