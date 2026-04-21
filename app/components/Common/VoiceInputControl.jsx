@@ -369,11 +369,21 @@ export default function VoiceInputControl({
   return (
     <div className={`voice-input-control ${className}`.trim()}>
       <div className={`voice-input-card voice-input-card-${status}`}>
-        <div className="voice-input-copy">
-          <span className="voice-input-eyebrow">Voice Input</span>
-          <p className="voice-input-message" aria-live="polite">
-            {isSupported ? message : badgeMessage}
-          </p>
+        <div className="voice-input-header">
+          <div className="voice-input-copy">
+            <span className="voice-input-eyebrow">Voice Input</span>
+            <p className="voice-input-message" aria-live="polite">
+              {isSupported ? message : badgeMessage}
+            </p>
+          </div>
+
+          <div className="voice-input-status-wrap">
+            <StatusBadge
+              label={badgeLabel}
+              tone={badgeTone}
+              title={badgeMessage}
+            />
+          </div>
         </div>
 
         <div className="voice-input-actions">
@@ -411,18 +421,10 @@ export default function VoiceInputControl({
           )}
         </div>
 
-        <div className="voice-input-status-row">
-          <StatusBadge
-            label={badgeLabel}
-            tone={badgeTone}
-            title={badgeMessage}
-          />
-          {status === "listening" && <span className="voice-input-dot" />}
-        </div>
       </div>
 
       {preview ? (
-        <p className="voice-input-preview">Heard: “{preview}”</p>
+        <p className="voice-input-preview">Heard: &quot;{preview}&quot;</p>
       ) : null}
 
       {!isSupported ? (
