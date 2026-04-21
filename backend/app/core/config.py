@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
+    bootstrap_token: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod

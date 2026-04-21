@@ -1,12 +1,10 @@
 import axios from "axios";
 
 // Create axios instance with base configuration.
-// In local development the Next.js app proxies /api/v1 to the FastAPI backend,
-// so keeping this path relative avoids browser-origin and localhost resolution issues.
+// Local development uses /api/v1 through the Next.js proxy.
+// Production should set NEXT_PUBLIC_API_URL to the Render backend /api/v1 URL.
 const axiosInstance = axios.create({
-  baseURL:
-    process.env.NEXT_PUBLIC_API_URL ||
-    "/api/v1",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
 
   headers: {
     "Content-Type": "application/json",

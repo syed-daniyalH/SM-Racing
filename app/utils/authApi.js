@@ -149,6 +149,29 @@ export const getUsers = async () => {
 };
 
 /**
+ * Reset a user password from the admin area.
+ */
+export const resetUserPassword = async (userId, password) => {
+  try {
+    const response = await axiosInstance.patch(`/users/${userId}/password`, {
+      password,
+    });
+
+    return {
+      success: true,
+      user: normalizeUser(response.data),
+    };
+  } catch (error) {
+    console.error("Admin password reset API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to update password");
+  }
+};
+
+/**
  * Login user and return a normalized user plus token.
  */
 export const loginUser = async (credentials) => {

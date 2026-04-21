@@ -8,6 +8,7 @@ import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettin
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
+import LockResetOutlinedIcon from "@mui/icons-material/LockResetOutlined";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import SortOutlinedIcon from "@mui/icons-material/SortOutlined";
@@ -17,8 +18,8 @@ import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import { EmptyStatePanel, MetricCard } from "../fleet/_components/ManagementUi";
-import { createAdminUser, getUsers } from "../../utils/authApi";
+import { DrawerShell, EmptyStatePanel, MetricCard } from "../fleet/_components/ManagementUi";
+import { createAdminUser, getUsers, resetUserPassword } from "../../utils/authApi";
 import "../fleet/fleetManagement.css";
 import "./UsersManagement.css";
 
@@ -27,6 +28,11 @@ const INITIAL_FORM_VALUES = {
   email: "",
   password: "",
   role: "MECHANIC",
+};
+
+const INITIAL_PASSWORD_FORM_VALUES = {
+  password: "",
+  confirmPassword: "",
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -125,7 +131,7 @@ const getApiErrorMessage = (error, fallback) => {
 
 export default function UsersManagement() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, user: currentUser } = useAuth();
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -139,6 +145,10 @@ export default function UsersManagement() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
   const [sortMode, setSortMode] = useState("latest");
+  const [passwordTarget, setPasswordTarget] = useState(null);
+  const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM_VALUES);
+  const [passwordError, setPasswordError] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const refreshUsers = useCallback(async () => {
     try {
@@ -270,6 +280,113 @@ export default function UsersManagement() {
       setFormError(getApiErrorMessage(error, "Failed to create user. Please try again."));
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const canResetPassword = useCallback(
+    (targetUser) => {
+      const currentRole = normalizeRole(currentUser?.role);
+      const targetRole = normalizeRole(targetUser?.role);
+
+      if (!targetUser?.id || !currentUser?.id) {
+        return false;
+      }
+
+      if (currentRole === "OWNER") {
+        return true;
+      }
+
+      if (targetRole === "OWNER") {
+        return false;
+      }
+
+      return currentRole === "ADMIN";
+    },
+    [currentUser],
+  );
+
+  const getPasswordActionTitle = (targetUser) => {
+    if (canResetPassword(targetUser)) {
+      return `Change password for ${targetUser.name}`;
+    }
+
+    if (normalizeRole(targetUser.role) === "OWNER") {
+      return "Only an owner can reset an owner password";
+    }
+
+    return "You do not have access to reset this password";
+  };
+
+  const openPasswordPanel = (targetUser) => {
+    setPasswordTarget(targetUser);
+    setPasswordForm(INITIAL_PASSWORD_FORM_VALUES);
+    setPasswordError("");
+  };
+
+  const closePasswordPanel = () => {
+    if (isResettingPassword) return;
+    setPasswordTarget(null);
+    setPasswordForm(INITIAL_PASSWORD_FORM_VALUES);
+    setPasswordError("");
+  };
+
+  const handlePasswordFormChange = (field, value) => {
+    setPasswordForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+
+    if (passwordError) {
+      setPasswordError("");
+    }
+  };
+
+  const handlePasswordReset = async (event) => {
+    event.preventDefault();
+
+    if (!passwordTarget) return;
+
+    const nextPassword = passwordForm.password.trim();
+    const confirmPassword = passwordForm.confirmPassword.trim();
+
+    if (!nextPassword || !confirmPassword) {
+      setPasswordError("Enter and confirm the new temporary password.");
+      return;
+    }
+
+    if (nextPassword.length < 8) {
+      setPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (nextPassword !== confirmPassword) {
+      setPasswordError("Password confirmation does not match.");
+      return;
+    }
+
+    try {
+      setIsResettingPassword(true);
+      setPasswordError("");
+
+      const response = await resetUserPassword(passwordTarget.id, nextPassword);
+      const updatedUser = response.user;
+
+      setUsers((current) =>
+        current.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user)),
+      );
+      setNotice({
+        tone: "success",
+        title: "Password updated",
+        message: `${updatedUser.name} can now sign in with the new temporary password.`,
+      });
+      setPasswordTarget(null);
+      setPasswordForm(INITIAL_PASSWORD_FORM_VALUES);
+      setPasswordError("");
+    } catch (error) {
+      console.error("Failed to reset password:", error);
+      setPasswordError(getApiErrorMessage(error, "Failed to update password. Please try again."));
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
@@ -597,13 +714,17 @@ export default function UsersManagement() {
                     sublabel="Fetching the latest access directory."
                   />
                 ) : filteredUsers.length ? (
-                  <div className="fleet-table" style={{ "--fleet-columns": "1.45fr 2fr 1fr 1fr 1fr" }}>
+                  <div
+                    className="fleet-table"
+                    style={{ "--fleet-columns": "1.35fr 1.9fr 0.9fr 0.9fr 0.9fr 1.1fr" }}
+                  >
                     <div className="fleet-table-header">
                       <div className="fleet-table-header-cell">Name</div>
                       <div className="fleet-table-header-cell">Email</div>
                       <div className="fleet-table-header-cell">Role</div>
                       <div className="fleet-table-header-cell">Status</div>
                       <div className="fleet-table-header-cell">Created</div>
+                      <div className="fleet-table-header-cell">Admin Actions</div>
                     </div>
 
                     {filteredUsers.map((user) => (
@@ -611,27 +732,45 @@ export default function UsersManagement() {
                         key={user.id}
                         className={`fleet-table-row ${user.isActive === false ? "inactive" : ""}`}
                       >
-                        <div className="fleet-table-cell">
+                        <div className="fleet-table-cell" data-label="Name">
                           <div className="fleet-cell-stack">
                             <strong>{user.name}</strong>
                             <span className="fleet-muted">Access account</span>
                           </div>
                         </div>
 
-                        <div className="fleet-table-cell fleet-muted">{user.email}</div>
+                        <div className="fleet-table-cell fleet-muted" data-label="Email">
+                          {user.email}
+                        </div>
 
-                        <div className="fleet-table-cell">
+                        <div className="fleet-table-cell" data-label="Role">
                           <StatusBadge label={formatRoleLabel(user.role)} tone={getRoleTone(user.role)} />
                         </div>
 
-                        <div className="fleet-table-cell">
+                        <div className="fleet-table-cell" data-label="Status">
                           <StatusBadge
                             label={getAccountLabel(user.isActive)}
                             tone={getAccountTone(user.isActive)}
                           />
                         </div>
 
-                        <div className="fleet-table-cell fleet-mono">{formatDate(user.createdAt)}</div>
+                        <div className="fleet-table-cell fleet-mono" data-label="Created">
+                          {formatDate(user.createdAt)}
+                        </div>
+
+                        <div className="fleet-table-cell users-action-cell" data-label="Admin Actions">
+                          <button
+                            type="button"
+                            className="users-password-action"
+                            onClick={() => openPasswordPanel(user)}
+                            disabled={!canResetPassword(user)}
+                            title={getPasswordActionTitle(user)}
+                            aria-label={getPasswordActionTitle(user)}
+                          >
+                            <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
+                            Change PW
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -682,6 +821,112 @@ export default function UsersManagement() {
               </div>
             </div>
           </section>
+
+          <DrawerShell
+            open={Boolean(passwordTarget)}
+            title="Change User Password"
+            subtitle={
+              passwordTarget
+                ? `Set a new temporary password for ${passwordTarget.name}. Passwords are never displayed after saving.`
+                : ""
+            }
+            onClose={isResettingPassword ? undefined : closePasswordPanel}
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-secondary"
+                  onClick={closePasswordPanel}
+                  disabled={isResettingPassword}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  form="user-password-reset-form"
+                  className="fleet-btn fleet-btn-primary"
+                  disabled={isResettingPassword}
+                >
+                  <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
+                  {isResettingPassword ? "Updating..." : "Update Password"}
+                </button>
+              </>
+            }
+          >
+            <form
+              id="user-password-reset-form"
+              className="users-password-form"
+              onSubmit={handlePasswordReset}
+            >
+              <div className="users-password-target-card">
+                <div className="users-password-target-icon" aria-hidden="true">
+                  <LockResetOutlinedIcon fontSize="small" />
+                </div>
+                <div>
+                  <p className="users-password-target-label">Selected Account</p>
+                  <h3>{passwordTarget?.name || "User"}</h3>
+                  <p>{passwordTarget?.email || "-"}</p>
+                </div>
+                {passwordTarget ? (
+                  <StatusBadge
+                    label={formatRoleLabel(passwordTarget.role)}
+                    tone={getRoleTone(passwordTarget.role)}
+                  />
+                ) : null}
+              </div>
+
+              <div className="fleet-form-grid">
+                <div className="fleet-field">
+                  <label className="fleet-label" htmlFor="reset-user-password">
+                    New Temporary Password
+                  </label>
+                  <input
+                    id="reset-user-password"
+                    type="password"
+                    className="fleet-input"
+                    placeholder="Minimum 8 characters"
+                    value={passwordForm.password}
+                    onChange={(event) => handlePasswordFormChange("password", event.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                <div className="fleet-field">
+                  <label className="fleet-label" htmlFor="reset-user-password-confirm">
+                    Confirm Password
+                  </label>
+                  <input
+                    id="reset-user-password-confirm"
+                    type="password"
+                    className="fleet-input"
+                    placeholder="Re-enter password"
+                    value={passwordForm.confirmPassword}
+                    onChange={(event) =>
+                      handlePasswordFormChange("confirmPassword", event.target.value)
+                    }
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+
+              <p className="users-password-helper">
+                Share the temporary password through a secure channel. The user should replace it
+                after sign-in when self-service password change is added.
+              </p>
+
+              {passwordError ? (
+                <div className="fleet-notice fleet-notice-danger users-password-error" role="alert">
+                  <div className="fleet-notice-icon" aria-hidden="true">
+                    <ErrorOutlineOutlinedIcon fontSize="inherit" />
+                  </div>
+                  <div className="fleet-notice-copy">
+                    <p className="fleet-notice-title">Password not updated</p>
+                    <p className="fleet-notice-message">{passwordError}</p>
+                  </div>
+                </div>
+              ) : null}
+            </form>
+          </DrawerShell>
         </div>
       </div>
     </ProtectedRoute>

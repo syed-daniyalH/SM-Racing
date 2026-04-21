@@ -77,6 +77,7 @@ app/
 
 ## Vercel Deployment
 
-- Set `NEXT_PUBLIC_API_URL` in Vercel to your deployed backend URL, for example `https://api.example.com/api/v1`.
+- Deploy this app on Vercel as a normal Next.js frontend, not as Vercel Services.
+- Set `NEXT_PUBLIC_API_URL` in Vercel to your Render backend URL, for example `https://sm-racing-api.onrender.com/api/v1`.
 - The `/api/v1` proxy rewrite is enabled only during local development.
-- If the backend is not deployed yet, the UI can still be previewed, but login and data-driven screens will need the API to be online.
+- Keep backend environment variables such as `DATABASE_URL`, `JWT_SECRET_KEY`, `ENVIRONMENT=production`, and CORS settings on Render.
