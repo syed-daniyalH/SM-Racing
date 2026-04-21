@@ -1,81 +1,121 @@
 "use client";
-import { Box, Typography } from "@mui/material";
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import ProtectedRoute from "../../../components/ProtectedRoute";
-import ScreenBackButton from "../../../components/Common/ScreenBackButton";
+import Loader from "../../../components/Common/Loader";
 import { getSubmissionsByEvent } from "../../../utils/submissionApi";
 import SubmissionsTable from "../../../components/Submissions/SubmissionTable";
 import SubmissionDrawer from "../../../components/Submissions/SubmissionDrawer";
+import "./SubmissionsHistory.css";
 
 export default function SubmissionsPage() {
-  const { eventId } = useParams();
+  const router = useRouter();
+  const params = useParams();
+  const routeEventId = params?.eventId;
+
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const refreshData = useCallback(
+    async ({ showSpinner = true } = {}) => {
+      if (!routeEventId) {
+        router.push("/events");
+        return;
+      }
+
+      try {
+        if (showSpinner) {
+          setLoading(true);
+        }
+
+        setPageError("");
+
+        const response = await getSubmissionsByEvent(routeEventId);
+        const list = response.submissions || response.data || response || [];
+        setSubmissions(Array.isArray(list) ? list : []);
+      } catch (error) {
+        console.error("Failed to load submissions", error);
+        setSubmissions([]);
+        setPageError("Failed to load submissions. Please refresh and try again.");
+      } finally {
+        if (showSpinner) {
+          setLoading(false);
+        }
+      }
+    },
+    [routeEventId, router],
+  );
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        const res = await getSubmissionsByEvent(eventId);
-        const list = res.submissions || res.data || res || [];
-        console.log("submission list: ", list, res.submissions, res.data, res);
-        setSubmissions(list);
-      } catch (err) {
-        console.error("Failed to load submissions", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+    refreshData();
+  }, [refreshData]);
 
-    if (eventId) load();
-  }, [eventId]);
-  const handleView = (id) => {
-    setSelectedId(id);
-    setDrawerOpen(true);
-  };
+  if (loading && submissions.length === 0) {
+    return (
+      <ProtectedRoute requireMechanic={false}>
+        <Loader
+          fullHeight
+          label="Loading submissions"
+          sublabel="Fetching notes for the selected event..."
+        />
+      </ProtectedRoute>
+    );
+  }
+
   return (
     <ProtectedRoute requireMechanic={false}>
-      <Box
-        sx={{
-          mb: 3,
-          py: 2,
-          px: 3,
-          maxWidth: 1400,
-          mx: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "flex-start",
-            mb: 1.5,
-          }}
-        >
-          <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
-        </Box>
-        <Typography
-          variant="h4"
-          fontWeight={800}
-          sx={{
-            letterSpacing: -0.5,
-          }}
-        >
-          Submissions by Event
-        </Typography>
-      </Box>{" "}
-      <SubmissionsTable
-        submissions={submissions}
-        loading={loading}
-        onView={(id) => setSelectedId(id)}
-      />
-      <SubmissionDrawer
-        open={Boolean(selectedId)}
-        submissionId={selectedId}
-        onClose={() => setSelectedId(null)}
-      />
+      <div className="submissions-history-page">
+        <div className="submissions-history-orb submissions-history-orb-one" />
+        <div className="submissions-history-orb submissions-history-orb-two" />
+
+        <div className="submissions-history-shell submissions-notes-shell">
+          <header className="submissions-notes-header">
+            <div>
+              <p className="submissions-table-eyebrow">Submission Notes</p>
+              <h1 className="submissions-notes-title">Notes Feed</h1>
+              <p className="submissions-notes-subtitle">
+                Only the submission notes for the selected event and run group
+                are shown here.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secondary submissions-notes-refresh"
+              onClick={() => refreshData({ showSpinner: true })}
+              disabled={loading}
+            >
+              <RefreshRoundedIcon fontSize="inherit" />
+              Refresh
+            </button>
+          </header>
+
+          {pageError ? (
+            <div className="page-banner error submissions-notes-banner">
+              <strong>Error.</strong>
+              <span>{pageError}</span>
+            </div>
+          ) : null}
+
+          <section className="submissions-table-panel submissions-notes-panel">
+            <SubmissionsTable
+              submissions={submissions}
+              loading={loading}
+              onView={(id) => setSelectedId(id)}
+            />
+          </section>
+        </div>
+
+        <SubmissionDrawer
+          open={Boolean(selectedId)}
+          submissionId={selectedId}
+          onClose={() => setSelectedId(null)}
+        />
+      </div>
     </ProtectedRoute>
   );
 }

@@ -14,7 +14,6 @@ import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import ProtectedRoute from "../components/ProtectedRoute";
 import Loader from "../components/Common/Loader";
 import StatusBadge from "../components/Common/StatusBadge";
-import ScreenBackButton from "../components/Common/ScreenBackButton";
 import { getEvents, selectActiveEvent } from "../utils/eventApi";
 import { getRunGroup } from "../utils/runGroupApi";
 import "./EventList.css";
@@ -468,7 +467,6 @@ export default function EventList() {
         <div className="events-shell">
           <header className="events-hero">
             <div className="events-hero-copy">
-              <ScreenBackButton fallbackHref="/" label="Back" />
               <div className="events-page-eyebrow">
                 <FlagRoundedIcon fontSize="inherit" />
                 Mechanic Operations
