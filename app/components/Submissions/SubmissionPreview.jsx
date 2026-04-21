@@ -96,6 +96,23 @@ const SectionHeader = ({ icon: Icon, title, isMobile }) => (
   </Box>
 );
 
+const formatSuspensionCorners = (suspension = {}, baseKey) => {
+  const values = [
+    suspension?.[`${baseKey}_fl`] ?? suspension?.[`${baseKey}_f`] ?? null,
+    suspension?.[`${baseKey}_fr`] ?? suspension?.[`${baseKey}_f`] ?? null,
+    suspension?.[`${baseKey}_rl`] ?? suspension?.[`${baseKey}_r`] ?? null,
+    suspension?.[`${baseKey}_rr`] ?? suspension?.[`${baseKey}_r`] ?? null,
+  ];
+
+  if (!values.some((value) => value !== null && value !== undefined && value !== "")) {
+    return "-";
+  }
+
+  return values
+    .map((value) => (value === null || value === undefined || value === "" ? "-" : value))
+    .join(" / ");
+};
+
 export default function SubmissionPreview({ data, previewId }) {
   const [openImage, setOpenImage] = useState(false);
   const theme = useTheme();
@@ -244,16 +261,24 @@ export default function SubmissionPreview({ data, previewId }) {
             title: "Suspension",
             rows: [
               {
-                label: "Rebound (F/R)",
-                value: `${session?.suspension?.rebound_f} / ${session?.suspension?.rebound_r}`,
+                label: "Rebound (FL/FR/RL/RR)",
+                value: formatSuspensionCorners(session?.suspension, "rebound"),
               },
               {
-                label: "Bump (F/R)",
-                value: `${session?.suspension?.bump_f} / ${session?.suspension?.bump_r}`,
+                label: "Bump (FL/FR/RL/RR)",
+                value: formatSuspensionCorners(session?.suspension, "bump"),
+              },
+              {
+                label: "Sway Bar (F/R)",
+                value: `${session?.suspension?.sway_bar_f ?? "-"} / ${session?.suspension?.sway_bar_r ?? "-"}`,
               },
               {
                 label: "Wing Angle",
-                value: `${session?.suspension?.wing_angle_deg}°`,
+                value:
+                  session?.suspension?.wing_angle_deg !== undefined &&
+                  session?.suspension?.wing_angle_deg !== null
+                    ? `${session.suspension.wing_angle_deg} deg`
+                    : "-",
               },
             ],
           },

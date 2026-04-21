@@ -86,6 +86,23 @@ const renderCornerList = (pressures = {}) => {
   );
 };
 
+const formatSuspensionCorners = (suspension = {}, baseKey) => {
+  const values = [
+    suspension?.[`${baseKey}_fl`] ?? suspension?.[`${baseKey}_f`] ?? null,
+    suspension?.[`${baseKey}_fr`] ?? suspension?.[`${baseKey}_f`] ?? null,
+    suspension?.[`${baseKey}_rl`] ?? suspension?.[`${baseKey}_r`] ?? null,
+    suspension?.[`${baseKey}_rr`] ?? suspension?.[`${baseKey}_r`] ?? null,
+  ];
+
+  if (!values.some((value) => value !== null && value !== undefined && value !== "")) {
+    return "-";
+  }
+
+  return values
+    .map((value) => (value === null || value === undefined || value === "" ? "-" : value))
+    .join(" / ");
+};
+
 export default function SubmissionReviewDrawer({
   open,
   submission,
@@ -444,12 +461,12 @@ export default function SubmissionReviewDrawer({
               <div className="submission-structured-title">Suspension</div>
               <div className="submission-detail-grid submission-detail-grid-tight">
                 <InfoPill
-                  label="Rebound F/R"
-                  value={`${submissionData.suspension?.rebound_f ?? "-"} / ${submissionData.suspension?.rebound_r ?? "-"}`}
+                  label="Rebound (FL/FR/RL/RR)"
+                  value={formatSuspensionCorners(submissionData.suspension, "rebound")}
                 />
                 <InfoPill
-                  label="Bump F/R"
-                  value={`${submissionData.suspension?.bump_f ?? "-"} / ${submissionData.suspension?.bump_r ?? "-"}`}
+                  label="Bump (FL/FR/RL/RR)"
+                  value={formatSuspensionCorners(submissionData.suspension, "bump")}
                 />
                 <InfoPill
                   label="Sway Bar F/R"

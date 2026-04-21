@@ -430,6 +430,30 @@
   display: flex;
   gap: 1rem;
   justify-content: flex-end;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.form-actions-with-voice {
+  justify-content: space-between;
+}
+
+.form-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+.voice-input-bottom {
+  flex: 1 1 380px;
+  min-width: min(100%, 360px);
+  max-width: 460px;
+}
+
+.voice-input-bottom .voice-input-card {
+  min-height: 72px;
 }
 
 .btn-large {
@@ -498,6 +522,13 @@
   }
 
   .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-action-buttons {
+    width: 100%;
+    margin-left: 0;
     flex-direction: column;
   }
 

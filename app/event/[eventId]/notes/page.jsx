@@ -75,10 +75,14 @@ export default function NotesSubmission() {
     wheelbase_mm: 0,
     pressures: basePressures,
     suspension: {
-      rebound_f: "",
-      rebound_r: "",
-      bump_f: "",
-      bump_r: "",
+      rebound_fl: "",
+      rebound_fr: "",
+      rebound_rl: "",
+      rebound_rr: "",
+      bump_fl: "",
+      bump_fr: "",
+      bump_rl: "",
+      bump_rr: "",
       sway_bar_f: "",
       sway_bar_r: "",
       wing_angle_deg: "",
@@ -201,7 +205,7 @@ export default function NotesSubmission() {
   };
 
   const updateNested = (setFn, path, value) => {
-    // path as array e.g. ['suspension','rebound_f']
+    // path as array e.g. ['suspension', 'rebound_fl']
     setFn((prev) => {
       const updated = { ...prev };
       let cursor = updated;
@@ -251,10 +255,14 @@ export default function NotesSubmission() {
 
   const buildDetailExtensions = (formState) => ({
     suspension: {
-      rebound_f: toNumberOrUndefined(formState.suspension.rebound_f),
-      rebound_r: toNumberOrUndefined(formState.suspension.rebound_r),
-      bump_f: toNumberOrUndefined(formState.suspension.bump_f),
-      bump_r: toNumberOrUndefined(formState.suspension.bump_r),
+      rebound_fl: toNumberOrUndefined(formState.suspension.rebound_fl),
+      rebound_fr: toNumberOrUndefined(formState.suspension.rebound_fr),
+      rebound_rl: toNumberOrUndefined(formState.suspension.rebound_rl),
+      rebound_rr: toNumberOrUndefined(formState.suspension.rebound_rr),
+      bump_fl: toNumberOrUndefined(formState.suspension.bump_fl),
+      bump_fr: toNumberOrUndefined(formState.suspension.bump_fr),
+      bump_rl: toNumberOrUndefined(formState.suspension.bump_rl),
+      bump_rr: toNumberOrUndefined(formState.suspension.bump_rr),
       sway_bar_f: toNumberOrUndefined(formState.suspension.sway_bar_f),
       sway_bar_r: toNumberOrUndefined(formState.suspension.sway_bar_r),
       wing_angle_deg: toNumberOrUndefined(formState.suspension.wing_angle_deg),
@@ -402,10 +410,14 @@ export default function NotesSubmission() {
             hot: { fl: "", fr: "", rl: "", rr: "" },
           },
           suspension: {
-            rebound_f: "",
-            rebound_r: "",
-            bump_f: "",
-            bump_r: "",
+            rebound_fl: "",
+            rebound_fr: "",
+            rebound_rl: "",
+            rebound_rr: "",
+            bump_fl: "",
+            bump_fr: "",
+            bump_rl: "",
+            bump_rr: "",
             sway_bar_f: "",
             sway_bar_r: "",
             wing_angle_deg: "",
@@ -839,32 +851,34 @@ export default function NotesSubmission() {
                   <label className="form-label">Suspension</label>
                   <div className="grid-2">
                     <div>
-                      <label className="form-label sub-label">Rebound F</label>
+                      <label className="form-label sub-label">Rebound FL</label>
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
-                        value={detailForm.suspension.rebound_f}
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.rebound_fl}
                         onChange={(e) =>
                           updateNested(
                             setDetailForm,
-                            ["suspension", "rebound_f"],
+                            ["suspension", "rebound_fl"],
                             e.target.value,
                           )
                         }
                       />
                     </div>
                     <div>
-                      <label className="form-label sub-label">Rebound R</label>
+                      <label className="form-label sub-label">Rebound FR</label>
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
-                        value={detailForm.suspension.rebound_r}
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.rebound_fr}
                         onChange={(e) =>
                           updateNested(
                             setDetailForm,
-                            ["suspension", "rebound_r"],
+                            ["suspension", "rebound_fr"],
                             e.target.value,
                           )
                         }
@@ -873,32 +887,106 @@ export default function NotesSubmission() {
                   </div>
                   <div className="grid-2" style={{ marginTop: "0.75rem" }}>
                     <div>
-                      <label className="form-label sub-label">Bump F</label>
+                      <label className="form-label sub-label">Rebound RL</label>
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
-                        value={detailForm.suspension.bump_f}
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.rebound_rl}
                         onChange={(e) =>
                           updateNested(
                             setDetailForm,
-                            ["suspension", "bump_f"],
+                            ["suspension", "rebound_rl"],
                             e.target.value,
                           )
                         }
                       />
                     </div>
                     <div>
-                      <label className="form-label sub-label">Bump R</label>
+                      <label className="form-label sub-label">Rebound RR</label>
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
-                        value={detailForm.suspension.bump_r}
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.rebound_rr}
                         onChange={(e) =>
                           updateNested(
                             setDetailForm,
-                            ["suspension", "bump_r"],
+                            ["suspension", "rebound_rr"],
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid-2" style={{ marginTop: "0.75rem" }}>
+                    <div>
+                      <label className="form-label sub-label">Bump FL</label>
+                      <input
+                        className="input"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.bump_fl}
+                        onChange={(e) =>
+                          updateNested(
+                            setDetailForm,
+                            ["suspension", "bump_fl"],
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label sub-label">Bump FR</label>
+                      <input
+                        className="input"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.bump_fr}
+                        onChange={(e) =>
+                          updateNested(
+                            setDetailForm,
+                            ["suspension", "bump_fr"],
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid-2" style={{ marginTop: "0.75rem" }}>
+                    <div>
+                      <label className="form-label sub-label">Bump RL</label>
+                      <input
+                        className="input"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.bump_rl}
+                        onChange={(e) =>
+                          updateNested(
+                            setDetailForm,
+                            ["suspension", "bump_rl"],
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label sub-label">Bump RR</label>
+                      <input
+                        className="input"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={detailForm.suspension.bump_rr}
+                        onChange={(e) =>
+                          updateNested(
+                            setDetailForm,
+                            ["suspension", "bump_rr"],
                             e.target.value,
                           )
                         }
@@ -911,7 +999,8 @@ export default function NotesSubmission() {
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
+                        step="1"
+                        min="0"
                         value={detailForm.suspension.sway_bar_f}
                         onChange={(e) =>
                           updateNested(
@@ -927,7 +1016,8 @@ export default function NotesSubmission() {
                       <input
                         className="input"
                         type="number"
-                        step="0.1"
+                        step="1"
+                        min="0"
                         value={detailForm.suspension.sway_bar_r}
                         onChange={(e) =>
                           updateNested(
@@ -1644,11 +1734,6 @@ export default function NotesSubmission() {
               <div className="form-group">
                 <div className="raw-notes-header">
                   <label className="form-label">Race Notes (Raw Text)</label>
-                  <VoiceInputControl
-                    textareaRef={quickRawTextRef}
-                    onValueChange={setRawTextValue}
-                    disabled={isSubmitting}
-                  />
                 </div>
                 <textarea
                   className="textarea"
@@ -1696,21 +1781,32 @@ export default function NotesSubmission() {
               )}
             </div>
 
-            <div className="form-actions">
-              <button
-                type="button"
-                onClick={() => router.push(`/event/${eventId}`)}
-                className="btn btn-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="btn btn-primary btn-large"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? "Submitting..." : "Submit Notes"}
-              </button>
+            <div className={`form-actions ${isQuickTab ? "form-actions-with-voice" : ""}`}>
+              {isQuickTab && (
+                <VoiceInputControl
+                  className="voice-input-bottom"
+                  textareaRef={quickRawTextRef}
+                  onValueChange={setRawTextValue}
+                  disabled={isSubmitting}
+                />
+              )}
+
+              <div className="form-action-buttons">
+                <button
+                  type="button"
+                  onClick={() => router.push(`/event/${eventId}`)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-large"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Submitting..." : "Submit Notes"}
+                </button>
+              </div>
             </div>
           </form>
 
