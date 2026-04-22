@@ -375,7 +375,6 @@ export default function EventsManagementPage() {
     const lifecycle = getEventLifecycle(event);
     const runGroupStatus = getRunGroupStatus(event.runGroup);
     const archived = lifecycle.key === "archived";
-    const archiveDisabled = archived;
     const title = event.name || "Untitled Event";
     const runGroupValue =
       event.runGroup?.normalized || event.runGroup?.rawText || "Not Configured";
@@ -464,19 +463,6 @@ export default function EventsManagementPage() {
               disabled={!eventId}
             >
               Edit Event
-            </button>
-            <button
-              type="button"
-              className={archiveDisabled ? "btn btn-secondary" : "btn btn-danger"}
-              onClick={() => openArchiveConfirm(event)}
-              disabled={archiveDisabled}
-              title={
-                archiveDisabled
-                  ? "Archived events stay in the archive and do not need another archive action."
-                  : "Archive this event without deleting it."
-              }
-            >
-              {archiveDisabled ? "Archived" : "Archive Event"}
             </button>
           </div>
         </div>
