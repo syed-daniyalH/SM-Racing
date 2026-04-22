@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
@@ -399,7 +398,6 @@ export default function UsersManagement() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
-              <ScreenBackButton fallbackHref="/admin/events" />
               <p className="users-page-eyebrow">Admin Operations</p>
               <h1 className="fleet-page-title">User Management</h1>
               <p className="fleet-page-subtitle">

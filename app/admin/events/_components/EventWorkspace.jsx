@@ -6,7 +6,6 @@ import ProtectedRoute from "../../../components/ProtectedRoute";
 import EmptyState from "../../../components/Common/EmptyState";
 import Loader from "../../../components/Common/Loader";
 import StatusBadge from "../../../components/Common/StatusBadge";
-import ScreenBackButton from "../../../components/Common/ScreenBackButton";
 import EventFormDrawer from "./EventFormDrawer";
 import EventArchiveDialog from "./EventArchiveDialog";
 import {
@@ -372,7 +371,6 @@ export default function EventWorkspace() {
         <div className="admin-page-shell">
           <header className="admin-page-header">
             <div className="admin-page-header-copy">
-              <ScreenBackButton fallbackHref="/admin/events" label="Back" />
               <div className="admin-page-eyebrow">Event Detail Workspace</div>
               <h1 className="admin-page-title">
                 {event ? event.name : "Run Group Setup"}

@@ -1,13 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import StatusBadge from "../../../components/Common/StatusBadge";
 import { DrawerShell } from "../../fleet/_components/ManagementUi";
 import {
-  formatTrackCoordinates,
-  getTrackDisplayName,
-  getTrackLifecycle,
-  getTrackName,
   normalizeTrackShortCode,
   resolveTrackIsActive,
 } from "./trackManagementHelpers";
@@ -84,21 +78,9 @@ export default function TrackFormDrawer({
   countryOptions = [],
 }) {
   const readOnly = mode === "view";
-  const lifecycle = useMemo(
-    () => getTrackLifecycle(readOnly ? track : { status: values.status, isActive: values.status !== "archived" }),
-    [readOnly, track, values.status],
-  );
-  const trackNameValue = readOnly ? getTrackName(track) || "Not configured" : values.trackName || "Not configured";
-  const displayNameValue = readOnly
-    ? getTrackDisplayName(track) || "Not configured"
-    : values.displayName.trim() || values.trackName.trim() || "Not configured";
   const shortCodeValue = readOnly
     ? track?.shortCode || track?.short_code || "Not configured"
     : normalizeTrackShortCode(values.shortCode) || "Not configured";
-  const countryValue = readOnly
-    ? track?.country || "Not configured"
-    : values.country.trim() || "Not configured";
-  const coordinatesValue = readOnly ? formatTrackCoordinates(track) : formatTrackCoordinates(values);
   const title =
     mode === "create" ? "Create Track" : mode === "edit" ? "Edit Track" : "Track Details";
   const subtitle =
@@ -107,14 +89,6 @@ export default function TrackFormDrawer({
       : mode === "edit"
         ? "Update the track record, geographic data, and lifecycle state."
         : "Review the master track record and history before making changes.";
-
-  const meta = (
-    <>
-      <StatusBadge label={lifecycle.label} tone={lifecycle.tone} />
-      <StatusBadge label={shortCodeValue} tone={shortCodeValue === "Not configured" ? "neutral" : "accent"} />
-      <StatusBadge label={countryValue} tone="neutral" />
-    </>
-  );
 
   const handleFieldChange = (field, value) => {
     onChange?.(field, value);
@@ -125,7 +99,6 @@ export default function TrackFormDrawer({
       open={open}
       title={title}
       subtitle={subtitle}
-      meta={meta}
       onClose={onClose}
       footer={
         <TrackFormFooter
@@ -151,29 +124,6 @@ export default function TrackFormDrawer({
           </div>
         </div>
       ) : null}
-
-      <div className="fleet-detail-grid">
-        <div className="fleet-detail-card">
-          <p className="fleet-detail-label">Track Name</p>
-          <p className="fleet-detail-value">{trackNameValue}</p>
-          <p className="fleet-detail-note">Official master record used by events and filters.</p>
-        </div>
-        <div className="fleet-detail-card">
-          <p className="fleet-detail-label">Display Name</p>
-          <p className="fleet-detail-value">{displayNameValue}</p>
-          <p className="fleet-detail-note">The user-facing label shown in admin workflows.</p>
-        </div>
-        <div className="fleet-detail-card">
-          <p className="fleet-detail-label">Country</p>
-          <p className="fleet-detail-value">{countryValue}</p>
-          <p className="fleet-detail-note">Used for filtering and master-data reporting.</p>
-        </div>
-        <div className="fleet-detail-card">
-          <p className="fleet-detail-label">Coordinates</p>
-          <p className="fleet-detail-value">{coordinatesValue}</p>
-          <p className="fleet-detail-note">Latitude and longitude stay available for future mapping.</p>
-        </div>
-      </div>
 
       <div className="tracks-preview-panel">
         <p className="tracks-preview-label">Normalized Preview</p>

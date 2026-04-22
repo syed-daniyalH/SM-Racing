@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
@@ -314,7 +313,6 @@ export default function TracksManagementPage() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
-              <ScreenBackButton fallbackHref="/admin/vehicles" />
               <h1 className="fleet-page-title">Track Management</h1>
               <p className="fleet-page-subtitle">
                 Manage official track records used across events and race submissions. Keep track names

@@ -7,7 +7,6 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import EmptyState from "../../components/Common/EmptyState";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import {
   archiveEvent,
   createEvent,
@@ -499,7 +498,6 @@ export default function EventsManagementPage() {
         <div className="admin-page-shell">
           <header className="admin-page-header">
             <div className="admin-page-header-copy">
-              <ScreenBackButton fallbackHref="/admin/tracks" />
               <div className="admin-page-eyebrow">Admin Operations</div>
               <h1 className="admin-page-title">Event Management</h1>
               <p className="admin-page-subtitle">

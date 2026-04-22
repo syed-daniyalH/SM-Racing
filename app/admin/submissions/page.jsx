@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import {
   ActionIconButton,
   ConfirmDialog,
@@ -23,6 +23,7 @@ import {
   buildSubmissionMonitorRecord,
   buildSubmissionSearchText,
   buildSubmissionSummaryCounts,
+  mockSubmissions,
   getSubmissionId,
 } from "./_components/submissionReviewHelpers";
 import SubmissionReviewDrawer from "./_components/SubmissionReviewDrawer";
@@ -42,9 +43,7 @@ import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
 import PendingActionsOutlinedIcon from "@mui/icons-material/PendingActionsOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import ReplayOutlinedIcon from "@mui/icons-material/ReplayOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
-import SyncOutlinedIcon from "@mui/icons-material/SyncOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
@@ -143,7 +142,18 @@ const getConfidenceTone = (confidence) => {
   return "danger";
 };
 
+const DEMO_SUBMISSIONS = mockSubmissions.slice(0, 1);
+
+const isOfflineError = (error) => {
+  const message = getApiErrorMessage(error, "").toLowerCase();
+
+  return /network error|failed to fetch|fetch failed|getaddrinfo|econnrefused|enotfound|socket hang up/.test(
+    message,
+  );
+};
+
 export default function SubmissionReviewPage() {
+  const router = useRouter();
   const { user } = useAuth();
 
   const [submissions, setSubmissions] = useState([]);
@@ -166,6 +176,24 @@ export default function SubmissionReviewPage() {
   const [busyAction, setBusyAction] = useState("");
   const [archiveTarget, setArchiveTarget] = useState(null);
 
+  const showDemoSubmission = useCallback((message) => {
+    if (!DEMO_SUBMISSIONS.length) return;
+
+    setSubmissions(DEMO_SUBMISSIONS);
+    setPageError("");
+    setNotice({
+      tone: "warning",
+      message,
+    });
+
+    const demoId = getSubmissionId(DEMO_SUBMISSIONS[0]);
+    if (demoId) {
+      setSelectedSubmissionId(demoId);
+      setDrawerFocus("overview");
+      setDrawerOpen(true);
+    }
+  }, []);
+
   const refreshMonitor = useCallback(async ({ showSpinner = true } = {}) => {
     try {
       if (showSpinner) {
@@ -175,9 +203,25 @@ export default function SubmissionReviewPage() {
 
       const response = await getAllSubmissions();
       const list = Array.isArray(response) ? response : response?.submissions || [];
+
+      if (list.length === 0) {
+        showDemoSubmission(
+          "No live submissions were returned, so a sample submission is shown for review.",
+        );
+        return;
+      }
+
       setSubmissions(list);
     } catch (error) {
       console.error("Failed to load submissions:", error);
+
+      if (isOfflineError(error)) {
+        showDemoSubmission(
+          "The backend is unreachable right now, so a sample submission is shown for review.",
+        );
+        return;
+      }
+
       setSubmissions([]);
       setPageError(getApiErrorMessage(error, "Failed to load submissions."));
     } finally {
@@ -185,7 +229,7 @@ export default function SubmissionReviewPage() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [showDemoSubmission]);
 
   useEffect(() => {
     refreshMonitor();
@@ -305,6 +349,19 @@ export default function SubmissionReviewPage() {
     setSelectedSubmissionId(submission?.id || submission?._id || submission?.submissionId || null);
     setDrawerFocus(focus);
     setDrawerOpen(true);
+  };
+
+  const openDetailsPage = (submission) => {
+    const id = getSubmissionId(submission);
+    if (!id) {
+      setNotice({
+        tone: "warning",
+        message: "This submission does not have an ID yet, so the detailed view cannot open.",
+      });
+      return;
+    }
+
+    router.push(`/admin/submissions/${encodeURIComponent(String(id))}`);
   };
 
   const closeDrawer = () => {
@@ -597,7 +654,6 @@ export default function SubmissionReviewPage() {
 
         <header className="submission-monitor-header">
           <div className="submission-monitor-copy">
-            <ScreenBackButton fallbackHref="/admin/users" label="Back" />
             <p className="submission-monitor-eyebrow">Admin Operations</p>
             <h1>Submission Review</h1>
             <p className="submission-monitor-subtitle">
@@ -908,33 +964,13 @@ export default function SubmissionReviewPage() {
                               icon={VisibilityOutlinedIcon}
                               label="View Details"
                               title="View Details"
-                              onClick={() => openDrawer(submission, "overview")}
+                              onClick={() => openDetailsPage(submission)}
                             />
                             <ActionIconButton
                               icon={DescriptionOutlinedIcon}
                               label="Review Raw Input"
                               title="Review Raw Input"
                               onClick={() => openDrawer(submission, "raw")}
-                            />
-                            <ActionIconButton
-                              icon={DatasetOutlinedIcon}
-                              label="Review Parsed Data"
-                              title="Review Parsed Data"
-                              onClick={() => openDrawer(submission, "parsed")}
-                            />
-                            <ActionIconButton
-                              icon={ReplayOutlinedIcon}
-                              label="Retry Validation"
-                              title="Retry Validation"
-                              onClick={() => handleRetryValidation(submission)}
-                              disabled={busyAction === `validate:${submission.id}` || submission.validationStateKey === "archived"}
-                            />
-                            <ActionIconButton
-                              icon={SyncOutlinedIcon}
-                              label="Retry Sync"
-                              title="Retry Sync"
-                              onClick={() => handleRetrySync(submission)}
-                              disabled={busyAction === `sync:${submission.id}` || submission.syncStateKey !== "failed" || submission.validationStateKey === "archived"}
                             />
                             <ActionIconButton
                               icon={ArchiveOutlinedIcon}

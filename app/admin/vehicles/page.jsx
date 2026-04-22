@@ -6,7 +6,6 @@ import TextField from "@mui/material/TextField";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import ScreenBackButton from "../../components/Common/ScreenBackButton";
 import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
@@ -464,7 +463,7 @@ export default function VehiclesManagementPage() {
         return {
           id: driver.driver_id || driver.id,
           label: displayName,
-          sublabel: `${getDriverFullName(driver) || "No full name"} · ${formatEntityId("DRV", driver.id)}`,
+          sublabel: `${getDriverFullName(driver) || "No full name"} · ${formatEntityId("DRV", driver.driver_id || driver.id)}`,
           searchText: [
             displayName,
             getDriverFullName(driver),
@@ -743,7 +742,6 @@ export default function VehiclesManagementPage() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
-              <ScreenBackButton fallbackHref="/admin/drivers" />
               <h1 className="fleet-page-title">Vehicle Management</h1>
               <p className="fleet-page-subtitle">
                 Manage vehicles, assignments, and specifications in a premium motorsport admin workspace.
@@ -956,9 +954,13 @@ export default function VehiclesManagementPage() {
 
                       return (
                         <div key={vehicle.id} className="fleet-table-row">
-                          <div className="fleet-table-cell fleet-mono" data-label="Vehicle ID" title={vehicle.id}>
-                            {formatEntityId("VEH", vehicle.id)}
-                          </div>
+                            <div
+                              className="fleet-table-cell fleet-mono"
+                              data-label="Vehicle ID"
+                              title={vehicle.vehicle_id || vehicle.id}
+                            >
+                              {vehicle.vehicle_id || formatEntityId("VEH", vehicle.id)}
+                            </div>
                           <div className="fleet-table-cell" data-label="Assigned Driver">
                             <div className="fleet-cell-stack">
                               <div className="fleet-cell-title">{vehicle.assignedDriverName}</div>
