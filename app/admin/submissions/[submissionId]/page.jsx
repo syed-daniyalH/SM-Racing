@@ -129,9 +129,6 @@ export default function SubmissionDetailPage() {
       ) : pageError ? (
         <div className="submission-detail-empty-shell">
           <div className="submission-monitor-error">{pageError}</div>
-          <a className="fleet-btn fleet-btn-secondary" href="/admin/submissions">
-            Back to Submissions
-          </a>
         </div>
       ) : (
         <SubmissionDetailScreen

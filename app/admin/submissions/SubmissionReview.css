@@ -830,11 +830,6 @@
   max-width: 86ch;
 }
 
-.submission-detail-hero-back {
-  display: flex;
-  align-items: center;
-}
-
 .submission-detail-eyebrow {
   margin: 0;
   color: #ffbf9f;

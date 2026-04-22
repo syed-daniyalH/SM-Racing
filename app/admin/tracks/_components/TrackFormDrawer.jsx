@@ -18,9 +18,6 @@ function TrackFormFooter({
   if (mode === "view") {
     return (
       <>
-        <button type="button" className="fleet-btn fleet-btn-secondary" onClick={onClose}>
-          Back to Tracks
-        </button>
         <button
           type="button"
           className="fleet-btn fleet-btn-secondary"

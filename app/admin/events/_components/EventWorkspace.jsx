@@ -435,13 +435,6 @@ export default function EventWorkspace() {
                   >
                     Retry
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => router.push("/admin/events")}
-                  >
-                    Back to Events
-                  </button>
                 </>
               }
             />
