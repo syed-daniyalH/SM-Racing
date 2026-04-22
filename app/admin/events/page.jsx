@@ -222,6 +222,7 @@ export default function EventsManagementPage() {
     const runGroup = drawerValues.runGroup.trim();
     const startDate = drawerValues.startDate;
     const endDate = drawerValues.endDate;
+    const runGroupPreview = getRunGroupPreview(runGroup);
 
     if (!name || !track || !startDate || !endDate) {
       setDrawerError("Please complete the event name, track, and date range.");
@@ -229,15 +230,12 @@ export default function EventsManagementPage() {
       return;
     }
 
-    if (drawerMode === "create") {
-      const runGroupPreview = getRunGroupPreview(runGroup);
-      if (!runGroupPreview.isValid) {
-        setDrawerError(
-          "Run group is required during event creation and must normalize to RED, BLUE, YELLOW, or GREEN.",
-        );
-        setSavingEvent(false);
-        return;
-      }
+    if (!runGroupPreview.isValid) {
+      setDrawerError(
+        "Run group is required and must normalize to RED, BLUE, YELLOW, or GREEN.",
+      );
+      setSavingEvent(false);
+      return;
     }
 
     if (new Date(startDate) > new Date(endDate)) {
@@ -253,11 +251,9 @@ export default function EventsManagementPage() {
         startDate,
         endDate,
         status: drawerValues.status,
+        run_group_raw_text: runGroup,
+        notes: drawerValues.notes,
       };
-
-      if (drawerMode === "create") {
-        payload.runGroup = runGroup;
-      }
 
       if (drawerMode === "create") {
         const response = await createEvent(payload);
@@ -374,7 +370,6 @@ export default function EventsManagementPage() {
     const lifecycle = getEventLifecycle(event);
     const runGroupStatus = getRunGroupStatus(event.runGroup);
     const archived = lifecycle.key === "archived";
-    const setupDisabled = archived && !event.runGroup;
     const archiveDisabled = archived;
     const title = event.name || "Untitled Event";
     const runGroupValue =
@@ -443,8 +438,8 @@ export default function EventsManagementPage() {
             </div>
           ) : (
             <div className="admin-event-card-callout">
-              Run group is missing. Configure it before mechanics begin
-              submissions.
+              Run group is missing. Open Edit Event to configure it before
+              mechanics begin submissions.
             </div>
           )}
 
@@ -464,19 +459,6 @@ export default function EventsManagementPage() {
               disabled={!eventId}
             >
               Edit Event
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => router.push(`/admin/events/${eventId}/run-group`)}
-              disabled={!eventId || setupDisabled}
-              title={
-                setupDisabled
-                  ? "Archived events need to be reactivated before a new run group can be created."
-                  : "Open the run group setup workspace."
-              }
-            >
-              Setup Run Group
             </button>
             <button
               type="button"
@@ -654,13 +636,6 @@ export default function EventsManagementPage() {
                 >
                   Reset Filters
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={openCreateDrawer}
-                >
-                  Create Event
-                </button>
               </div>
             </div>
           </section>
@@ -766,7 +741,7 @@ export default function EventsManagementPage() {
           onSubmit={handleSaveEvent}
           isSaving={savingEvent}
           error={drawerError}
-          notesHint="Stored in the admin browser cache for now, ready to map to a backend description field."
+          notesHint="Saved to the backend event notes field."
         />
 
         <EventArchiveDialog

@@ -78,12 +78,17 @@ export default function EventWorkspace() {
       }
 
       setEvent(normalizedEvent);
-      setDrawerValues(toEventFormValues(normalizedEvent));
 
       try {
         const runGroupResponse = await getRunGroup(eventId);
         setExistingRunGroup(runGroupResponse);
-        setRunGroupValue(runGroupResponse?.rawText || runGroupResponse?.normalized || "");
+        const nextRunGroupValue =
+          runGroupResponse?.rawText || runGroupResponse?.normalized || "";
+        setRunGroupValue(nextRunGroupValue);
+        setDrawerValues({
+          ...toEventFormValues(normalizedEvent),
+          runGroup: nextRunGroupValue,
+        });
       } catch (runGroupError) {
         if (!isNotFoundError(runGroupError)) {
           console.warn("Run group load failed for event detail screen:", runGroupError);
@@ -91,6 +96,7 @@ export default function EventWorkspace() {
 
         setExistingRunGroup(null);
         setRunGroupValue("");
+        setDrawerValues(toEventFormValues(normalizedEvent));
       }
     } catch (error) {
       setEvent(null);
@@ -148,7 +154,10 @@ export default function EventWorkspace() {
 
   const openEditDrawer = () => {
     if (!event) return;
-    setDrawerValues(toEventFormValues(event));
+    setDrawerValues({
+      ...toEventFormValues(event),
+      runGroup: runGroupValue || existingRunGroup?.rawText || existingRunGroup?.normalized || "",
+    });
     setDrawerError("");
     setDrawerOpen(true);
   };
@@ -159,11 +168,20 @@ export default function EventWorkspace() {
 
     const name = drawerValues.name.trim();
     const track = drawerValues.track.trim();
+    const runGroup = drawerValues.runGroup.trim();
     const startDate = drawerValues.startDate;
     const endDate = drawerValues.endDate;
+    const runGroupPreview = getRunGroupPreview(runGroup);
 
     if (!name || !track || !startDate || !endDate) {
       setDrawerError("Please complete the event name, track, and date range.");
+      return;
+    }
+
+    if (!runGroupPreview.isValid) {
+      setDrawerError(
+        "Run group is required and must normalize to RED, BLUE, YELLOW, or GREEN.",
+      );
       return;
     }
 
@@ -181,6 +199,8 @@ export default function EventWorkspace() {
         startDate,
         endDate,
         status: drawerValues.status,
+        run_group_raw_text: runGroup,
+        notes: drawerValues.notes,
       };
 
       const response = await updateEvent(getEventId(event), payload);
@@ -189,6 +209,19 @@ export default function EventWorkspace() {
       const normalizedEvent =
         mergeStoredEventNotesList([updatedEvent])[0] || updatedEvent;
       setEvent(normalizedEvent);
+
+      try {
+        const refreshedRunGroup = await getRunGroup(getEventId(event));
+        setExistingRunGroup(refreshedRunGroup);
+        setRunGroupValue(
+          refreshedRunGroup?.rawText || refreshedRunGroup?.normalized || runGroup,
+        );
+      } catch (runGroupError) {
+        if (!isNotFoundError(runGroupError)) {
+          console.warn("Run group refresh failed after event update:", runGroupError);
+        }
+      }
+
       setDrawerOpen(false);
       setDrawerError("");
       setNotice({
@@ -641,7 +674,7 @@ export default function EventWorkspace() {
           onSubmit={saveEvent}
           isSaving={savingEvent}
           error={drawerError}
-          notesHint="Stored in the admin browser cache for now, ready to map to a backend description field."
+          notesHint="Saved to the backend event notes field."
         />
 
         <EventArchiveDialog

@@ -15,6 +15,11 @@ const buildEventPayload = (eventData, options = {}) => {
     end_date: toApiDate(eventData?.end_date || eventData?.endDate),
   };
 
+  const notesValue = eventData?.notes ?? eventData?.description;
+  if (typeof notesValue === "string") {
+    payload.notes = notesValue.trim();
+  }
+
   const isActive =
     typeof eventData?.is_active === "boolean"
       ? eventData.is_active
@@ -111,7 +116,7 @@ export const updateEvent = async (eventId, eventData) => {
   try {
     const response = await axiosInstance.put(
       `/events/${eventId}`,
-      buildEventPayload(eventData),
+      buildEventPayload(eventData, { includeRunGroup: true }),
     );
     return {
       success: true,

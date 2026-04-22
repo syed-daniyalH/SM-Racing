@@ -20,8 +20,8 @@ export default function EventFormDrawer({
   const title = mode === "edit" ? "Edit Event" : "Create Event";
   const subtitle =
     mode === "edit"
-      ? "Update the event details, lifecycle state, or internal notes."
-      : "Set up a new race event with the correct track, schedule, and required run group.";
+      ? "Update the event details, run group, lifecycle state, and internal notes."
+      : "Set up a new race event with the correct track, schedule, run group, and notes.";
   const runGroupPreview = getRunGroupPreview(values.runGroup || "");
 
   const updateField = (field) => (event) => {
@@ -92,51 +92,40 @@ export default function EventFormDrawer({
               />
             </div>
 
-            {mode === "create" ? (
-              <div className="form-group">
-                <label className="form-label" htmlFor="event-run-group">
-                  Run Group <span className="required-marker">*</span>
-                </label>
-                <input
-                  id="event-run-group"
-                  className="input"
-                  type="text"
-                  placeholder="RED"
-                  value={values.runGroup}
-                  onChange={updateField("runGroup")}
-                  autoComplete="off"
-                  required
-                />
-                <div
-                  className={`run-group-preview ${
-                    runGroupPreview.isValid ? "valid" : "invalid"
-                  }`}
-                >
-                  <div className="run-group-preview-label">
-                    Normalized preview
-                  </div>
-                  <div className="run-group-preview-value">
-                    {runGroupPreview.isValid
-                      ? runGroupPreview.resolved
-                      : "Not configured yet"}
-                  </div>
-                  <p className="form-hint">{runGroupPreview.hint}</p>
+            <div className="form-group">
+              <label className="form-label" htmlFor="event-run-group">
+                Run Group <span className="required-marker">*</span>
+              </label>
+              <input
+                id="event-run-group"
+                className="input"
+                type="text"
+                placeholder="RED"
+                value={values.runGroup}
+                onChange={updateField("runGroup")}
+                autoComplete="off"
+                required
+              />
+              <div
+                className={`run-group-preview ${
+                  runGroupPreview.isValid ? "valid" : "invalid"
+                }`}
+              >
+                <div className="run-group-preview-label">
+                  Normalized preview
                 </div>
-              </div>
-            ) : (
-              <div className="form-group">
-                <label className="form-label">Run Group</label>
-                <div className="readonly-field">
-                  {values.runGroup
-                    ? `Configured as ${values.runGroup}`
-                    : "Not configured yet."}
+                <div className="run-group-preview-value">
+                  {runGroupPreview.isValid
+                    ? runGroupPreview.resolved
+                    : "Not configured yet"}
                 </div>
                 <p className="form-hint">
-                  Run groups are managed in the dedicated Setup Run Group
-                  workspace.
+                  {mode === "edit"
+                    ? "Edit the raw label here. The backend keeps the normalized code in sync."
+                    : runGroupPreview.hint}
                 </p>
               </div>
-            )}
+            </div>
 
             <div className="form-row">
               <div className="form-group">

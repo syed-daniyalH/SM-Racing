@@ -347,4 +347,5 @@ export const toEventApiPayload = (values) => ({
   startDate: values?.startDate,
   endDate: values?.endDate,
   is_active: values?.status ? values.status !== "archived" : undefined,
+  notes: values?.notes?.trim() || undefined,
 });
