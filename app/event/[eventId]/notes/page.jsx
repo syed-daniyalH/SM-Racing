@@ -245,6 +245,16 @@ export default function NotesSubmission() {
     };
   }, []);
 
+  const eventEndDate = useMemo(() => {
+    const rawEndDate = event?.endDate || event?.end_date;
+    if (!rawEndDate) return null;
+
+    const parsed = new Date(rawEndDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [event?.endDate, event?.end_date]);
+
+  const canSubmitNotes = Boolean(eventEndDate && Date.now() > eventEndDate.getTime());
+
   const toNumberOrUndefined = (value) =>
     value === "" || value === null || value === undefined
       ? undefined
@@ -392,6 +402,13 @@ export default function NotesSubmission() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!canSubmitNotes) {
+      setSubmissionStatus("failed");
+      setError("Submission notes are only available after the event end date passes.");
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmissionStatus("pending");
     setError("");
@@ -469,16 +486,6 @@ export default function NotesSubmission() {
     }
   };
 
-  if (!event) {
-    return (
-      <ProtectedRoute requireMechanic={true}>
-        <div style={{ padding: "2rem", textAlign: "center" }}>
-          <p>Loading event...</p>
-        </div>
-      </ProtectedRoute>
-    );
-  }
-
   const isQuickTab = activeTab === "quick";
   const formState = isQuickTab ? quickForm : detailForm;
   const setFormFn = isQuickTab ? setQuickForm : setDetailForm;
@@ -533,6 +540,16 @@ export default function NotesSubmission() {
     trackSelection === "__OTHER__"
       ? formState.track
       : trackSelection || formState.track || event?.track || "";
+
+  if (!event) {
+    return (
+      <ProtectedRoute requireMechanic={true}>
+        <div style={{ padding: "2rem", textAlign: "center" }}>
+          <p>Loading event...</p>
+        </div>
+      </ProtectedRoute>
+    );
+  }
 
   return (
     <ProtectedRoute requireMechanic={true}>
@@ -1757,6 +1774,11 @@ export default function NotesSubmission() {
             )}
 
             <div className="submission-status">
+              {!canSubmitNotes && (
+                <div className="status-message status-pending">
+                  Submission notes are locked until the event end date passes.
+                </div>
+              )}
               {submissionStatus === "sent" && (
                 <div className="status-message status-success">
                   ✓ Notes submitted successfully! Redirecting...
@@ -1780,7 +1802,7 @@ export default function NotesSubmission() {
                   className="voice-input-bottom"
                   textareaRef={quickRawTextRef}
                   onValueChange={setRawTextValue}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !canSubmitNotes}
                 />
               )}
 
@@ -1795,9 +1817,13 @@ export default function NotesSubmission() {
                 <button
                   type="submit"
                   className="btn btn-primary btn-large"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !canSubmitNotes}
                 >
-                  {isSubmitting ? "Submitting..." : "Submit Notes"}
+                  {isSubmitting
+                    ? "Submitting..."
+                    : canSubmitNotes
+                      ? "Submit Notes"
+                      : "Locked Until Event Ends"}
                 </button>
               </div>
             </div>
