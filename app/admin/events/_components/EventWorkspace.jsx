@@ -256,6 +256,10 @@ export default function EventWorkspace() {
         mergeStoredEventNotesList([archivedEvent])[0] || archivedEvent;
 
       setEvent(normalizedArchivedEvent);
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        setDrawerError("");
+      }
       setArchiveTarget(null);
       setNotice({
         type: "success",
@@ -672,6 +676,8 @@ export default function EventWorkspace() {
           onChange={handleDrawerChange}
           onClose={closeDrawer}
           onSubmit={saveEvent}
+          onArchive={event ? () => openArchiveConfirm() : null}
+          archiveDisabled={event?.isActive === false}
           isSaving={savingEvent}
           error={drawerError}
           notesHint="Saved to the backend event notes field."

@@ -333,6 +333,11 @@ export default function EventsManagementPage() {
 
       await archiveEvent(eventId);
       await refreshEvents();
+      if (drawerOpen && drawerEvent && getEventId(drawerEvent) === eventId) {
+        setDrawerOpen(false);
+        setDrawerEvent(null);
+        setDrawerError("");
+      }
       setArchiveTarget(null);
       setNotice({
         type: NOTICE_COPY.success,
@@ -739,6 +744,12 @@ export default function EventsManagementPage() {
           onChange={handleDrawerChange}
           onClose={closeDrawer}
           onSubmit={handleSaveEvent}
+          onArchive={
+            drawerMode === "edit" && drawerEvent
+              ? () => openArchiveConfirm(drawerEvent)
+              : null
+          }
+          archiveDisabled={drawerMode === "edit" ? drawerEvent?.isActive === false : false}
           isSaving={savingEvent}
           error={drawerError}
           notesHint="Saved to the backend event notes field."

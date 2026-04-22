@@ -11,6 +11,8 @@ export default function EventFormDrawer({
   onChange,
   onClose,
   onSubmit,
+  onArchive = null,
+  archiveDisabled = false,
   isSaving = false,
   error = "",
   notesHint = "Optional operational notes for admin reference.",
@@ -206,6 +208,16 @@ export default function EventFormDrawer({
             >
               Cancel
             </button>
+            {mode === "edit" && onArchive ? (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={onArchive}
+                disabled={isSaving || archiveDisabled}
+              >
+                {archiveDisabled ? "Archived" : "Archive Event"}
+              </button>
+            ) : null}
             <button
               type="submit"
               className="btn btn-primary"
