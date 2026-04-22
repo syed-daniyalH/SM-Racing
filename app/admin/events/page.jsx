@@ -463,10 +463,7 @@ export default function EventsManagementPage() {
               be reactivated from Edit Event.
             </div>
           ) : event.runGroup ? (
-            <div className="admin-event-card-note">
-              Mechanics will see <strong>{runGroupValue}</strong> as the
-              current run-group label.
-            </div>
+            <div className="admin-event-card-note" />
           ) : (
             <div className="admin-event-card-callout">
               Run group is missing. Open Edit Event to configure it before
@@ -654,11 +651,6 @@ export default function EventsManagementPage() {
             <div className="admin-section-header">
               <div>
                 <div className="admin-section-title">Events</div>
-                <div className="admin-section-copy">
-                  Each card includes a status badge, run-group state, timing
-                  details, and the professional admin actions required for a
-                  motorsport operations team.
-                </div>
               </div>
             </div>
 
