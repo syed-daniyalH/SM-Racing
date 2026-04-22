@@ -780,13 +780,18 @@ export default function DriversManagementPage() {
                     {filteredDrivers.map((driver) => {
                       const lifecycle = getLifecycleLabel(driver.isActive);
                       const driverVehicles = vehicles.filter(
-                        (vehicle) => String(vehicle.driverId || "") === String(driver.id || ""),
+                        (vehicle) =>
+                          String(vehicle.driverId || "") === String(driver.driver_id || driver.id || ""),
                       );
 
                       return (
                         <div key={driver.id} className="fleet-table-row">
-                          <div className="fleet-table-cell fleet-mono" data-label="Driver ID" title={driver.id}>
-                            {formatEntityId("DRV", driver.id)}
+                          <div
+                            className="fleet-table-cell fleet-mono"
+                            data-label="Driver ID"
+                            title={driver.driver_id || driver.id}
+                          >
+                            {driver.driver_id || formatEntityId("DRV", driver.id)}
                           </div>
                           <div className="fleet-table-cell" data-label="Full Name">
                             <div className="fleet-cell-stack">

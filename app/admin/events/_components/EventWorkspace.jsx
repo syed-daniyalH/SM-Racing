@@ -135,6 +135,23 @@ export default function EventWorkspace() {
     [runGroupValue],
   );
 
+  const syncRunGroup = useCallback(async (targetEventId, rawText) => {
+    const payload = {
+      eventId: targetEventId,
+      rawText,
+    };
+
+    try {
+      return await updateRunGroup(payload);
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        throw error;
+      }
+
+      return await setRunGroup(payload);
+    }
+  }, []);
+
   const closeDrawer = () => {
     if (savingEvent) return;
     setDrawerOpen(false);
@@ -205,6 +222,7 @@ export default function EventWorkspace() {
 
       const response = await updateEvent(getEventId(event), payload);
       const updatedEvent = response.event || response.data || response;
+      await syncRunGroup(getEventId(event), runGroup);
       setStoredEventNote(getEventId(event), drawerValues.notes);
       const normalizedEvent =
         mergeStoredEventNotesList([updatedEvent])[0] || updatedEvent;

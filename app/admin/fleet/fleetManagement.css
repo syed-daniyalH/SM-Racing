@@ -706,6 +706,9 @@
   display: grid;
   justify-items: end;
   align-items: stretch;
+  background:
+    linear-gradient(90deg, rgba(6, 8, 16, 0.94) 0%, rgba(10, 14, 39, 0.84) 100%);
+  backdrop-filter: blur(14px);
 }
 
 .fleet-confirm-overlay {
@@ -716,8 +719,10 @@
 }
 
 .fleet-drawer-panel {
-  width: min(860px, 100vw);
-  max-height: 100vh;
+  width: min(820px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -738,8 +743,9 @@
 .fleet-drawer-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .fleet-drawer-header {
@@ -790,13 +796,33 @@
 
 .fleet-drawer-body {
   flex: 1 1 auto;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 1.5rem;
+}
+
+.fleet-drawer-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.fleet-drawer-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fleet-drawer-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 107, 53, 0.7), rgba(255, 107, 53, 0.35));
+  border: 2px solid rgba(12, 12, 12, 0.95);
 }
 
 .fleet-drawer-footer {
   position: sticky;
   bottom: 0;
+  flex-shrink: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1183,12 +1209,12 @@
   .fleet-drawer-panel,
   .fleet-drawer-wide {
     width: 100vw;
-    max-height: 100vh;
+    max-height: 100dvh;
     border-radius: 0;
   }
 
   .fleet-drawer-shell {
-    height: 100vh;
+    height: 100%;
   }
 
   .fleet-drawer-header,

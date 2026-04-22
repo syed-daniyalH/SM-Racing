@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 
@@ -54,6 +54,8 @@ export function DrawerShell({
   footer = null,
   wide = false,
 }) {
+  const bodyRef = useRef(null);
+
   useEffect(() => {
     if (!open) return undefined;
 
@@ -72,6 +74,16 @@ export function DrawerShell({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const raf = window.requestAnimationFrame(() => {
+      bodyRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [open]);
 
   if (!open) return null;
 
@@ -111,7 +123,9 @@ export function DrawerShell({
             </button>
           </header>
 
-          <div className="fleet-drawer-body">{children}</div>
+          <div className="fleet-drawer-body" ref={bodyRef}>
+            {children}
+          </div>
 
           {footer ? <footer className="fleet-drawer-footer">{footer}</footer> : null}
         </div>

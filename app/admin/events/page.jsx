@@ -14,7 +14,7 @@ import {
   getEvents,
   updateEvent,
 } from "../../utils/eventApi";
-import { getRunGroup } from "../../utils/runGroupApi";
+import { getRunGroup, setRunGroup, updateRunGroup } from "../../utils/runGroupApi";
 import EventFormDrawer from "./_components/EventFormDrawer";
 import EventArchiveDialog from "./_components/EventArchiveDialog";
 import {
@@ -212,6 +212,23 @@ export default function EventsManagementPage() {
     }
   };
 
+  const syncRunGroup = useCallback(async (eventId, rawText) => {
+    const payload = {
+      eventId,
+      rawText,
+    };
+
+    try {
+      return await updateRunGroup(payload);
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        throw error;
+      }
+
+      return await setRunGroup(payload);
+    }
+  }, []);
+
   const handleSaveEvent = async (event) => {
     event.preventDefault();
     setDrawerError("");
@@ -261,6 +278,10 @@ export default function EventsManagementPage() {
         const createdEventId = getEventId(createdEvent);
 
         if (createdEventId) {
+          await syncRunGroup(createdEventId, runGroup);
+        }
+
+        if (createdEventId) {
           setStoredEventNote(createdEventId, drawerValues.notes);
         }
 
@@ -294,6 +315,8 @@ export default function EventsManagementPage() {
         const response = await updateEvent(eventId, payload);
         const updatedEvent = response.event;
         const updatedEventId = getEventId(updatedEvent) || eventId;
+
+        await syncRunGroup(updatedEventId, runGroup);
         setStoredEventNote(updatedEventId, drawerValues.notes);
 
         await refreshEvents();
