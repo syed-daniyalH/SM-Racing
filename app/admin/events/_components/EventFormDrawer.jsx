@@ -4,6 +4,16 @@ import EventNoteIcon from "@mui/icons-material/EventNote";
 import { DrawerShell } from "../../fleet/_components/ManagementUi";
 import { getRunGroupPreview } from "./eventManagementHelpers";
 
+const buildMailto = (address, subject) =>
+  `mailto:${address}${subject ? `?subject=${encodeURIComponent(subject)}` : ""}`;
+
+const ADMIN_RAIL_LINKS = [
+  { label: "Privacy Policy", href: buildMailto("privacy@sm2racing.local", "SM-2 Privacy Policy") },
+  { label: "Terms of Service", href: buildMailto("legal@sm2racing.local", "SM-2 Terms of Service") },
+  { label: "Security", href: buildMailto("security@sm2racing.local", "SM-2 Security") },
+  { label: "Compliance", href: buildMailto("compliance@sm2racing.local", "SM-2 Compliance") },
+];
+
 export default function EventFormDrawer({
   open,
   mode = "create",
@@ -37,34 +47,67 @@ export default function EventFormDrawer({
       subtitle={subtitle}
       onClose={isSaving ? undefined : onClose}
       footer={
-        <>
-          <button
-            type="button"
-            className="fleet-btn fleet-btn-secondary"
-            onClick={onClose}
-            disabled={isSaving}
-          >
-            Cancel
-          </button>
-          {mode === "edit" && onArchive ? (
+        <div className="event-drawer-footer-stack">
+          <div className="event-drawer-sidebar">
+            <div className="event-drawer-sidebar-header">
+              <div className="event-drawer-sidebar-eyebrow">System Status</div>
+              <div className="event-drawer-sidebar-title">Right Rail</div>
+              <p className="event-drawer-sidebar-copy">
+                Keep the admin workspace connected to the live system while the
+                event form stays open.
+              </p>
+            </div>
+
+            <div className="event-drawer-system-card">
+              <div className="event-drawer-system-line">
+                <span className="event-drawer-system-dot" aria-hidden="true" />
+                <span className="event-drawer-system-label">System Online</span>
+              </div>
+              <div className="event-drawer-system-meta">
+                <span className="event-drawer-system-version">SM-2 v1.0.0</span>
+                <span className="event-drawer-system-badge">Latest</span>
+              </div>
+            </div>
+
+            <div className="event-drawer-legal">
+              {ADMIN_RAIL_LINKS.map((item) => (
+                <a key={item.label} className="event-drawer-legal-link" href={item.href}>
+                  <span className="event-drawer-legal-dot" aria-hidden="true" />
+                  <span>{item.label}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div className="event-drawer-footer-actions">
             <button
               type="button"
-              className="fleet-btn fleet-btn-danger"
-              onClick={onArchive}
-              disabled={isSaving || archiveDisabled}
+              className="fleet-btn fleet-btn-secondary"
+              onClick={onClose}
+              disabled={isSaving}
             >
-              {archiveDisabled ? "Archived" : "Archive Event"}
+              Cancel
             </button>
-          ) : null}
-          <button
-            type="submit"
-            form="event-form-drawer-form"
-            className="fleet-btn fleet-btn-primary"
-            disabled={isSaving}
-          >
-            {isSaving ? "Saving..." : mode === "edit" ? "Save Event" : "Create Event"}
-          </button>
-        </>
+            {mode === "edit" && onArchive ? (
+              <button
+                type="button"
+                className="fleet-btn fleet-btn-danger"
+                onClick={onArchive}
+                disabled={isSaving || archiveDisabled}
+              >
+                {archiveDisabled ? "Archived" : "Archive Event"}
+              </button>
+            ) : null}
+            <button
+              type="submit"
+              form="event-form-drawer-form"
+              className="fleet-btn fleet-btn-primary"
+              disabled={isSaving}
+            >
+              {isSaving ? "Saving..." : mode === "edit" ? "Save Event" : "Create Event"}
+            </button>
+          </div>
+        </div>
       }
     >
       <form id="event-form-drawer-form" className="event-form-drawer-content" onSubmit={onSubmit}>

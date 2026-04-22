@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 
 import ProtectedRoute from "../../../../components/ProtectedRoute";
 import Loader from "../../../../components/Common/Loader";
@@ -20,6 +21,7 @@ const findSubmissionById = (items = [], submissionId) =>
 
 export default function SubmissionDetailReportPage() {
   const params = useParams();
+  const router = useRouter();
   const resolvedSubmissionId = useMemo(() => {
     const rawId = params?.submissionId;
     const idValue = Array.isArray(rawId) ? rawId[0] || null : rawId || null;
@@ -129,6 +131,14 @@ export default function SubmissionDetailReportPage() {
       ) : pageError ? (
         <div className="submission-detail-empty-shell">
           <div className="submission-monitor-error">{pageError}</div>
+          <button
+            type="button"
+            className="fleet-btn fleet-btn-secondary"
+            onClick={() => router.push("/admin/submissions")}
+          >
+            <ArrowBackOutlinedIcon fontSize="inherit" />
+            Back
+          </button>
         </div>
       ) : (
         <SubmissionDetailScreen

@@ -281,15 +281,33 @@ export const buildSubmissionSearchText = (submission) =>
     submission.submission_ref,
     submission.event?.name,
     submission.event?.track,
+    submission.data?.date,
+    submission.data?.time,
+    submission.data?.session_type,
+    submission.data?.session_number,
+    submission.data?.duration_min,
+    submission.data?.tire_set,
+    submission.data?.notes,
+    submission.data?.feedback,
+    submission.createdByUser?.name,
+    submission.createdByUser?.email,
     submission.driver?.firstName,
     submission.driver?.lastName,
+    submission.driver?.driverName,
+    submission.driver?.driverCode,
+    submission.driver?.driver_id,
     submission.driver?.teamName,
+    submission.driver?.team_name,
     submission.vehicle?.make,
     submission.vehicle?.model,
     submission.vehicle?.registrationNumber,
+    submission.vehicle?.vehicleCode,
+    submission.vehicle?.vehicle_id,
     submission.raw_text,
     submission.data?.track,
     submission.data?.session_type,
+    submission.data?.driver_id,
+    submission.data?.vehicle_id,
   ]
     .filter(Boolean)
     .join(" ")
@@ -308,6 +326,7 @@ export const getSubmissionDriverLabel = (submission) => {
     .join(" ")
     .trim();
   return (
+    driver.driverName ||
     fromName ||
     driver.fullName ||
     driver.displayName ||
@@ -315,6 +334,15 @@ export const getSubmissionDriverLabel = (submission) => {
     normalizeText(submission.data?.driver_id || submission.driver_id || "Unknown Driver")
   );
 };
+
+export const getSubmissionDriverCode = (submission) =>
+  normalizeText(
+    submission.driver?.driverCode ||
+      submission.driver?.driver_id ||
+      submission.driver_id ||
+      submission.data?.driver_id ||
+      "",
+  );
 
 export const getSubmissionVehicleLabel = (submission) => {
   const vehicle = submission.vehicle || {};
@@ -328,6 +356,15 @@ export const getSubmissionVehicleLabel = (submission) => {
   );
 };
 
+export const getSubmissionVehicleCode = (submission) =>
+  normalizeText(
+    submission.vehicle?.vehicleCode ||
+      submission.vehicle?.vehicle_id ||
+      submission.vehicle_id ||
+      submission.data?.vehicle_id ||
+      "",
+  );
+
 export const getSubmissionTrackLabel = (submission) =>
   normalizeText(
     submission.data?.track ||
@@ -336,6 +373,88 @@ export const getSubmissionTrackLabel = (submission) =>
       submission.event?.trackName ||
       "Unknown Track",
   );
+
+export const getSubmissionSessionDateLabel = (submission) =>
+  normalizeText(
+    submission.data?.date ||
+      submission.payload?.date ||
+      submission.session_date ||
+      submission.date ||
+      "",
+  );
+
+export const getSubmissionSessionTimeLabel = (submission) =>
+  normalizeText(
+    submission.data?.time ||
+      submission.payload?.time ||
+      submission.session_time ||
+      submission.time ||
+      "",
+  );
+
+export const getSubmissionSessionTypeLabel = (submission) =>
+  normalizeText(
+    submission.data?.session_type ||
+      submission.payload?.session_type ||
+      submission.session_type ||
+      submission.sessionType ||
+      "-",
+  );
+
+export const getSubmissionSessionNumberLabel = (submission) => {
+  const value =
+    submission.data?.session_number ||
+    submission.payload?.session_number ||
+    submission.session_number ||
+    submission.sessionNumber ||
+    null;
+
+  return value === null || value === undefined || value === "" ? "-" : String(value);
+};
+
+export const getSubmissionDurationLabel = (submission) => {
+  const value =
+    submission.data?.duration_min ||
+    submission.payload?.duration_min ||
+    submission.duration_min ||
+    submission.durationMin ||
+    null;
+
+  return value === null || value === undefined || value === "" ? "-" : `${value} min`;
+};
+
+export const getSubmissionTireSetLabel = (submission) =>
+  normalizeText(
+    submission.data?.tire_set ||
+      submission.payload?.tire_set ||
+      submission.tire_set ||
+      submission.tireSet ||
+      "-",
+  );
+
+export const getSubmissionNotesLabel = (submission) =>
+  normalizeText(
+    submission.data?.notes ||
+      submission.data?.feedback ||
+      submission.payload?.notes ||
+      submission.payload?.feedback ||
+      submission.rawText ||
+      submission.raw_text ||
+      "",
+  );
+
+export const getSubmissionCreatedByLabel = (submission) => {
+  const createdBy = submission.createdByUser || submission.created_by_user || null;
+  const createdByName =
+    createdBy?.name ||
+    createdBy?.fullName ||
+    createdBy?.displayName ||
+    createdBy?.email ||
+    createdBy?.username ||
+    "";
+
+  return createdByName || formatEntityId("USR", submission.userId || submission.created_by_id || "");
+};
 
 export const getSourceTypeMeta = (submission) => {
   const normalized = normalizeSubmission(submission);
@@ -677,6 +796,16 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
     submittedAt: normalized.createdAt || normalized.updatedAt || null,
     submittedAtLabel: formatDateTimeLabel(normalized.createdAt || normalized.updatedAt || null),
     dateLabel: formatShortDateLabel(normalized.createdAt || normalized.updatedAt || null),
+    sessionDateLabel: getSubmissionSessionDateLabel(normalized),
+    sessionTimeLabel: getSubmissionSessionTimeLabel(normalized),
+    sessionTypeLabel: getSubmissionSessionTypeLabel(normalized),
+    sessionNumberLabel: getSubmissionSessionNumberLabel(normalized),
+    durationLabel: getSubmissionDurationLabel(normalized),
+    tireSetLabel: getSubmissionTireSetLabel(normalized),
+    notesLabel: getSubmissionNotesLabel(normalized),
+    driverCode: getSubmissionDriverCode(normalized),
+    vehicleCode: getSubmissionVehicleCode(normalized),
+    createdByLabel: getSubmissionCreatedByLabel(normalized),
   };
 };
 
@@ -740,17 +869,26 @@ export const buildSubmissionExportRows = (submissions = []) =>
 
     return {
       submissionId: formatEntityId("SUB", getSubmissionId(record)),
-      dateTime: record.submittedAtLabel,
-      event: getSubmissionEventLabel(record),
-      driver: getSubmissionDriverLabel(record),
-      vehicle: getSubmissionVehicleLabel(record),
+      date: record.sessionDateLabel || "-",
+      time: record.sessionTimeLabel || "-",
       track: getSubmissionTrackLabel(record),
-      sourceType: record.sourceTypeLabel,
-      validationStatus: record.validationStateLabel,
+      driverName: getSubmissionDriverLabel(record),
+      driverId: record.driverCode || record.data?.driver_id || record.driver_id || "-",
+      vehicleId: record.vehicleCode || record.data?.vehicle_id || record.vehicle_id || "-",
+      sessionType: record.sessionTypeLabel || "-",
+      sessionNumber: record.sessionNumberLabel || "-",
+      durationMin: record.durationLabel || "-",
+      tireSet: record.tireSetLabel || "-",
+      notes: record.notesLabel || "",
+      createdBy: record.createdByLabel || "-",
+      createdAt: record.submittedAtLabel,
+      reviewStatus: record.validationStateLabel,
       syncStatus: record.syncStateLabel,
       confidence: record.confidenceLabel,
-      status: record.syncStateKey?.toUpperCase() || "PENDING",
+      status: record.validationStateKey?.toUpperCase() || "PENDING",
       rawText: record.rawText || "",
+      sourceType: record.sourceTypeLabel,
+      validationMessages: (record.validationMessages || []).join(" | "),
       reviewedAt: formatDateTimeLabel(record.analysisResult?.reviewed_at || record.processedAt || record.updatedAt),
     };
   });

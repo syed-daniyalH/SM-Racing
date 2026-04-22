@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
@@ -23,8 +22,11 @@ import {
   buildSubmissionMonitorRecord,
   buildSubmissionSearchText,
   buildSubmissionSummaryCounts,
-  mockSubmissions,
   getSubmissionId,
+  getSubmissionDriverLabel,
+  getSubmissionTrackLabel,
+  getSubmissionVehicleLabel,
+  mockSubmissions,
 } from "./_components/submissionReviewHelpers";
 import SubmissionReviewDrawer from "./_components/SubmissionReviewDrawer";
 import {
@@ -37,11 +39,14 @@ import "./SubmissionReview.css";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CameraAltOutlinedIcon from "@mui/icons-material/CameraAltOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
+import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import DatasetOutlinedIcon from "@mui/icons-material/DatasetOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
 import PendingActionsOutlinedIcon from "@mui/icons-material/PendingActionsOutlined";
+import ArrowDownwardOutlinedIcon from "@mui/icons-material/ArrowDownwardOutlined";
+import ArrowUpwardOutlinedIcon from "@mui/icons-material/ArrowUpwardOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
@@ -51,44 +56,37 @@ import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 const STATUS_FILTER_OPTIONS = [
   { value: "all", label: "All Statuses" },
   { value: "pending_review", label: "Pending Review" },
+  { value: "reviewed", label: "Reviewed" },
   { value: "validated", label: "Validated" },
   { value: "failed", label: "Validation Failed" },
   { value: "archived", label: "Archived" },
 ];
 
-const VALIDATION_FILTER_OPTIONS = [
-  { value: "all", label: "All Validation" },
-  { value: "clean", label: "Clean" },
-  { value: "warning", label: "Warnings" },
-  { value: "failed", label: "Failed" },
+const SUBMISSION_SPREADSHEET_COLUMNS = [
+  { key: "submissionId", label: "ID", width: "minmax(110px, 0.85fr)", sortable: true },
+  { key: "sessionDate", label: "Date", width: "minmax(110px, 0.85fr)", sortable: true },
+  { key: "sessionTime", label: "Time", width: "minmax(80px, 0.6fr)", sortable: true },
+  { key: "track", label: "Track", width: "minmax(180px, 1.2fr)", sortable: true },
+  { key: "driverName", label: "Driver Name", width: "minmax(160px, 1fr)", sortable: true },
+  { key: "driverId", label: "Driver ID", width: "minmax(100px, 0.75fr)", sortable: true },
+  { key: "vehicleId", label: "Vehicle ID", width: "minmax(130px, 0.9fr)", sortable: true },
+  { key: "sessionType", label: "Session Type", width: "minmax(120px, 0.85fr)", sortable: true },
+  { key: "sessionNumber", label: "Session #", width: "minmax(90px, 0.65fr)", sortable: true },
+  { key: "durationMin", label: "Duration (min)", width: "minmax(100px, 0.75fr)", sortable: true },
+  { key: "tireSet", label: "Tire Set", width: "minmax(100px, 0.75fr)", sortable: true },
+  { key: "notes", label: "Notes", width: "minmax(180px, 1.2fr)", sortable: true },
+  { key: "createdBy", label: "Created By", width: "minmax(120px, 0.8fr)", sortable: true },
+  { key: "createdAt", label: "Created At", width: "minmax(160px, 1fr)", sortable: true },
+  { key: "status", label: "Status", width: "minmax(140px, 0.9fr)", sortable: true },
+  { key: "actions", label: "Actions", width: "minmax(220px, 1.2fr)", sortable: false },
 ];
 
-const SYNC_FILTER_OPTIONS = [
-  { value: "all", label: "All Sync" },
-  { value: "pending", label: "Pending" },
-  { value: "sent", label: "Synced" },
-  { value: "failed", label: "Sync Failed" },
-];
-
-const SOURCE_FILTER_OPTIONS = [
-  { value: "all", label: "All Sources" },
-  { value: "quick", label: "Quick Submission" },
-  { value: "detail", label: "Detailed Submission" },
-  { value: "ocr", label: "OCR Submission" },
-  { value: "photo", label: "Photo Submission" },
-];
-
-const SUBMISSION_TABLE_COLUMNS =
-  "minmax(150px, 0.95fr) minmax(160px, 0.9fr) minmax(240px, 1.25fr) minmax(150px, 0.85fr) minmax(220px, 1.05fr) minmax(220px, 1.1fr)";
-
-const FILTER_TONE = {
-  clean: "success",
-  warning: "warning",
-  failed: "danger",
-};
+const SUBMISSION_TABLE_COLUMNS = SUBMISSION_SPREADSHEET_COLUMNS.map((column) => column.width).join(" ");
 
 const escapeCsvValue = (value) =>
   `"${String(value ?? "").replace(/"/g, '""').replace(/\n/g, " ")}"`;
+
+const escapeTsvValue = (value) => String(value ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ");
 
 const formatSubmissionDate = (value) => {
   if (!value) return "-";
@@ -97,14 +95,16 @@ const formatSubmissionDate = (value) => {
   return formatDateTime(date);
 };
 
-const buildEventFilterOptions = (submissions = []) => {
+const buildUniqueFilterOptions = (submissions = [], getter) => {
   const map = new Map();
 
   submissions.forEach((submission) => {
-    const eventName = submission.event?.name || submission.eventId || "Unknown Event";
-    const eventId = String(submission.event?.id || submission.eventId || eventName);
-    if (!map.has(eventId)) {
-      map.set(eventId, eventName);
+    const value = getter(submission);
+    const label = value?.label || value?.value || value;
+    const key = value?.value || value;
+    if (!key || !label) return;
+    if (!map.has(String(key))) {
+      map.set(String(key), String(label));
     }
   });
 
@@ -142,6 +142,77 @@ const getConfidenceTone = (confidence) => {
   return "danger";
 };
 
+const formatDateOnly = (value) => {
+  if (!value) return "-";
+  if (typeof value === "string") {
+    if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+      return value.slice(0, 10);
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return value;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toISOString().slice(0, 10);
+};
+
+const formatTimeOnly = (value) => {
+  if (!value) return "-";
+  if (typeof value === "string") {
+    if (/^\d{1,2}:\d{2}/.test(value)) {
+      return value.slice(0, 5);
+    }
+    return value;
+  }
+  return String(value);
+};
+
+const getRowSortValue = (submission, key) => {
+  const numeric = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  switch (key) {
+    case "submissionId":
+      return String(getSubmissionId(submission) || "");
+    case "sessionDate":
+      return submission.sessionDateLabel || "";
+    case "sessionTime":
+      return submission.sessionTimeLabel || "";
+    case "track":
+      return String(submission.data?.track || submission.event?.track || "");
+    case "driverName":
+      return String(submission.driverName || submission.driver?.driverName || submission.driver?.fullName || "");
+    case "driverId":
+      return String(submission.driverCode || submission.data?.driver_id || "");
+    case "vehicleId":
+      return String(submission.vehicleCode || submission.data?.vehicle_id || "");
+    case "sessionType":
+      return String(submission.sessionTypeLabel || "");
+    case "sessionNumber":
+      return numeric(submission.data?.session_number || submission.sessionNumberLabel || 0) ?? 0;
+    case "durationMin":
+      return numeric(submission.data?.duration_min || submission.durationLabel || 0) ?? 0;
+    case "tireSet":
+      return String(submission.tireSetLabel || "");
+    case "notes":
+      return String(submission.notesLabel || "");
+    case "createdBy":
+      return String(submission.createdByLabel || "");
+    case "createdAt":
+      return new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0).getTime();
+    case "status":
+      return String(submission.validationStateLabel || submission.reviewStateLabel || "");
+    default:
+      return String(submission[key] || "");
+  }
+};
+
 const DEMO_SUBMISSIONS = mockSubmissions.slice(0, 1);
 
 const isOfflineError = (error) => {
@@ -153,7 +224,6 @@ const isOfflineError = (error) => {
 };
 
 export default function SubmissionReviewPage() {
-  const router = useRouter();
   const { user } = useAuth();
 
   const [submissions, setSubmissions] = useState([]);
@@ -162,13 +232,14 @@ export default function SubmissionReviewPage() {
   const [notice, setNotice] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [eventFilter, setEventFilter] = useState("all");
+  const [sessionTypeFilter, setSessionTypeFilter] = useState("all");
+  const [driverFilter, setDriverFilter] = useState("all");
+  const [vehicleFilter, setVehicleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [validationFilter, setValidationFilter] = useState("all");
-  const [syncFilter, setSyncFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [sortKey, setSortKey] = useState("createdAt");
+  const [sortDirection, setSortDirection] = useState("desc");
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null);
@@ -255,8 +326,42 @@ export default function SubmissionReviewPage() {
     [submissions],
   );
 
-  const eventOptions = useMemo(
-    () => buildEventFilterOptions(submissionRecords),
+  const sessionTypeOptions = useMemo(
+    () =>
+      buildUniqueFilterOptions(submissionRecords, (submission) => ({
+        value: submission.sessionTypeLabel || "",
+        label: submission.sessionTypeLabel || "",
+      })),
+    [submissionRecords],
+  );
+
+  const driverOptions = useMemo(
+    () =>
+      buildUniqueFilterOptions(submissionRecords, (submission) => ({
+        value: submission.driverCode || submission.data?.driver_id || "",
+        label:
+          [
+            submission.driverCode || submission.data?.driver_id || "",
+            getSubmissionDriverLabel(submission),
+          ]
+            .filter(Boolean)
+            .join(" · ") || "",
+      })),
+    [submissionRecords],
+  );
+
+  const vehicleOptions = useMemo(
+    () =>
+      buildUniqueFilterOptions(submissionRecords, (submission) => ({
+        value: submission.vehicleCode || submission.data?.vehicle_id || "",
+        label:
+          [
+            submission.vehicleCode || submission.data?.vehicle_id || "",
+            getSubmissionVehicleLabel(submission),
+          ]
+            .filter(Boolean)
+            .join(" · ") || "",
+      })),
     [submissionRecords],
   );
 
@@ -273,9 +378,21 @@ export default function SubmissionReviewPage() {
       );
     }
 
-    if (eventFilter !== "all") {
+    if (sessionTypeFilter !== "all") {
       next = next.filter(
-        (submission) => String(submission.event?.id || submission.eventId || "") === eventFilter,
+        (submission) => String(submission.sessionTypeLabel || "").toLowerCase() === sessionTypeFilter,
+      );
+    }
+
+    if (driverFilter !== "all") {
+      next = next.filter(
+        (submission) => String(submission.driverCode || submission.data?.driver_id || "").toLowerCase() === driverFilter,
+      );
+    }
+
+    if (vehicleFilter !== "all") {
+      next = next.filter(
+        (submission) => String(submission.vehicleCode || submission.data?.vehicle_id || "").toLowerCase() === vehicleFilter,
       );
     }
 
@@ -283,48 +400,52 @@ export default function SubmissionReviewPage() {
       next = next.filter((submission) => submission.validationStateKey === statusFilter);
     }
 
-    if (validationFilter !== "all") {
-      next = next.filter((submission) => submission.validationSeverityKey === validationFilter);
-    }
-
-    if (syncFilter !== "all") {
-      next = next.filter((submission) => submission.syncStateKey === syncFilter);
-    }
-
-    if (sourceFilter !== "all") {
-      next = next.filter((submission) => submission.sourceTypeKey === sourceFilter);
-    }
-
     if (fromKey) {
       next = next.filter((submission) => {
-        const submittedAt = new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0);
-        return !Number.isNaN(submittedAt.getTime()) && submittedAt >= fromKey;
+        const sessionDate = submission.sessionDateLabel || "";
+        const submittedDate = sessionDate ? new Date(sessionDate) : new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0);
+        return !Number.isNaN(submittedDate.getTime()) && submittedDate >= fromKey;
       });
     }
 
     if (toKey) {
       toKey.setHours(23, 59, 59, 999);
       next = next.filter((submission) => {
-        const submittedAt = new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0);
-        return !Number.isNaN(submittedAt.getTime()) && submittedAt <= toKey;
+        const sessionDate = submission.sessionDateLabel || "";
+        const submittedDate = sessionDate ? new Date(sessionDate) : new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0);
+        return !Number.isNaN(submittedDate.getTime()) && submittedDate <= toKey;
       });
     }
 
     return next.sort((left, right) => {
-      const rightTime = new Date(right.submittedAt || right.createdAt || right.updatedAt || 0).getTime();
-      const leftTime = new Date(left.submittedAt || left.createdAt || left.updatedAt || 0).getTime();
-      return rightTime - leftTime;
+      const leftValue = getRowSortValue(left, sortKey);
+      const rightValue = getRowSortValue(right, sortKey);
+
+      if (typeof leftValue === "number" || typeof rightValue === "number") {
+        const leftNumber = Number(leftValue || 0);
+        const rightNumber = Number(rightValue || 0);
+        return sortDirection === "asc" ? leftNumber - rightNumber : rightNumber - leftNumber;
+      }
+
+      const leftString = String(leftValue ?? "").toLowerCase();
+      const rightString = String(rightValue ?? "").toLowerCase();
+      const comparison = leftString.localeCompare(rightString, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+      return sortDirection === "asc" ? comparison : -comparison;
     });
   }, [
     dateFrom,
     dateTo,
-    eventFilter,
+    driverFilter,
+    sessionTypeFilter,
     searchQuery,
-    sourceFilter,
+    sortDirection,
+    sortKey,
     statusFilter,
     submissionRecords,
-    syncFilter,
-    validationFilter,
+    vehicleFilter,
   ]);
 
   const selectedSubmission = useMemo(
@@ -337,31 +458,28 @@ export default function SubmissionReviewPage() {
 
   const hasFilters =
     Boolean(searchQuery.trim()) ||
-    eventFilter !== "all" ||
+    sessionTypeFilter !== "all" ||
+    driverFilter !== "all" ||
+    vehicleFilter !== "all" ||
     statusFilter !== "all" ||
-    validationFilter !== "all" ||
-    syncFilter !== "all" ||
-    sourceFilter !== "all" ||
     dateFrom ||
     dateTo;
+
+  const toggleSort = (key) => {
+    setSortKey((currentKey) => {
+      if (currentKey === key) {
+        setSortDirection((currentDirection) => (currentDirection === "asc" ? "desc" : "asc"));
+        return currentKey;
+      }
+      setSortDirection("asc");
+      return key;
+    });
+  };
 
   const openDrawer = (submission, focus = "overview") => {
     setSelectedSubmissionId(submission?.id || submission?._id || submission?.submissionId || null);
     setDrawerFocus(focus);
     setDrawerOpen(true);
-  };
-
-  const openDetailsPage = (submission) => {
-    const id = getSubmissionId(submission);
-    if (!id) {
-      setNotice({
-        tone: "warning",
-        message: "This submission does not have an ID yet, so the detailed view cannot open.",
-      });
-      return;
-    }
-
-    router.push(`/admin/submissions/report/${encodeURIComponent(String(id))}`);
   };
 
   const closeDrawer = () => {
@@ -540,72 +658,111 @@ export default function SubmissionReviewPage() {
     setArchiveTarget(null);
   };
 
-  const handleExportReport = () => {
-    const rows = buildSubmissionExportRows(filteredSubmissions);
+  const handleExportRows = (rows, format = "csv", fileName = "submission-review") => {
     const headers = [
-      "Submission ID",
-      "Date / Time",
-      "Event",
-      "Driver",
-      "Vehicle",
+      "ID",
+      "Date",
+      "Time",
       "Track",
-      "Source Type",
-      "Validation Status",
+      "Driver Name",
+      "Driver ID",
+      "Vehicle ID",
+      "Session Type",
+      "Session Number",
+      "Duration (min)",
+      "Tire Set",
+      "Notes",
+      "Created By",
+      "Created At",
+      "Status",
+      "Validation",
       "Sync Status",
       "Confidence",
-      "Status",
       "Reviewed At",
       "Raw Text",
     ];
 
-    const csv = [
-      headers.join(","),
+    const delimiter = format === "excel" ? "\t" : ",";
+    const rowsText = [
+      headers.join(delimiter),
       ...rows.map((row) =>
         [
           row.submissionId,
-          row.dateTime,
-          row.event,
-          row.driver,
-          row.vehicle,
+          row.date,
+          row.time,
           row.track,
-          row.sourceType,
-          row.validationStatus,
+          row.driverName,
+          row.driverId,
+          row.vehicleId,
+          row.sessionType,
+          row.sessionNumber,
+          row.durationMin,
+          row.tireSet,
+          row.notes,
+          row.createdBy,
+          row.createdAt,
+          row.status,
+          row.reviewStatus,
           row.syncStatus,
           row.confidence,
-          row.status,
           row.reviewedAt,
           row.rawText,
         ]
-          .map(escapeCsvValue)
-          .join(","),
+          .map(format === "excel" ? escapeTsvValue : escapeCsvValue)
+          .join(delimiter),
       ),
     ].join("\n");
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const mimeType = format === "excel" ? "application/vnd.ms-excel;charset=utf-8;" : "text/csv;charset=utf-8;";
+    const extension = format === "excel" ? "xls" : "csv";
+    const blob = new Blob([rowsText], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `submission-review-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `${fileName}-${new Date().toISOString().slice(0, 10)}.${extension}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
 
+  const handleExportCsv = () => {
+    const rows = buildSubmissionExportRows(filteredSubmissions);
+    handleExportRows(rows, "csv", "submission-review-dashboard");
     setNotice({
       tone: "success",
       message: `Exported ${rows.length} submission${rows.length === 1 ? "" : "s"} to CSV.`,
     });
   };
 
+  const handleExportExcel = () => {
+    const rows = buildSubmissionExportRows(filteredSubmissions);
+    handleExportRows(rows, "excel", "submission-review-dashboard");
+    setNotice({
+      tone: "success",
+      message: `Exported ${rows.length} submission${rows.length === 1 ? "" : "s"} to Excel.`,
+    });
+  };
+
+  const handleExportSubmission = (record, format = "csv") => {
+    const rows = buildSubmissionExportRows([record]);
+    handleExportRows(rows, format, `submission-${String(getSubmissionId(record) || "export")}`);
+    setNotice({
+      tone: "success",
+      message: `Exported ${getSubmissionId(record) ? `submission ${getSubmissionId(record)}` : "selected submission"}${format === "excel" ? " to Excel" : " to CSV"}.`,
+    });
+  };
+
   const clearFilters = () => {
     setSearchQuery("");
-    setEventFilter("all");
+    setSessionTypeFilter("all");
+    setDriverFilter("all");
+    setVehicleFilter("all");
     setStatusFilter("all");
-    setValidationFilter("all");
-    setSyncFilter("all");
-    setSourceFilter("all");
     setDateFrom("");
     setDateTo("");
+    setSortKey("createdAt");
+    setSortDirection("desc");
   };
 
   const summaryCards = [
@@ -646,6 +803,189 @@ export default function SubmissionReviewPage() {
     },
   ];
 
+  const renderSortableHeader = (column) => {
+    const isActive = sortKey === column.key;
+    const SortIcon = isActive ? (sortDirection === "asc" ? ArrowUpwardOutlinedIcon : ArrowDownwardOutlinedIcon) : null;
+
+    return (
+      <button
+        key={column.key}
+        type="button"
+        className={`submission-sort-header ${column.sortable ? "is-sortable" : "is-static"} ${isActive ? "is-active" : ""}`}
+        onClick={column.sortable ? () => toggleSort(column.key) : undefined}
+        disabled={!column.sortable}
+      >
+        <span>{column.label}</span>
+        {column.sortable ? (
+          <span className="submission-sort-icon" aria-hidden="true">
+            {SortIcon ? <SortIcon fontSize="inherit" /> : <ArrowUpwardOutlinedIcon fontSize="inherit" className="submission-sort-icon-placeholder" />}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const renderSubmissionCell = (submission, column) => {
+    const submissionId = submission.submissionId || submission.submission_ref || getSubmissionId(submission) || "-";
+    const trackLabel = getSubmissionTrackLabel(submission);
+    const driverLabel = getSubmissionDriverLabel(submission);
+    const driverId = submission.driverCode || submission.data?.driver_id || submission.driver?.driver_id || "-";
+    const vehicleId = submission.vehicleCode || submission.data?.vehicle_id || submission.vehicle?.vehicle_id || "-";
+    const sessionType = submission.sessionTypeLabel || "-";
+    const sessionNumber = submission.sessionNumberLabel || "-";
+    const duration = submission.durationLabel || "-";
+    const tireSet = submission.tireSetLabel || "-";
+    const notes = submission.notesLabel || "-";
+    const createdBy = submission.createdByLabel || "-";
+    const createdAt = submission.submittedAtLabel || formatDateTime(submission.submittedAt || submission.createdAt || submission.updatedAt);
+    const statusTone = getReviewStateTone(submission.validationStateKey);
+    const syncTone =
+      submission.syncStateKey === "sent"
+        ? "success"
+        : submission.syncStateKey === "failed"
+          ? "danger"
+          : "warning";
+    const confidenceTone = getConfidenceTone(submission.confidence);
+
+    switch (column.key) {
+      case "submissionId":
+        return (
+          <div className="submission-cell-stack">
+            <strong className="submission-mono">{submissionId}</strong>
+            <span className="submission-cell-subtext">
+              {formatDate(submission.sessionDateLabel || submission.submittedAt || submission.createdAt)}
+            </span>
+          </div>
+        );
+      case "sessionDate":
+        return (
+          <div className="submission-cell-stack">
+            <strong>{submission.sessionDateLabel || "-"}</strong>
+            <span className="submission-cell-subtext">
+              {submission.sessionTimeLabel || "Session time not captured"}
+            </span>
+          </div>
+        );
+      case "sessionTime":
+        return <strong className="submission-mono">{submission.sessionTimeLabel || "-"}</strong>;
+      case "track":
+        return (
+          <div className="submission-cell-stack">
+            <strong>{trackLabel}</strong>
+            <span className="submission-cell-subtext">{submission.event?.name || "Event-linked track"}</span>
+          </div>
+        );
+      case "driverName":
+        return (
+          <div className="submission-cell-stack">
+            <strong>{driverLabel}</strong>
+            <span className="submission-cell-subtext">{driverId}</span>
+          </div>
+        );
+      case "driverId":
+        return <strong className="submission-mono">{driverId}</strong>;
+      case "vehicleId":
+        return <strong className="submission-mono">{vehicleId}</strong>;
+      case "sessionType":
+        return <strong>{sessionType}</strong>;
+      case "sessionNumber":
+        return <strong className="submission-mono">{sessionNumber}</strong>;
+      case "durationMin":
+        return <strong className="submission-mono">{duration}</strong>;
+      case "tireSet":
+        return <strong>{tireSet}</strong>;
+      case "notes":
+        return (
+          <div className="submission-cell-stack">
+            <strong className="submission-note-title">{notes}</strong>
+            <span className="submission-cell-subtext">
+              {submission.rawText ? "Raw notes available in the drawer" : "No notes provided"}
+            </span>
+          </div>
+        );
+      case "createdBy":
+        return (
+          <div className="submission-cell-stack">
+            <strong>{createdBy}</strong>
+            <span className="submission-cell-subtext">{submission.sourceTypeLabel}</span>
+          </div>
+        );
+      case "createdAt":
+        return (
+          <div className="submission-cell-stack">
+            <strong>{createdAt}</strong>
+            <span className="submission-cell-subtext">{submission.reviewStateLabel}</span>
+          </div>
+        );
+      case "status":
+        return (
+          <div className="submission-status-stack">
+            <StatusBadge label={submission.validationStateLabel} tone={statusTone} />
+            <StatusBadge label={submission.syncStateLabel} tone={syncTone} />
+            <span className={`submission-confidence-badge tone-${confidenceTone}`}>
+              Confidence {submission.confidenceLabel || "-"}
+            </span>
+          </div>
+        );
+      case "actions":
+        return (
+          <div className="submission-action-grid">
+            <ActionIconButton
+              icon={VisibilityOutlinedIcon}
+              label="View Details"
+              title="View Details"
+              onClick={(event) => {
+                event.stopPropagation();
+                openDrawer(submission, "overview");
+              }}
+            />
+            <ActionIconButton
+              icon={CheckCircleOutlineOutlinedIcon}
+              label="Approve"
+              title="Approve Submission"
+              tone="success"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleApproveSubmission(submission);
+              }}
+              disabled={submission.validationStateKey === "failed" || submission.validationStateKey === "archived"}
+            />
+            <ActionIconButton
+              icon={CancelOutlinedIcon}
+              label="Reject"
+              title="Reject Submission"
+              tone="danger"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleFlagForCorrection(submission);
+              }}
+              disabled={submission.validationStateKey === "archived"}
+            />
+            <ActionIconButton
+              icon={DownloadOutlinedIcon}
+              label="CSV"
+              title="Export CSV"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleExportSubmission(submission, "csv");
+              }}
+            />
+            <ActionIconButton
+              icon={DescriptionOutlinedIcon}
+              label="Excel"
+              title="Export Excel"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleExportSubmission(submission, "excel");
+              }}
+            />
+          </div>
+        );
+      default:
+        return <strong>{String(submission[column.key] || "-")}</strong>;
+    }
+  };
+
   return (
     <ProtectedRoute requireAdmin={true}>
       <div className="submission-monitor-page fleet-page-shell">
@@ -657,7 +997,7 @@ export default function SubmissionReviewPage() {
             <p className="submission-monitor-eyebrow">Admin Operations</p>
             <h1>Submission Review</h1>
             <p className="submission-monitor-subtitle">
-              Monitor validations, inspect incoming race data, and manage submission quality.
+              Review Make.com bulk submissions in an Excel-style sheet, validate records, and open a polished right-side drawer for full inspection.
             </p>
           </div>
 
@@ -672,11 +1012,19 @@ export default function SubmissionReviewPage() {
             </button>
             <button
               type="button"
-              className="fleet-btn fleet-btn-primary"
-              onClick={handleExportReport}
+              className="fleet-btn fleet-btn-secondary"
+              onClick={handleExportCsv}
             >
               <DownloadOutlinedIcon fontSize="inherit" />
-              Export Report
+              Export CSV
+            </button>
+            <button
+              type="button"
+              className="fleet-btn fleet-btn-primary"
+              onClick={handleExportExcel}
+            >
+              <DownloadOutlinedIcon fontSize="inherit" />
+              Export Excel
             </button>
           </div>
         </header>
@@ -707,25 +1055,63 @@ export default function SubmissionReviewPage() {
                   className="fleet-input"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search submission ID, driver, vehicle, event, track, or raw text..."
+                  placeholder="Search submission ID, driver, vehicle, track, notes, or raw text..."
                   autoComplete="off"
                 />
               </div>
             </div>
 
             <div className="fleet-field">
-              <label className="fleet-label" htmlFor="submission-event-filter">
-                Event
+              <label className="fleet-label" htmlFor="submission-session-type-filter">
+                Session Type
               </label>
               <select
-                id="submission-event-filter"
+                id="submission-session-type-filter"
                 className="fleet-select"
-                value={eventFilter}
-                onChange={(event) => setEventFilter(event.target.value)}
+                value={sessionTypeFilter}
+                onChange={(event) => setSessionTypeFilter(event.target.value)}
               >
-                <option value="all">All Events</option>
-                {eventOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
+                <option value="all">All Session Types</option>
+                {sessionTypeOptions.map((option) => (
+                  <option key={option.value} value={String(option.value).toLowerCase()}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="fleet-field">
+              <label className="fleet-label" htmlFor="submission-driver-filter">
+                Driver
+              </label>
+              <select
+                id="submission-driver-filter"
+                className="fleet-select"
+                value={driverFilter}
+                onChange={(event) => setDriverFilter(event.target.value)}
+              >
+                <option value="all">All Drivers</option>
+                {driverOptions.map((option) => (
+                  <option key={option.value} value={String(option.value).toLowerCase()}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="fleet-field">
+              <label className="fleet-label" htmlFor="submission-vehicle-filter">
+                Vehicle
+              </label>
+              <select
+                id="submission-vehicle-filter"
+                className="fleet-select"
+                value={vehicleFilter}
+                onChange={(event) => setVehicleFilter(event.target.value)}
+              >
+                <option value="all">All Vehicles</option>
+                {vehicleOptions.map((option) => (
+                  <option key={option.value} value={String(option.value).toLowerCase()}>
                     {option.label}
                   </option>
                 ))}
@@ -743,60 +1129,6 @@ export default function SubmissionReviewPage() {
                 onChange={(event) => setStatusFilter(event.target.value)}
               >
                 {STATUS_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="fleet-field">
-              <label className="fleet-label" htmlFor="submission-validation-filter">
-                Validation State
-              </label>
-              <select
-                id="submission-validation-filter"
-                className="fleet-select"
-                value={validationFilter}
-                onChange={(event) => setValidationFilter(event.target.value)}
-              >
-                {VALIDATION_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="fleet-field">
-              <label className="fleet-label" htmlFor="submission-sync-filter">
-                Sync State
-              </label>
-              <select
-                id="submission-sync-filter"
-                className="fleet-select"
-                value={syncFilter}
-                onChange={(event) => setSyncFilter(event.target.value)}
-              >
-                {SYNC_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="fleet-field">
-              <label className="fleet-label" htmlFor="submission-source-filter">
-                Source Type
-              </label>
-              <select
-                id="submission-source-filter"
-                className="fleet-select"
-                value={sourceFilter}
-                onChange={(event) => setSourceFilter(event.target.value)}
-              >
-                {SOURCE_FILTER_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -869,9 +1201,9 @@ export default function SubmissionReviewPage() {
         <section className="submission-table-section">
           <div className="submission-table-heading">
             <div>
-              <h2 className="submission-table-title">Submissions</h2>
+              <h2 className="submission-table-title">Bulk Submission Spreadsheet</h2>
               <p className="submission-table-subtitle">
-                Inspect raw input, validation outcome, sync status, and manual review decisions.
+                Click any row to open the right-side review drawer with raw input, parsed fields, and audit notes.
               </p>
             </div>
           </div>
@@ -879,109 +1211,41 @@ export default function SubmissionReviewPage() {
           {loading ? (
             <Loader label="Loading submissions" sublabel="Fetching the latest submission monitor data." fullHeight />
           ) : filteredSubmissions.length ? (
-            <div className="fleet-table-card">
+            <div className="fleet-table-card submission-sheet-card">
               <div className="fleet-table-scroll">
-                <div className="fleet-table submission-table">
+                <div className="fleet-table submission-table submission-sheet-table">
                   <div
                     className="fleet-table-header submission-table-header"
                     style={{ gridTemplateColumns: SUBMISSION_TABLE_COLUMNS }}
                   >
-                    {[
-                      "Submission ID",
-                      "Date / Time",
-                      "Event",
-                      "Source Type",
-                      "Status",
-                      "Actions",
-                    ].map((label) => (
-                      <div key={label} className="fleet-table-header-cell">
-                        {label}
-                      </div>
-                    ))}
+                    {SUBMISSION_SPREADSHEET_COLUMNS.map((column) => renderSortableHeader(column))}
                   </div>
 
                   {filteredSubmissions.map((submission) => {
-                    const displayId = submission.submissionId || submission.submission_ref || formatDateTime(submission.id);
-                    const confidenceTone = getConfidenceTone(submission.confidence);
-                    const validationTone = getReviewStateTone(submission.validationStateKey);
-                    const syncTone =
-                      submission.syncStateKey === "sent"
-                        ? "success"
-                        : submission.syncStateKey === "failed"
-                          ? "danger"
-                          : "warning";
+                    const rowId = getSubmissionId(submission);
+                    const isSelected = String(selectedSubmissionId) === String(rowId);
 
                     return (
                       <div
-                        key={submission.id}
-                        className="fleet-table-row submission-table-row"
+                        key={rowId || submission.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open submission ${submission.submissionId || submission.submission_ref || rowId}`}
+                        className={`fleet-table-row submission-table-row ${isSelected ? "is-selected" : ""}`}
                         style={{ gridTemplateColumns: SUBMISSION_TABLE_COLUMNS }}
+                        onClick={() => openDrawer(submission, "overview")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openDrawer(submission, "overview");
+                          }
+                        }}
                       >
-                        <div className="fleet-table-cell" data-label="Submission ID">
-                          <div className="submission-cell-stack">
-                            <strong className="submission-mono">{displayId}</strong>
-                            <span className="submission-cell-subtext">
-                              {formatDate(submission.createdAt || submission.submittedAt)}
-                            </span>
+                        {SUBMISSION_SPREADSHEET_COLUMNS.map((column) => (
+                          <div key={column.key} className="fleet-table-cell" data-label={column.label}>
+                            {renderSubmissionCell(submission, column)}
                           </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Date / Time">
-                          <div className="submission-cell-stack">
-                            <strong>{formatDateTime(submission.submittedAt || submission.createdAt || submission.updatedAt)}</strong>
-                            <span className="submission-cell-subtext">
-                              {submission.reviewStateLabel || "Awaiting review"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Event">
-                          <div className="submission-cell-stack">
-                            <strong>{submission.event?.name || "Unknown Event"}</strong>
-                            <span className="submission-cell-subtext">
-                              {submission.event?.track || submission.event?.trackName || submission.event?.track_name || "-"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Source Type">
-                          <StatusBadge label={submission.sourceTypeLabel} tone={submission.sourceTypeTone} />
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Status">
-                          <div className="submission-status-stack">
-                            <StatusBadge label={submission.validationStateLabel} tone={validationTone} />
-                            <StatusBadge label={submission.syncStateLabel} tone={syncTone} />
-                            <span className={`submission-confidence-badge tone-${confidenceTone}`}>
-                              Confidence {submission.confidenceLabel || "-"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Actions">
-                          <div className="submission-action-stack">
-                            <ActionIconButton
-                              icon={VisibilityOutlinedIcon}
-                              label="View Details"
-                              title="View Details"
-                              onClick={() => openDetailsPage(submission)}
-                            />
-                            <ActionIconButton
-                              icon={DescriptionOutlinedIcon}
-                              label="Review Raw Input"
-                              title="Review Raw Input"
-                              onClick={() => openDrawer(submission, "raw")}
-                            />
-                            <ActionIconButton
-                              icon={ArchiveOutlinedIcon}
-                              label="Archive"
-                              title="Archive Submission"
-                              tone="danger"
-                              onClick={() => setArchiveTarget(submission)}
-                              disabled={busyAction === `archive:${submission.id}` || submission.validationStateKey === "archived"}
-                            />
-                          </div>
-                        </div>
+                        ))}
                       </div>
                     );
                   })}

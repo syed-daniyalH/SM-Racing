@@ -215,6 +215,7 @@ export const normalizeSubmission = (submission) => {
     event,
     driver: submission.driver || null,
     vehicle: submission.vehicle || null,
+    createdByUser: submission.created_by_user || submission.createdByUser || null,
     userId: submission.created_by_id || submission.userId || null,
     raw_text: submission.raw_text || submission.rawText || "",
     image: submission.image_url || submission.image || null,

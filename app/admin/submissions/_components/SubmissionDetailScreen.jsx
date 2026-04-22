@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
@@ -772,6 +774,8 @@ export default function SubmissionDetailScreen({
   previewMessage = "",
   previewTone = "warning",
 }) {
+  const router = useRouter();
+
   const { user } = useAuth();
   const [liveSubmission, setLiveSubmission] = useState(submission);
   const [isEditing, setIsEditing] = useState(false);
@@ -1062,6 +1066,14 @@ export default function SubmissionDetailScreen({
           </div>
 
           <div className="submission-detail-hero-actions">
+            <button
+              type="button"
+              className="fleet-btn fleet-btn-secondary"
+              onClick={() => router.push("/admin/submissions")}
+            >
+              <ArrowBackOutlinedIcon fontSize="inherit" />
+              Back
+            </button>
             <button
               type="button"
               className="fleet-btn fleet-btn-secondary"
