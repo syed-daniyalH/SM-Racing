@@ -408,7 +408,7 @@ export default function TracksManagementPage() {
             </div>
 
             <div className="fleet-toolbar">
-              <div className="fleet-field fleet-search-field" style={{ gridColumn: "1 / -1" }}>
+              <div className="fleet-field fleet-search-field tracks-toolbar-search">
                 <label className="fleet-label" htmlFor="track-search">
                   Search
                 </label>
@@ -423,7 +423,7 @@ export default function TracksManagementPage() {
                 />
               </div>
 
-              <div className="fleet-field">
+              <div className="fleet-field tracks-toolbar-status">
                 <label className="fleet-label" htmlFor="track-status-filter">
                   Status
                 </label>
@@ -441,7 +441,7 @@ export default function TracksManagementPage() {
                 </select>
               </div>
 
-              <div className="fleet-field">
+              <div className="fleet-field tracks-toolbar-country">
                 <label className="fleet-label" htmlFor="track-country-filter">
                   Country
                 </label>
@@ -460,9 +460,9 @@ export default function TracksManagementPage() {
                 </select>
               </div>
 
-              <div className="fleet-field">
+              <div className="fleet-field tracks-toolbar-actions-field">
                 <label className="fleet-label">Quick Actions</label>
-                <div className="fleet-actions-inline">
+                <div className="fleet-actions-inline tracks-toolbar-actions">
                   <button type="button" className="fleet-btn fleet-btn-secondary" onClick={resetFilters}>
                     Clear Filters
                   </button>
