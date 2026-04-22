@@ -117,12 +117,13 @@ export const getDriverFullName = (driver) => {
 
   const firstName = normalizeMetaValue(driver.firstName || driver.first_name);
   const lastName = normalizeMetaValue(driver.lastName || driver.last_name);
+  const driverName = normalizeMetaValue(driver.driverName || driver.driver_name);
 
   if (firstName && lastName && firstName === lastName) {
     return firstName;
   }
 
-  return [firstName, lastName].filter(Boolean).join(" ").trim();
+  return [firstName, lastName].filter(Boolean).join(" ").trim() || driverName;
 };
 
 export const getDriverDisplayName = (driver) =>
@@ -229,14 +230,18 @@ export const toDriverFormValues = (driver = null) => ({
 
 export const buildDriverPayload = (values) => {
   const { firstName, lastName } = splitFullName(values?.fullName);
+  const driverName = normalizeMetaValue(values?.fullName);
 
   return {
+    driver_id: normalizeMetaValue(values?.driverId) || undefined,
+    driver_name: driverName || undefined,
     first_name: firstName,
     last_name: lastName,
     license_number: normalizeMetaValue(values?.licenseNumber) || undefined,
     team_name: normalizeMetaValue(values?.displayName) || undefined,
     aliases: normalizeAliasList(values?.aliases),
     notes: normalizeMetaValue(values?.notes) || undefined,
+    active: values?.status ? values.status !== "archived" : true,
     is_active: values?.status ? values.status !== "archived" : true,
   };
 };
@@ -275,6 +280,7 @@ export const toVehicleFormValues = (vehicle = null) => ({
 });
 
 export const buildVehiclePayload = (values) => ({
+  vehicle_id: normalizeMetaValue(values?.vehicleId) || undefined,
   driver_id: normalizeMetaValue(values?.driverId) || null,
   make: normalizeMetaValue(values?.make),
   model: normalizeMetaValue(values?.model),
@@ -287,6 +293,7 @@ export const buildVehiclePayload = (values) => ({
       ? undefined
       : Number(values.wheelbaseMm),
   notes: normalizeMetaValue(values?.notes) || undefined,
+  active: values?.status ? values.status !== "archived" : true,
   is_active: values?.status ? values.status !== "archived" : true,
 });
 
@@ -299,7 +306,9 @@ export const buildVehicleMeta = (values) => ({
 export const getDriverSearchText = (driver) =>
   [
     driver?.id,
+    driver?.driver_id,
     getDriverFullName(driver),
+    driver?.driver_name,
     getDriverDisplayName(driver),
     driver?.licenseNumber,
     (driver?.aliases || []).join(" "),
@@ -312,12 +321,14 @@ export const getDriverSearchText = (driver) =>
 export const getVehicleSearchText = (vehicle, driverName = "") =>
   [
     vehicle?.id,
+    vehicle?.vehicle_id,
     vehicle?.registrationNumber,
     vehicle?.make,
     vehicle?.model,
     vehicle?.year,
     vehicle?.vehicleClass,
     vehicle?.notes,
+    vehicle?.driverId,
     driverName,
   ]
     .filter(Boolean)
@@ -363,6 +374,10 @@ export const buildDriverMap = (drivers = []) =>
       map.set(String(driver.id), driver);
     }
 
+    if (driver?.driver_id) {
+      map.set(String(driver.driver_id), driver);
+    }
+
     return map;
   }, new Map());
 
@@ -370,7 +385,11 @@ export const getVehicleDriverName = (vehicle, driverMap = new Map()) => {
   const driver = vehicle?.driverId ? driverMap.get(String(vehicle.driverId)) : null;
   if (!driver) return "Unassigned";
 
-  return getDriverDisplayName(driver) || getDriverFullName(driver) || formatEntityId("DRV", driver.id);
+  return (
+    getDriverDisplayName(driver) ||
+    getDriverFullName(driver) ||
+    formatEntityId("DRV", driver.driver_id || driver.id)
+  );
 };
 
 export const getVehicleDriverSubtext = (vehicle, driverMap = new Map()) => {
@@ -384,5 +403,5 @@ export const getVehicleDriverSubtext = (vehicle, driverMap = new Map()) => {
     return fullName;
   }
 
-  return formatEntityId("DRV", driver.id);
+  return formatEntityId("DRV", driver.driver_id || driver.id);
 };

@@ -94,7 +94,7 @@ export default function EventFormDrawer({
               />
             </div>
 
-            <div className="form-group">
+            <div className="form-group drawer-span-2">
               <label className="form-label" htmlFor="event-run-group">
                 Run Group <span className="required-marker">*</span>
               </label>
@@ -129,7 +129,7 @@ export default function EventFormDrawer({
               </div>
             </div>
 
-            <div className="form-row">
+            <div className="form-row drawer-span-2">
               <div className="form-group">
                 <label className="form-label" htmlFor="event-start-date">
                   Start Date
@@ -157,7 +157,7 @@ export default function EventFormDrawer({
               </div>
             </div>
 
-            <div className="form-group">
+            <div className="form-group drawer-span-2">
               <label className="form-label" htmlFor="event-status">
                 Status
               </label>
@@ -175,7 +175,7 @@ export default function EventFormDrawer({
               </p>
             </div>
 
-            <div className="form-group">
+            <div className="form-group drawer-span-2">
               <label className="form-label" htmlFor="event-notes">
                 Notes / Description
               </label>

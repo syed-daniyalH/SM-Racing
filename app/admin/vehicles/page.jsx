@@ -168,7 +168,7 @@ function VehicleDrawerContent({
   const driverSummary = selectedDriver
     ? `${getDriverDisplayName(selectedDriver) || getDriverFullName(selectedDriver)} · ${formatEntityId(
         "DRV",
-        selectedDriver.id,
+        selectedDriver.driver_id || selectedDriver.id,
       )}`
     : "No driver assigned";
 
@@ -177,8 +177,8 @@ function VehicleDrawerContent({
       <div className="fleet-detail-grid">
         <div className="fleet-detail-card">
           <p className="fleet-detail-label">Vehicle ID</p>
-          <p className="fleet-detail-value fleet-mono" title={vehicle?.id || ""}>
-            {formatEntityId("VEH", vehicle?.id)}
+          <p className="fleet-detail-value fleet-mono" title={vehicle?.vehicle_id || vehicle?.id || ""}>
+            {vehicle?.vehicle_id || formatEntityId("VEH", vehicle?.id)}
           </p>
         </div>
         <div className="fleet-detail-card">
@@ -462,12 +462,13 @@ export default function VehiclesManagementPage() {
       drivers.map((driver) => {
         const displayName = getDriverDisplayName(driver) || getDriverFullName(driver) || "Unnamed Driver";
         return {
-          id: driver.id,
+          id: driver.driver_id || driver.id,
           label: displayName,
           sublabel: `${getDriverFullName(driver) || "No full name"} · ${formatEntityId("DRV", driver.id)}`,
           searchText: [
             displayName,
             getDriverFullName(driver),
+            driver.driver_id || driver.id,
             driver.licenseNumber,
             driver.aliases?.join(" "),
           ]

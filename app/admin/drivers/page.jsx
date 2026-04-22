@@ -152,8 +152,8 @@ function DriverDrawerContent({
       <div className="fleet-detail-grid">
         <div className="fleet-detail-card">
           <p className="fleet-detail-label">Driver ID</p>
-          <p className="fleet-detail-value fleet-mono" title={driver?.id || ""}>
-            {formatEntityId("DRV", driver?.id)}
+          <p className="fleet-detail-value fleet-mono" title={driver?.driver_id || driver?.id || ""}>
+            {driver?.driver_id || formatEntityId("DRV", driver?.id)}
           </p>
         </div>
         <div className="fleet-detail-card">
@@ -268,7 +268,7 @@ function DriverDrawerContent({
               <div className="fleet-pill-list" style={{ marginTop: "0.45rem" }}>
                 {assignedVehicles.map((vehicle) => (
                   <span key={vehicle.id} className="fleet-pill fleet-pill-accent">
-                    {vehicle.registrationNumber || formatEntityId("VEH", vehicle.id)}
+                    {vehicle.vehicle_id || vehicle.registrationNumber || formatEntityId("VEH", vehicle.id)}
                   </span>
                 ))}
               </div>
@@ -369,7 +369,8 @@ export default function DriversManagementPage() {
     () =>
       drivers.map((driver) => ({
         ...driver,
-        assignedVehicleCount: vehicleCountMap.get(String(driver.id)) || 0,
+        assignedVehicleCount:
+          vehicleCountMap.get(String(driver.driver_id || driver.id)) || 0,
       })),
     [drivers, vehicleCountMap],
   );
@@ -405,9 +406,10 @@ export default function DriversManagementPage() {
   const assignedVehicles = useMemo(
     () =>
       vehicles.filter(
-        (vehicle) => String(vehicle.driverId || "") === String(currentDriver?.id || ""),
+        (vehicle) =>
+          String(vehicle.driverId || "") === String(currentDriver?.driver_id || currentDriver?.id || ""),
       ),
-    [currentDriver?.id, vehicles],
+    [currentDriver?.driver_id, currentDriver?.id, vehicles],
   );
 
   useEffect(() => {
