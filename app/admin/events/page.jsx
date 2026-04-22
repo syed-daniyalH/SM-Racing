@@ -410,8 +410,10 @@ export default function EventsManagementPage() {
       >
         <div className="admin-event-card-header">
           <div className="admin-event-card-title-group">
-            <div className="admin-event-card-title">{title}</div>
-            <div className="admin-event-card-track">{event.track || "Track not set"}</div>
+            <div className="admin-event-card-title" title={title}>{title}</div>
+            <div className="admin-event-card-track" title={event.track || "Track not set"}>
+              {event.track || "Track not set"}
+            </div>
           </div>
 
           <div className="helper-pill-row">
@@ -426,28 +428,31 @@ export default function EventsManagementPage() {
         <div className="admin-event-card-meta">
           <div className="admin-event-card-meta-item">
             <div className="admin-event-card-meta-label">Track</div>
-            <div className="admin-event-card-meta-value">
+            <div className="admin-event-card-meta-value" title={event.track || "-"}>
               {event.track || "-"}
             </div>
           </div>
 
           <div className="admin-event-card-meta-item">
             <div className="admin-event-card-meta-label">Date Range</div>
-            <div className="admin-event-card-meta-value">
+            <div
+              className="admin-event-card-meta-value"
+              title={formatDateRange(event.startDate, event.endDate)}
+            >
               {formatDateRange(event.startDate, event.endDate)}
             </div>
           </div>
 
           <div className="admin-event-card-meta-item">
             <div className="admin-event-card-meta-label">Run Group</div>
-            <div className="admin-event-card-meta-value mono">
+            <div className="admin-event-card-meta-value mono" title={event.runGroup ? runGroupValue : "Not Configured"}>
               {event.runGroup ? runGroupValue : "Not Configured"}
             </div>
           </div>
 
           <div className="admin-event-card-meta-item">
             <div className="admin-event-card-meta-label">{timestampLabel}</div>
-            <div className="admin-event-card-meta-value">{timestampValue}</div>
+            <div className="admin-event-card-meta-value" title={timestampValue}>{timestampValue}</div>
           </div>
         </div>
 

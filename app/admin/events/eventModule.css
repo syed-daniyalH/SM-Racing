@@ -276,6 +276,8 @@
 .admin-events-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
   gap: 1rem;
 }
 
@@ -287,6 +289,10 @@
   background: linear-gradient(180deg, rgba(26, 26, 26, 0.97), rgba(12, 12, 12, 0.97));
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
   padding: 1.2rem;
+  min-height: 420px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   transition:
     transform 0.22s ease,
     box-shadow 0.22s ease,
@@ -336,6 +342,7 @@
   align-items: flex-start;
   gap: 1rem;
   margin-bottom: 0.9rem;
+  min-height: 78px;
 }
 
 .admin-event-card-title-group {
@@ -343,6 +350,10 @@
 }
 
 .admin-event-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 1.14rem;
   line-height: 1.35;
   font-weight: 800;
@@ -352,6 +363,10 @@
 }
 
 .admin-event-card-track {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 0.88rem;
   color: var(--color-text-light);
   line-height: 1.5;
@@ -364,10 +379,14 @@
 }
 
 .admin-event-card-meta-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   padding: 0.85rem 0.9rem;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.03);
+  min-height: 92px;
 }
 
 .admin-event-card-meta-label {
@@ -379,11 +398,16 @@
 }
 
 .admin-event-card-meta-value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 0.9rem;
   font-weight: 700;
   color: var(--color-text);
   margin-top: 0.35rem;
   line-height: 1.45;
+  min-height: 2.6em;
 }
 
 .admin-event-card-meta-value.mono {
@@ -395,12 +419,15 @@
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  margin-top: 1rem;
+  margin-top: auto;
   padding-top: 1rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .admin-event-card-note {
+  min-height: 52px;
+  display: flex;
+  align-items: flex-start;
   color: var(--color-text-light);
   font-size: 0.82rem;
   line-height: 1.55;
@@ -414,6 +441,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+  margin-top: auto;
 }
 
 .event-action-grid .btn {
@@ -434,6 +462,9 @@
 }
 
 .admin-event-card-callout {
+  min-height: 52px;
+  display: flex;
+  align-items: flex-start;
   padding: 0.95rem 1rem;
   border-radius: 16px;
   border: 1px solid rgba(255, 149, 0, 0.18);
@@ -799,6 +830,7 @@
 
   .admin-events-grid {
     grid-template-columns: 1fr;
+    grid-auto-rows: auto;
   }
 
   .workspace-meta-grid,
@@ -837,5 +869,9 @@
   .workspace-run-group,
   .admin-event-card {
     border-radius: 20px;
+  }
+
+  .admin-event-card {
+    min-height: 0;
   }
 }
