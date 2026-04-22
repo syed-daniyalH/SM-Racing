@@ -11,6 +11,7 @@ import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { createSubmission } from "../../../utils/submissionApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
+import { getEventSubmissionState } from "../../../utils/eventSchedule";
 import {
   DRIVER_OPTIONS,
   VEHICLE_OPTIONS,
@@ -245,15 +246,22 @@ export default function NotesSubmission() {
     };
   }, []);
 
-  const eventEndDate = useMemo(() => {
-    const rawEndDate = event?.endDate || event?.end_date;
-    if (!rawEndDate) return null;
-
-    const parsed = new Date(rawEndDate);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [event?.endDate, event?.end_date]);
-
-  const canSubmitNotes = Boolean(eventEndDate && Date.now() > eventEndDate.getTime());
+  const submissionState = useMemo(() => getEventSubmissionState(event), [event]);
+  const canSubmitNotes = submissionState.isOpen;
+  const submissionUnavailableMessage = submissionState.isUpcoming
+    ? "Submission notes will open when the event start date arrives."
+    : submissionState.hasEnded
+      ? "Submission notes close after the event end date."
+      : submissionState.isArchived
+        ? "Submission notes are unavailable for archived events."
+        : "Submission notes are unavailable until the event schedule is ready.";
+  const submitButtonLabel = canSubmitNotes
+    ? "Submit Notes"
+    : submissionState.isUpcoming
+      ? "Opens At Event Start"
+      : submissionState.hasEnded
+        ? "Event Closed"
+        : "Notes Unavailable";
 
   const toNumberOrUndefined = (value) =>
     value === "" || value === null || value === undefined
@@ -405,7 +413,7 @@ export default function NotesSubmission() {
 
     if (!canSubmitNotes) {
       setSubmissionStatus("failed");
-      setError("Submission notes are only available after the event end date passes.");
+      setError(submissionUnavailableMessage);
       return;
     }
 
@@ -1776,7 +1784,7 @@ export default function NotesSubmission() {
             <div className="submission-status">
               {!canSubmitNotes && (
                 <div className="status-message status-pending">
-                  Submission notes are locked until the event end date passes.
+                  {submissionUnavailableMessage}
                 </div>
               )}
               {submissionStatus === "sent" && (
@@ -1819,11 +1827,7 @@ export default function NotesSubmission() {
                   className="btn btn-primary btn-large"
                   disabled={isSubmitting || !canSubmitNotes}
                 >
-                  {isSubmitting
-                    ? "Submitting..."
-                    : canSubmitNotes
-                      ? "Submit Notes"
-                      : "Locked Until Event Ends"}
+                  {isSubmitting ? "Submitting..." : submitButtonLabel}
                 </button>
               </div>
             </div>

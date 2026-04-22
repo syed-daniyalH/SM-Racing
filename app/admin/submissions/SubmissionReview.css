@@ -253,7 +253,7 @@
 }
 
 .submission-sheet-table {
-  min-width: 1780px;
+  min-width: 1180px;
 }
 
 .submission-table-row {
@@ -335,6 +335,10 @@
   flex-wrap: wrap;
   gap: 0.45rem;
   width: 100%;
+}
+
+.submission-sheet-card .fleet-table-scroll {
+  scrollbar-gutter: stable both-edges;
 }
 
 .submission-action-grid .fleet-action-icon-button {

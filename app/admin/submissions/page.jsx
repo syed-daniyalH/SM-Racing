@@ -66,19 +66,11 @@ const SUBMISSION_SPREADSHEET_COLUMNS = [
   { key: "submissionId", label: "ID", width: "minmax(90px, 0.75fr)", sortable: true },
   { key: "sessionDate", label: "Date", width: "minmax(95px, 0.8fr)", sortable: true },
   { key: "sessionTime", label: "Time", width: "minmax(70px, 0.55fr)", sortable: true },
-  { key: "track", label: "Track", width: "minmax(150px, 1.05fr)", sortable: true },
-  { key: "driverName", label: "Driver Name", width: "minmax(140px, 0.95fr)", sortable: true },
-  { key: "driverId", label: "Driver ID", width: "minmax(90px, 0.65fr)", sortable: true },
-  { key: "vehicleId", label: "Vehicle ID", width: "minmax(110px, 0.8fr)", sortable: true },
-  { key: "sessionType", label: "Session Type", width: "minmax(110px, 0.8fr)", sortable: true },
-  { key: "sessionNumber", label: "Session #", width: "minmax(80px, 0.55fr)", sortable: true },
-  { key: "durationMin", label: "Duration (min)", width: "minmax(90px, 0.65fr)", sortable: true },
-  { key: "tireSet", label: "Tire Set", width: "minmax(90px, 0.65fr)", sortable: true },
-  { key: "notes", label: "Notes", width: "minmax(160px, 1.05fr)", sortable: true },
-  { key: "createdBy", label: "Created By", width: "minmax(100px, 0.7fr)", sortable: true },
-  { key: "createdAt", label: "Created At", width: "minmax(140px, 0.9fr)", sortable: true },
-  { key: "status", label: "Status", width: "minmax(120px, 0.85fr)", sortable: true },
-  { key: "actions", label: "Actions", width: "minmax(220px, 1.15fr)", sortable: false },
+  { key: "track", label: "Track", width: "minmax(180px, 1.35fr)", sortable: true },
+  { key: "driverName", label: "Driver", width: "minmax(170px, 1.2fr)", sortable: true },
+  { key: "createdAt", label: "Created At", width: "minmax(150px, 1fr)", sortable: true },
+  { key: "status", label: "Status", width: "minmax(150px, 1fr)", sortable: true },
+  { key: "actions", label: "Actions", width: "minmax(210px, 1.2fr)", sortable: false },
 ];
 
 const SUBMISSION_TABLE_COLUMNS = SUBMISSION_SPREADSHEET_COLUMNS.map((column) => column.width).join(" ");
@@ -188,22 +180,6 @@ const getRowSortValue = (submission, key) => {
       return String(submission.data?.track || submission.event?.track || "");
     case "driverName":
       return String(submission.driverName || submission.driver?.driverName || submission.driver?.fullName || "");
-    case "driverId":
-      return String(submission.driverCode || submission.data?.driver_id || "");
-    case "vehicleId":
-      return String(submission.vehicleCode || submission.data?.vehicle_id || "");
-    case "sessionType":
-      return String(submission.sessionTypeLabel || "");
-    case "sessionNumber":
-      return numeric(submission.data?.session_number || submission.sessionNumberLabel || 0) ?? 0;
-    case "durationMin":
-      return numeric(submission.data?.duration_min || submission.durationLabel || 0) ?? 0;
-    case "tireSet":
-      return String(submission.tireSetLabel || "");
-    case "notes":
-      return String(submission.notesLabel || "");
-    case "createdBy":
-      return String(submission.createdByLabel || "");
     case "createdAt":
       return new Date(submission.submittedAt || submission.createdAt || submission.updatedAt || 0).getTime();
     case "status":
@@ -829,14 +805,6 @@ export default function SubmissionReviewPage() {
     const submissionId = submission.submissionId || submission.submission_ref || getSubmissionId(submission) || "-";
     const trackLabel = getSubmissionTrackLabel(submission);
     const driverLabel = getSubmissionDriverLabel(submission);
-    const driverId = submission.driverCode || submission.data?.driver_id || submission.driver?.driver_id || "-";
-    const vehicleId = submission.vehicleCode || submission.data?.vehicle_id || submission.vehicle?.vehicle_id || "-";
-    const sessionType = submission.sessionTypeLabel || "-";
-    const sessionNumber = submission.sessionNumberLabel || "-";
-    const duration = submission.durationLabel || "-";
-    const tireSet = submission.tireSetLabel || "-";
-    const notes = submission.notesLabel || "-";
-    const createdBy = submission.createdByLabel || "-";
     const createdAt = submission.submittedAtLabel || formatDateTime(submission.submittedAt || submission.createdAt || submission.updatedAt);
     const statusTone = getReviewStateTone(submission.validationStateKey);
     const syncTone =
@@ -858,14 +826,7 @@ export default function SubmissionReviewPage() {
           </div>
         );
       case "sessionDate":
-        return (
-          <div className="submission-cell-stack">
-            <strong>{submission.sessionDateLabel || "-"}</strong>
-            <span className="submission-cell-subtext">
-              {submission.sessionTimeLabel || "Session time not captured"}
-            </span>
-          </div>
-        );
+        return <strong>{submission.sessionDateLabel || "-"}</strong>;
       case "sessionTime":
         return <strong className="submission-mono">{submission.sessionTimeLabel || "-"}</strong>;
       case "track":
@@ -876,45 +837,12 @@ export default function SubmissionReviewPage() {
           </div>
         );
       case "driverName":
-        return (
-          <div className="submission-cell-stack">
-            <strong>{driverLabel}</strong>
-            <span className="submission-cell-subtext">{driverId}</span>
-          </div>
-        );
-      case "driverId":
-        return <strong className="submission-mono">{driverId}</strong>;
-      case "vehicleId":
-        return <strong className="submission-mono">{vehicleId}</strong>;
-      case "sessionType":
-        return <strong>{sessionType}</strong>;
-      case "sessionNumber":
-        return <strong className="submission-mono">{sessionNumber}</strong>;
-      case "durationMin":
-        return <strong className="submission-mono">{duration}</strong>;
-      case "tireSet":
-        return <strong>{tireSet}</strong>;
-      case "notes":
-        return (
-          <div className="submission-cell-stack">
-            <strong className="submission-note-title">{notes}</strong>
-            <span className="submission-cell-subtext">
-              {submission.rawText ? "Raw notes available in the drawer" : "No notes provided"}
-            </span>
-          </div>
-        );
-      case "createdBy":
-        return (
-          <div className="submission-cell-stack">
-            <strong>{createdBy}</strong>
-            <span className="submission-cell-subtext">{submission.sourceTypeLabel}</span>
-          </div>
-        );
+        return <strong>{driverLabel}</strong>;
       case "createdAt":
         return (
           <div className="submission-cell-stack">
             <strong>{createdAt}</strong>
-            <span className="submission-cell-subtext">{submission.reviewStateLabel}</span>
+            <span className="submission-cell-subtext">{submission.sourceTypeLabel}</span>
           </div>
         );
       case "status":

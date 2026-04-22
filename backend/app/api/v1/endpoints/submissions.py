@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +21,41 @@ from app.services.make_webhook_service import send_submission_to_make
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
+def _is_midnight(value: datetime) -> bool:
+    return (
+        value.hour == 0
+        and value.minute == 0
+        and value.second == 0
+        and value.microsecond == 0
+    )
+
+
+def _event_submission_start_to_utc(event: Event) -> datetime | None:
+    return _as_utc(getattr(event, "start_date", None))
+
+
+def _event_submission_end_to_utc(event: Event) -> datetime | None:
+    end_date = _as_utc(getattr(event, "end_date", None))
+    if end_date is None:
+        return None
+
+    # Admin scheduling is date-based, so midnight end dates stay open for the full end day.
+    if _is_midnight(end_date):
+        return end_date + timedelta(days=1)
+
+    return end_date
 
 
 def _submission_options():
@@ -112,6 +148,19 @@ def create_submission(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not event.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Event is archived")
+    now = datetime.now(timezone.utc)
+    event_start_date = _event_submission_start_to_utc(event)
+    event_end_date = _event_submission_end_to_utc(event)
+    if event_start_date is not None and now < event_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Submission notes open when the event start date arrives",
+        )
+    if event_end_date is not None and now >= event_end_date:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Submission notes close after the event end date passes",
+        )
 
     run_group = db.get(RunGroup, submission_in.run_group_id)
     if not run_group:

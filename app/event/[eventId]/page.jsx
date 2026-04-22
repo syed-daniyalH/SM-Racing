@@ -19,87 +19,52 @@ import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
 import { getEventById, selectActiveEvent } from "../../utils/eventApi";
 import { getRunGroup } from "../../utils/runGroupApi";
+import {
+  formatEventDateRange,
+  getEventLifecycle,
+  getEventSubmissionState,
+} from "../../utils/eventSchedule";
 import "./EventDetail.css";
 
-const formatDate = (value) => {
-  if (!value) return "-";
-
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-};
-
-const toDate = (value) => {
-  if (!value) return null;
-
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const formatDateRange = (startDate, endDate) => {
-  const start = formatDate(startDate);
-  const end = formatDate(endDate);
-
-  if (start === "-" && end === "-") return "-";
-  if (start === end) return start;
-  return `${start} - ${end}`;
-};
-
 const deriveEventStatus = (event) => {
-  const explicitStatus = String(event?.status || event?.state || "").toLowerCase();
-  const isActiveFlag = event?.is_active ?? event?.isActive;
-  const startDate = toDate(event?.startDate || event?.start_date);
-  const endDate = toDate(event?.endDate || event?.end_date);
-  const now = new Date();
-  const submissionNotesOpen = Boolean(endDate && now > endDate);
+  const lifecycle = getEventLifecycle(event);
+  const submissionState = getEventSubmissionState(event);
 
-  if (explicitStatus.includes("archiv")) {
+  if (lifecycle.key === "archived") {
     return { label: "Archived", tone: "neutral", note: "Event archived", icon: "archive" };
   }
 
-  if (explicitStatus.includes("complete")) {
+  if (lifecycle.key === "upcoming") {
+    return {
+      label: "Upcoming",
+      tone: "info",
+      note: "Submission notes open when the event starts.",
+      icon: "upcoming",
+    };
+  }
+
+  if (lifecycle.key === "completed") {
     return {
       label: "Completed",
       tone: "neutral",
-      note: submissionNotesOpen ? "Submission notes are open now" : "Submission notes unlock after the event ends",
+      note: "Submission notes are closed because the event window has ended.",
       icon: "complete",
     };
   }
 
-  if (explicitStatus.includes("upcoming")) {
-    return { label: "Upcoming", tone: "info", note: "Scheduled but not live yet", icon: "upcoming" };
-  }
-
-  if (isActiveFlag === true || (startDate && endDate && now >= startDate && now <= endDate)) {
+  if (submissionState.isOpen) {
     return {
       label: "Active",
       tone: "success",
-      note: "Submission notes unlock after the event ends",
+      note: "Submission notes are open for this event.",
       icon: "active",
     };
   }
 
-  if (startDate && now < startDate) {
-    return { label: "Upcoming", tone: "info", note: "Event starts soon", icon: "upcoming" };
-  }
-
-  if (endDate && now > endDate) {
-    return { label: "Completed", tone: "neutral", note: "Submission notes are open now", icon: "complete" };
-  }
-
-  if (isActiveFlag === false) {
-    return { label: "Inactive", tone: "warning", note: "Not currently active", icon: "inactive" };
-  }
-
   return {
-    label: "Ready",
-    tone: "accent",
-    note: "Submission notes unlock after the event ends",
+    label: lifecycle.label,
+    tone: lifecycle.tone,
+    note: "Event schedule is unavailable.",
     icon: "ready",
   };
 };
@@ -272,10 +237,35 @@ export default function EventDetail() {
   }
 
   const eventTrack = event.track || event.track_name || "-";
-  const eventDates = formatDateRange(event.startDate || event.start_date, event.endDate || event.end_date);
+  const eventDates = formatEventDateRange(event.startDate || event.start_date, event.endDate || event.end_date);
   const eventStatus = deriveEventStatus(event);
+  const submissionState = getEventSubmissionState(event);
   const runGroupValue = runGroup || "Not assigned yet";
   const hasRunGroup = Boolean(runGroup && runGroup !== "Not assigned yet");
+  const canCaptureNotes = hasRunGroup && submissionState.isOpen;
+  const runGroupFooterNote = hasRunGroup
+    ? canCaptureNotes
+      ? "Ready for note capture"
+      : submissionState.isUpcoming
+        ? "Opens when the event starts"
+        : submissionState.hasEnded
+          ? "Capture window closed"
+          : "Waiting for event schedule"
+    : "Run group missing";
+  const accessLabel = canCaptureNotes
+    ? "Mechanic ready"
+    : submissionState.isUpcoming
+      ? "Opens at start"
+      : submissionState.hasEnded
+        ? "Closed after event"
+        : "Schedule needed";
+  const noteBannerCopy = canCaptureNotes
+    ? "Use Submit Notes to start a quick or detailed entry. View Submissions to review the event history."
+    : submissionState.isUpcoming
+      ? "Submission notes will open when the event start date arrives."
+      : submissionState.hasEnded
+        ? "This event window has ended. View Submissions to review the captured history."
+        : "Confirm the event schedule and run group before mechanics begin capturing notes.";
 
   return (
     <ProtectedRoute requireMechanic={true}>
@@ -371,7 +361,7 @@ export default function EventDetail() {
                   label={hasRunGroup ? "Configured" : "Not Configured"}
                   tone={hasRunGroup ? "success" : "warning"}
                 />
-                <span>{hasRunGroup ? "Ready for note capture" : "Run group missing"}</span>
+                <span>{runGroupFooterNote}</span>
               </div>
             </article>
 
@@ -392,12 +382,10 @@ export default function EventDetail() {
                 </li>
                 <li className="event-detail-info-row">
                   <span className="event-detail-info-label">Access</span>
-                  <span className="event-detail-info-value">Mechanic ready</span>
+                  <span className="event-detail-info-value">{accessLabel}</span>
                 </li>
               </ul>
-              <div className="event-detail-note-banner">
-                Use Submit Notes to start a quick or detailed entry. View Submissions to review the event history.
-              </div>
+              <div className="event-detail-note-banner">{noteBannerCopy}</div>
             </article>
           </section>
 
