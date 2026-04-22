@@ -19,6 +19,32 @@ const unwrapSubmission = (data) =>
 const unwrapSubmissionList = (data) =>
   normalizeList(data?.submissions || data?.data || data, normalizeSubmission);
 
+const buildApiError = (error, fallbackMessage) => ({
+  status: error.response?.status,
+  message:
+    error.response?.data?.message ||
+    error.response?.data?.error ||
+    (Array.isArray(error.response?.data?.detail)
+      ? error.response.data.detail
+          .map((item) => item?.msg || item?.message || JSON.stringify(item))
+          .join("; ")
+      : error.response?.data?.detail) ||
+    error.message ||
+    fallbackMessage,
+  error:
+    error.response?.data?.error ||
+    error.response?.data?.message ||
+    (Array.isArray(error.response?.data?.detail)
+      ? error.response.data.detail
+          .map((item) => item?.msg || item?.message || JSON.stringify(item))
+          .join("; ")
+      : error.response?.data?.detail) ||
+    error.message ||
+    fallbackMessage,
+  detail: error.response?.data?.detail,
+  data: error.response?.data,
+});
+
 const buildSubmissionPayload = async (submissionData) => {
   const legacyEventId = submissionData?.eventId || submissionData?.event_id;
   let runGroupId =
@@ -94,7 +120,7 @@ export const createSubmission = async (submissionData) => {
       status: error.response?.status,
       data: error.response?.data,
     });
-    throw error.response?.data || error.message;
+    throw buildApiError(error, "Failed to submit notes. Please try again.");
   }
 };
 

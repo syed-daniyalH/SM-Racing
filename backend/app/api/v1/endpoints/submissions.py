@@ -76,6 +76,49 @@ def _load_submission(db: Session, submission_id: UUID) -> Submission | None:
     return db.scalar(stmt)
 
 
+def _validate_submission_relations(
+    db: Session,
+    submission_in: SubmissionCreate,
+) -> tuple[Driver | None, Vehicle | None]:
+    driver = None
+    vehicle = None
+
+    if submission_in.driver_id and not submission_in.vehicle_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vehicle is required when a driver is selected",
+        )
+    if submission_in.vehicle_id and not submission_in.driver_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Driver is required when a vehicle is selected",
+        )
+
+    if submission_in.driver_id:
+        driver_code = submission_in.driver_id.strip()
+        driver = db.scalar(select(Driver).where(Driver.driver_id == driver_code))
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        if not driver.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Driver is archived")
+
+    if submission_in.vehicle_id:
+        vehicle_code = submission_in.vehicle_id.strip()
+        vehicle = db.scalar(select(Vehicle).where(Vehicle.vehicle_id == vehicle_code))
+        if not vehicle:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+        if not vehicle.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vehicle is archived")
+
+    if driver and vehicle and vehicle.driver_id != driver.driver_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vehicle does not belong to the selected driver",
+        )
+
+    return driver, vehicle
+
+
 def _finalize_delivery(db: Session, submission: Submission) -> Submission:
     if not settings.make_webhook_url:
         return submission
@@ -168,10 +211,7 @@ def create_submission(
     if run_group.event_id != submission_in.event_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run group does not belong to the event")
 
-    if submission_in.driver_id and not db.get(Driver, submission_in.driver_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
-    if submission_in.vehicle_id and not db.get(Vehicle, submission_in.vehicle_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+    driver, vehicle = _validate_submission_relations(db, submission_in)
 
     existing = db.scalar(select(Submission).where(Submission.submission_ref == submission_in.submission_ref))
     if existing:
@@ -181,8 +221,8 @@ def create_submission(
         submission_ref=submission_in.submission_ref,
         event_id=submission_in.event_id,
         run_group_id=submission_in.run_group_id,
-        driver_id=submission_in.driver_id,
-        vehicle_id=submission_in.vehicle_id,
+        driver_id=driver.id if driver else None,
+        vehicle_id=vehicle.id if vehicle else None,
         created_by_id=current_user.id,
         raw_text=submission_in.raw_text,
         image_url=submission_in.image_url,

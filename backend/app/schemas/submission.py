@@ -15,8 +15,8 @@ class SubmissionCreate(ORMModel):
     submission_ref: str = Field(min_length=1, max_length=120)
     event_id: UUID
     run_group_id: UUID
-    driver_id: UUID | None = None
-    vehicle_id: UUID | None = None
+    driver_id: str | None = Field(default=None, max_length=32)
+    vehicle_id: str | None = Field(default=None, max_length=64)
     raw_text: str | None = Field(default=None, max_length=1000)
     image_url: str | None = Field(default=None, max_length=1000)
     payload: dict[str, Any] = Field(default_factory=dict)
