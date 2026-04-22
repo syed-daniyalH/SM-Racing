@@ -1526,3 +1526,327 @@
     opacity: 0.28;
   }
 }
+
+/* Dedicated report-sheet visual treatment for /admin/submissions/report/[id] */
+.submission-detail-page {
+  background:
+    linear-gradient(180deg, #090d1a 0%, #0b1020 58%, #0a1024 100%);
+  padding: 1rem 1rem 1.5rem;
+}
+
+.submission-detail-orb {
+  display: none;
+}
+
+.submission-detail-shell {
+  width: min(1320px, 100%);
+  gap: 0.85rem;
+}
+
+.submission-detail-hero {
+  padding: 0.95rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #273756;
+  background: #0f172b;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+.submission-detail-eyebrow {
+  color: #8fa7cf;
+  letter-spacing: 0.13em;
+}
+
+.submission-detail-hero-copy h1 {
+  font-size: clamp(1.3rem, 1.9vw, 1.7rem);
+  letter-spacing: -0.02em;
+}
+
+.submission-detail-subtitle {
+  color: #c0cadb;
+  font-size: 0.86rem;
+}
+
+.submission-detail-anchor-row a {
+  min-height: 30px;
+  border-radius: 8px;
+  border: 1px solid #2c3d5d;
+  background: #111c32;
+  color: #d7e1f2;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.submission-detail-anchor-row a:hover {
+  border-color: #4a638f;
+  background: #162440;
+}
+
+.submission-detail-summary-grid {
+  gap: 0.65rem;
+}
+
+.submission-detail-layout {
+  grid-template-columns: minmax(0, 1.65fr) minmax(330px, 1fr);
+  gap: 0.75rem;
+}
+
+.submission-detail-main,
+.submission-detail-sidebar {
+  gap: 0.75rem;
+}
+
+.submission-detail-section-card {
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-radius: 10px;
+  border: 1px solid #2a3b5a;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0)),
+    #0f1629;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.submission-detail-section-head {
+  gap: 0.7rem;
+}
+
+.submission-section-heading h3 {
+  font-size: 0.98rem;
+  font-weight: 800;
+}
+
+.submission-section-heading p {
+  font-size: 0.81rem;
+  line-height: 1.45;
+}
+
+.submission-detail-section-score {
+  min-height: 24px;
+  padding: 0 0.62rem;
+  border-radius: 7px;
+  border: 1px solid #344969;
+  background: #13203a;
+  color: #cbd7ed;
+  font-size: 0.72rem;
+}
+
+.submission-detail-field-grid {
+  gap: 0.5rem;
+}
+
+.submission-detail-field-grid-overview {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.submission-detail-field {
+  gap: 0.3rem;
+}
+
+.submission-detail-field-label {
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  color: #9bb0d1;
+}
+
+.submission-detail-field-value {
+  min-height: 38px;
+  padding: 0.48rem 0.62rem;
+  border-radius: 7px;
+  border: 1px solid #2f4264;
+  background: #0c1427;
+  font-size: 0.84rem;
+  font-weight: 640;
+}
+
+.submission-detail-input {
+  min-height: 38px;
+  padding: 0.45rem 0.62rem;
+  border-radius: 7px;
+  border: 1px solid #35507b;
+  background: #0b152a;
+  font-size: 0.84rem;
+}
+
+.submission-detail-textarea {
+  min-height: 92px;
+}
+
+.submission-detail-admin-textarea {
+  min-height: 110px;
+}
+
+.submission-detail-input:focus {
+  border-color: #4e79b8;
+  box-shadow: 0 0 0 2px rgba(78, 121, 184, 0.22);
+}
+
+.submission-detail-issue-grid {
+  gap: 0.5rem;
+}
+
+.submission-issue-card {
+  padding: 0.65rem 0.72rem;
+  border-radius: 8px;
+  border: 1px solid #2f4465;
+  background: #0d162b;
+}
+
+.submission-issue-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+}
+
+.submission-issue-value {
+  font-size: 0.8rem;
+}
+
+.submission-detail-admin-note {
+  padding: 0.7rem;
+  border-radius: 8px;
+  border: 1px solid #304767;
+  background: #0c152a;
+}
+
+.submission-detail-admin-note-readonly {
+  min-height: 74px;
+  border-radius: 7px;
+  border: 1px solid #2d4263;
+  background: #0b1425;
+  font-size: 0.82rem;
+}
+
+.submission-detail-raw-layout {
+  gap: 0.6rem;
+}
+
+.submission-raw-card {
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #2f4568;
+  background: #0c1528;
+}
+
+.submission-raw-card-title {
+  font-size: 0.64rem;
+  color: #98afcf;
+  letter-spacing: 0.11em;
+}
+
+.submission-code-block,
+.submission-json-block {
+  border-radius: 8px;
+  border: 1px solid #304869;
+  background: #0a1325;
+  color: #d8e2f3;
+  font-size: 0.79rem;
+  max-height: 260px;
+}
+
+.submission-detail-raw-code {
+  max-height: 300px;
+}
+
+.submission-detail-quick-verdict .fleet-btn {
+  min-width: 130px;
+}
+
+.submission-detail-group-card {
+  padding: 0.68rem;
+  border-radius: 8px;
+  border: 1px solid #2f4467;
+  background: #0c1426;
+}
+
+.submission-detail-group-title {
+  font-size: 0.86rem;
+}
+
+.submission-detail-group-copy {
+  font-size: 0.7rem;
+}
+
+.submission-detail-timeline-item {
+  padding: 0.65rem 0.72rem;
+  border-radius: 8px;
+  border: 1px solid #304768;
+  background: #0c1528;
+}
+
+.submission-detail-timeline-action {
+  font-size: 0.8rem;
+}
+
+.submission-detail-timeline-note {
+  font-size: 0.77rem;
+}
+
+.submission-detail-timeline-meta {
+  font-size: 0.68rem;
+}
+
+.submission-detail-attachment-card {
+  padding: 0.72rem;
+  border-radius: 8px;
+  border: 1px solid #304868;
+  background: #0c1528;
+}
+
+.submission-detail-attachment-name {
+  font-size: 0.82rem;
+}
+
+.submission-detail-attachment-description {
+  font-size: 0.72rem;
+}
+
+.submission-detail-media,
+.submission-detail-audio {
+  border-radius: 7px;
+  border: 1px solid #355079;
+}
+
+.submission-detail-media {
+  max-height: 200px;
+}
+
+.submission-detail-media-placeholder {
+  min-height: 72px;
+  border-radius: 7px;
+}
+
+.submission-detail-storage-grid {
+  gap: 0.5rem;
+}
+
+.submission-kv-card {
+  padding: 0.72rem;
+  border-radius: 8px;
+  border: 1px solid #2f4568;
+  background: #0d162a;
+}
+
+.submission-kv-label {
+  font-size: 0.64rem;
+}
+
+.submission-kv-value {
+  font-size: 0.82rem;
+}
+
+.submission-detail-footer {
+  padding: 0.72rem;
+  border-radius: 10px;
+  border: 1px solid #2a3d5d;
+  background: #0f172b;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+}
+
+@media (max-width: 1199px) {
+  .submission-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .submission-detail-sidebar {
+    grid-template-columns: 1fr;
+  }
+}

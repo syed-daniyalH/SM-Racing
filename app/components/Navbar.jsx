@@ -17,6 +17,7 @@ export default function Navbar() {
 
   const isAuthPage =
     pathname === "/login" || pathname === "/admin/login" || pathname === "/signup"
+  const isSubmissionReportPage = pathname.startsWith("/admin/submissions/report/")
 
   const currentEventIdMatch = pathname.match(/^\/event\/([^/]+)/)
   const currentEventId = currentEventIdMatch?.[1] || null
@@ -49,7 +50,7 @@ export default function Navbar() {
     }
   }, [user, isAdmin, pathname])
 
-  if (isAuthPage || !user) {
+  if (isAuthPage || isSubmissionReportPage || !user) {
     return null
   }
 

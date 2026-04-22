@@ -9,12 +9,20 @@ export const DRIVER_OPTIONS = [
 ]
 
 export const VEHICLE_OPTIONS = [
-  { id: 'JA-MICRA-2017', label: '-JA-MICRA-2017 belongs to driver JA' },
-  { id: 'JA-400Z-2025', label: '-JA-400Z-2025 belongs to driver JA' },
-  { id: 'JA-997-2012', label: '-JA-997-2012 belongs to driver JA' },
-  { id: 'JFB-GT4-2025', label: '- JFB-GT4-2025 belongs to driver JFB' },
-  { id: 'NG-GT4-2025', label: '-NG-GT4-2025 belongs to driver NG' },
+  { id: 'JA-MICRA-2017', label: '-JA-MICRA-2017 belongs to driver JA', driverId: 'JA' },
+  { id: 'JA-400Z-2025', label: '-JA-400Z-2025 belongs to driver JA', driverId: 'JA' },
+  { id: 'JA-997-2012', label: '-JA-997-2012 belongs to driver JA', driverId: 'JA' },
+  { id: 'JFB-GT4-2025', label: '- JFB-GT4-2025 belongs to driver JFB', driverId: 'JFB' },
+  { id: 'NG-GT4-2025', label: '-NG-GT4-2025 belongs to driver NG', driverId: 'NG' },
 ]
+
+export const getVehicleOptionsForDriver = (driverId) => {
+  if (!driverId) {
+    return VEHICLE_OPTIONS;
+  }
+
+  return VEHICLE_OPTIONS.filter((vehicle) => vehicle.driverId === driverId);
+}
 
 export const SESSION_TYPE_OPTIONS = [
   { id: 'Practice', label: 'Practice' },
@@ -32,4 +40,3 @@ export const TRACK_OPTIONS = [
   { id: 'Road Atlanta', label: 'Road Atlanta' },
   { id: '__OTHER__', label: 'Other (type manually)' },
 ]
-

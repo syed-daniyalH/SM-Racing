@@ -361,7 +361,7 @@ export default function SubmissionReviewPage() {
       return;
     }
 
-    router.push(`/admin/submissions/${encodeURIComponent(String(id))}`);
+    router.push(`/admin/submissions/report/${encodeURIComponent(String(id))}`);
   };
 
   const closeDrawer = () => {

@@ -12,12 +12,97 @@ import { createSubmission } from "../../../utils/submissionApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import {
   DRIVER_OPTIONS,
-  VEHICLE_OPTIONS,
+  getVehicleOptionsForDriver,
   SESSION_TYPE_OPTIONS,
   PRESSURE_UNIT_OPTIONS,
   TRACK_OPTIONS,
 } from "../../../utils/staticOptions";
 import "./NotesSubmission.css";
+
+const getCurrentLocalTimeValue = () => {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+};
+
+const createBaseFormState = () => ({
+  date: "",
+  time: getCurrentLocalTimeValue(),
+  track: "",
+  driver_id: "",
+  vehicle_id: "",
+  session_type: "Practice",
+  session_number: 1,
+  duration_min: 30,
+  tire_set: "",
+  wheelbase_mm: "",
+  pressures: {
+    unit: "psi",
+    cold: { fl: "", fr: "", rl: "", rr: "" },
+    hot: { fl: "", fr: "", rl: "", rr: "" },
+  },
+});
+
+const createDetailFormState = () => ({
+  ...createBaseFormState(),
+  wheelbase_mm: 0,
+  suspension: {
+    rebound_fl: "",
+    rebound_fr: "",
+    rebound_rl: "",
+    rebound_rr: "",
+    bump_fl: "",
+    bump_fr: "",
+    bump_rl: "",
+    bump_rr: "",
+    sway_bar_f: "",
+    sway_bar_r: "",
+    wing_angle_deg: "",
+  },
+  alignment: {
+    camber_fl: "",
+    camber_fr: "",
+    camber_rl: "",
+    camber_rr: "",
+    toe_front: "",
+    toe_rear: "",
+    caster_l: "",
+    caster_r: "",
+    ride_height_f: "",
+    ride_height_r: "",
+    corner_weight_fl: "",
+    corner_weight_fr: "",
+    corner_weight_rl: "",
+    corner_weight_rr: "",
+    cross_weight_pct: "",
+    rake_mm: "",
+  },
+  tire_temperatures: {
+    fl_in: "",
+    fl_mid: "",
+    fl_out: "",
+    fr_in: "",
+    fr_mid: "",
+    fr_out: "",
+    rl_in: "",
+    rl_mid: "",
+    rl_out: "",
+    rr_in: "",
+    rr_mid: "",
+    rr_out: "",
+  },
+  tire_inventory: {
+    tire_id: "",
+    manufacturer: "",
+    model: "",
+    size: "",
+    purchase_date: "",
+    heat_cycles: "",
+    track_time_min: "",
+    status: "",
+  },
+});
 
 export default function NotesSubmission() {
   const router = useRouter();
@@ -28,12 +113,6 @@ export default function NotesSubmission() {
   const [activeTab, setActiveTab] = useState("quick"); // 'quick' | 'detail'
   const [eventRunGroup, setEventRunGroup] = useState("");
   const [trackSelection, setTrackSelection] = useState(""); // dropdown value; '__OTHER__' => manual entry
-
-  const basePressures = {
-    unit: "psi",
-    cold: { fl: "", fr: "", rl: "", rr: "" },
-    hot: { fl: "", fr: "", rl: "", rr: "" },
-  };
 
   const [pressureTypeQuick, setPressureTypeQuick] = useState("cold");
   const [pressureTypeDetail, setPressureTypeDetail] = useState("cold");
@@ -48,88 +127,11 @@ export default function NotesSubmission() {
   const [detailImage, setDetailImage] = useState(null);
   const quickRawTextRef = useRef(null);
 
-  const [quickForm, setQuickForm] = useState({
-    date: "",
-    time: "",
-    track: "",
-    driver_id: "",
-    vehicle_id: "",
-    session_type: "Practice",
-    session_number: 1,
-    duration_min: 30,
-    tire_set: "",
-    wheelbase_mm: "",
-    pressures: basePressures,
-  });
+  const [quickForm, setQuickForm] = useState(() => createBaseFormState());
 
-  const [detailForm, setDetailForm] = useState({
-    date: "",
-    time: "",
-    track: "",
-    driver_id: "",
-    vehicle_id: "",
-    session_type: "Practice",
-    session_number: 1,
-    duration_min: 30,
-    tire_set: "",
-    wheelbase_mm: 0,
-    pressures: basePressures,
-    suspension: {
-      rebound_fl: "",
-      rebound_fr: "",
-      rebound_rl: "",
-      rebound_rr: "",
-      bump_fl: "",
-      bump_fr: "",
-      bump_rl: "",
-      bump_rr: "",
-      sway_bar_f: "",
-      sway_bar_r: "",
-      wing_angle_deg: "",
-    },
-    alignment: {
-      camber_fl: "",
-      camber_fr: "",
-      camber_rl: "",
-      camber_rr: "",
-      toe_front: "",
-      toe_rear: "",
-      caster_l: "",
-      caster_r: "",
-      ride_height_f: "",
-      ride_height_r: "",
-      corner_weight_fl: "",
-      corner_weight_fr: "",
-      corner_weight_rl: "",
-      corner_weight_rr: "",
-      cross_weight_pct: "",
-      rake_mm: "",
-    },
-    tire_temperatures: {
-      fl_in: "",
-      fl_mid: "",
-      fl_out: "",
-      fr_in: "",
-      fr_mid: "",
-      fr_out: "",
-      rl_in: "",
-      rl_mid: "",
-      rl_out: "",
-      rr_in: "",
-      rr_mid: "",
-      rr_out: "",
-    },
-    tire_inventory: {
-      tire_id: "",
-      manufacturer: "",
-      model: "",
-      size: "",
-      purchase_date: "",
-      heat_cycles: "",
-      track_time_min: "",
-      status: "",
-    },
-  });
+  const [detailForm, setDetailForm] = useState(() =>
+    createDetailFormState(),
+  );
   const [submissionStatus, setSubmissionStatus] = useState("pending"); // sent, pending, failed
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -374,97 +376,8 @@ export default function NotesSubmission() {
         setPressureTypeDetail("cold");
         setQuickImage(null);
         setDetailImage(null);
-        setQuickForm({
-          runGroup: "YELLOW",
-          date: "",
-          time: "",
-          track: "",
-          driver_id: "",
-          vehicle_id: "",
-          session_type: "Practice",
-          session_number: 1,
-          duration_min: 30,
-          tire_set: "",
-          wheelbase_mm: "",
-          pressures: {
-            unit: "psi",
-            cold: { fl: "", fr: "", rl: "", rr: "" },
-            hot: { fl: "", fr: "", rl: "", rr: "" },
-          },
-        });
-        setDetailForm({
-          runGroup: "YELLOW",
-          date: "",
-          time: "",
-          track: "",
-          driver_id: "",
-          vehicle_id: "",
-          session_type: "Practice",
-          session_number: 1,
-          duration_min: 30,
-          tire_set: "",
-          wheelbase_mm: 0,
-          pressures: {
-            unit: "psi",
-            cold: { fl: "", fr: "", rl: "", rr: "" },
-            hot: { fl: "", fr: "", rl: "", rr: "" },
-          },
-          suspension: {
-            rebound_fl: "",
-            rebound_fr: "",
-            rebound_rl: "",
-            rebound_rr: "",
-            bump_fl: "",
-            bump_fr: "",
-            bump_rl: "",
-            bump_rr: "",
-            sway_bar_f: "",
-            sway_bar_r: "",
-            wing_angle_deg: "",
-          },
-          alignment: {
-            camber_fl: "",
-            camber_fr: "",
-            camber_rl: "",
-            camber_rr: "",
-            toe_front: "",
-            toe_rear: "",
-            caster_l: "",
-            caster_r: "",
-            ride_height_f: "",
-            ride_height_r: "",
-            corner_weight_fl: "",
-            corner_weight_fr: "",
-            corner_weight_rl: "",
-            corner_weight_rr: "",
-            cross_weight_pct: "",
-            rake_mm: "",
-          },
-          tire_temperatures: {
-            fl_in: "",
-            fl_mid: "",
-            fl_out: "",
-            fr_in: "",
-            fr_mid: "",
-            fr_out: "",
-            rl_in: "",
-            rl_mid: "",
-            rl_out: "",
-            rr_in: "",
-            rr_mid: "",
-            rr_out: "",
-          },
-          tire_inventory: {
-            tire_id: "",
-            manufacturer: "",
-            model: "",
-            size: "",
-            purchase_date: "",
-            heat_cycles: "",
-            track_time_min: "",
-            status: "",
-          },
-        });
+        setQuickForm(createBaseFormState());
+        setDetailForm(createDetailFormState());
         setError("");
 
         setTimeout(() => {
@@ -518,6 +431,21 @@ export default function NotesSubmission() {
     ? setQuickConfidence
     : setDetailConfidence;
   const setImageValue = isQuickTab ? setQuickImage : setDetailImage;
+  const vehicleOptionsForDriver = getVehicleOptionsForDriver(
+    formState.driver_id,
+  );
+  const handleDriverChange = (driverId) => {
+    updateFormFn("driver_id", driverId);
+
+    if (
+      formState.vehicle_id &&
+      !getVehicleOptionsForDriver(driverId).some(
+        (vehicle) => vehicle.id === formState.vehicle_id,
+      )
+    ) {
+      updateFormFn("vehicle_id", "");
+    }
+  };
   const trackValue =
     trackSelection === "__OTHER__"
       ? formState.track
@@ -635,7 +563,7 @@ export default function NotesSubmission() {
               <select
                 className="select"
                 value={formState.driver_id}
-                onChange={(e) => updateFormFn("driver_id", e.target.value)}
+                onChange={(e) => handleDriverChange(e.target.value)}
               >
                 <option value="">Select Driver</option>
                 {DRIVER_OPTIONS.map((d) => (
@@ -653,12 +581,22 @@ export default function NotesSubmission() {
                 value={formState.vehicle_id}
                 onChange={(e) => updateFormFn("vehicle_id", e.target.value)}
               >
-                <option value="">Select Vehicle</option>
-                {VEHICLE_OPTIONS.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
+                <option value="">
+                  {formState.driver_id
+                    ? "Select Assigned Vehicle"
+                    : "Select Vehicle"}
+                </option>
+                {vehicleOptionsForDriver.length ? (
+                  vehicleOptionsForDriver.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" disabled>
+                    No vehicles assigned to this driver
                   </option>
-                ))}
+                )}
               </select>
             </div>
 
