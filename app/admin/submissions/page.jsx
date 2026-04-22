@@ -948,7 +948,11 @@ export default function SubmissionReviewPage() {
                 event.stopPropagation();
                 handleApproveSubmission(submission);
               }}
-              disabled={submission.validationStateKey === "failed" || submission.validationStateKey === "archived"}
+              disabled={
+                busyAction === `approve:${submission.id}` ||
+                submission.validationStateKey === "failed" ||
+                submission.validationStateKey === "archived"
+              }
             />
             <ActionIconButton
               icon={CancelOutlinedIcon}
@@ -959,7 +963,7 @@ export default function SubmissionReviewPage() {
                 event.stopPropagation();
                 handleFlagForCorrection(submission);
               }}
-              disabled={submission.validationStateKey === "archived"}
+              disabled={busyAction === `flag:${submission.id}` || submission.validationStateKey === "archived"}
             />
             <ActionIconButton
               icon={DownloadOutlinedIcon}
@@ -969,6 +973,7 @@ export default function SubmissionReviewPage() {
                 event.stopPropagation();
                 handleExportSubmission(submission, "csv");
               }}
+              disabled={busyAction === `archive:${submission.id}`}
             />
             <ActionIconButton
               icon={DescriptionOutlinedIcon}
@@ -978,6 +983,7 @@ export default function SubmissionReviewPage() {
                 event.stopPropagation();
                 handleExportSubmission(submission, "excel");
               }}
+              disabled={busyAction === `archive:${submission.id}`}
             />
           </div>
         );
