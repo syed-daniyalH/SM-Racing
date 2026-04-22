@@ -239,7 +239,8 @@
 }
 
 .submission-table {
-  min-width: 1780px;
+  width: 100%;
+  min-width: 0;
 }
 
 .submission-table-row {
@@ -273,6 +274,14 @@
   width: 100%;
   display: flex;
   justify-content: center;
+}
+
+.submission-status-stack {
+  display: grid;
+  gap: 0.35rem;
+  align-items: start;
+  justify-items: start;
+  min-width: 0;
 }
 
 .submission-confidence-badge,
@@ -800,7 +809,7 @@
   }
 
   .submission-table {
-    min-width: 1600px;
+    min-width: 0;
   }
 }
 

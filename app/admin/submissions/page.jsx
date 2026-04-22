@@ -79,6 +79,9 @@ const SOURCE_FILTER_OPTIONS = [
   { value: "photo", label: "Photo Submission" },
 ];
 
+const SUBMISSION_TABLE_COLUMNS =
+  "minmax(150px, 0.95fr) minmax(160px, 0.9fr) minmax(240px, 1.25fr) minmax(150px, 0.85fr) minmax(220px, 1.05fr) minmax(220px, 1.1fr)";
+
 const FILTER_TONE = {
   clean: "success",
   warning: "warning",
@@ -825,22 +828,14 @@ export default function SubmissionReviewPage() {
                 <div className="fleet-table submission-table">
                   <div
                     className="fleet-table-header submission-table-header"
-                    style={{
-                      gridTemplateColumns:
-                        "minmax(160px, 1.05fr) minmax(150px, 0.95fr) minmax(180px, 1.15fr) minmax(150px, 1fr) minmax(170px, 1.05fr) minmax(170px, 1.05fr) minmax(150px, 0.9fr) minmax(170px, 1.05fr) minmax(150px, 0.95fr) minmax(120px, 0.75fr) minmax(220px, 1.35fr)",
-                    }}
+                    style={{ gridTemplateColumns: SUBMISSION_TABLE_COLUMNS }}
                   >
                     {[
                       "Submission ID",
                       "Date / Time",
                       "Event",
-                      "Driver",
-                      "Vehicle",
-                      "Track",
                       "Source Type",
-                      "Validation Status",
-                      "Sync Status",
-                      "Confidence",
+                      "Status",
                       "Actions",
                     ].map((label) => (
                       <div key={label} className="fleet-table-header-cell">
@@ -864,10 +859,7 @@ export default function SubmissionReviewPage() {
                       <div
                         key={submission.id}
                         className="fleet-table-row submission-table-row"
-                        style={{
-                          gridTemplateColumns:
-                            "minmax(160px, 1.05fr) minmax(150px, 0.95fr) minmax(180px, 1.15fr) minmax(150px, 1fr) minmax(170px, 1.05fr) minmax(170px, 1.05fr) minmax(150px, 0.9fr) minmax(170px, 1.05fr) minmax(150px, 0.95fr) minmax(120px, 0.75fr) minmax(220px, 1.35fr)",
-                        }}
+                        style={{ gridTemplateColumns: SUBMISSION_TABLE_COLUMNS }}
                       >
                         <div className="fleet-table-cell" data-label="Submission ID">
                           <div className="submission-cell-stack">
@@ -896,57 +888,16 @@ export default function SubmissionReviewPage() {
                           </div>
                         </div>
 
-                        <div className="fleet-table-cell" data-label="Driver">
-                          <div className="submission-cell-stack">
-                            <strong>{submission.driver?.fullName || submission.driver?.displayName || submission.driver?.teamName || submission.driver?.firstName || "Unknown Driver"}</strong>
-                            <span className="submission-cell-subtext">
-                              {submission.driver?.id ? formatDateTime(submission.driver?.updatedAt || submission.driver?.createdAt || submission.createdAt) : submission.driver?.licenseNumber || "-"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Vehicle">
-                          <div className="submission-cell-stack">
-                            <strong>
-                              {submission.vehicle?.registrationNumber ||
-                                [submission.vehicle?.make, submission.vehicle?.model]
-                                  .filter(Boolean)
-                                  .join(" ") ||
-                                "Unknown Vehicle"}
-                            </strong>
-                            <span className="submission-cell-subtext">
-                              {submission.vehicle?.driverId
-                                ? `Driver ${submission.vehicle.driverId}`
-                                : submission.vehicle?.year || "-"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Track">
-                          <div className="submission-cell-stack">
-                            <strong>{submission.data?.track || submission.event?.track || "-"}</strong>
-                            <span className="submission-cell-subtext">
-                              {submission.run_group?.normalized || submission.runGroup || submission.run_group?.rawText || "-"}
-                            </span>
-                          </div>
-                        </div>
-
                         <div className="fleet-table-cell" data-label="Source Type">
                           <StatusBadge label={submission.sourceTypeLabel} tone={submission.sourceTypeTone} />
                         </div>
 
-                        <div className="fleet-table-cell" data-label="Validation Status">
-                          <StatusBadge label={submission.validationStateLabel} tone={validationTone} />
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Sync Status">
-                          <StatusBadge label={submission.syncStateLabel} tone={syncTone} />
-                        </div>
-
-                        <div className="fleet-table-cell" data-label="Confidence">
-                          <div className="submission-confidence-cell">
+                        <div className="fleet-table-cell" data-label="Status">
+                          <div className="submission-status-stack">
+                            <StatusBadge label={submission.validationStateLabel} tone={validationTone} />
+                            <StatusBadge label={submission.syncStateLabel} tone={syncTone} />
                             <span className={`submission-confidence-badge tone-${confidenceTone}`}>
-                              {submission.confidenceLabel || "-"}
+                              Confidence {submission.confidenceLabel || "-"}
                             </span>
                           </div>
                         </div>

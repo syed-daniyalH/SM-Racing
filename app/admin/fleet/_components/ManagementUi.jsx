@@ -91,28 +91,30 @@ export function DrawerShell({
         aria-modal="true"
         aria-labelledby="fleet-drawer-title"
       >
-        <header className="fleet-drawer-header">
-          <div className="fleet-drawer-heading">
-            <p className="fleet-drawer-eyebrow">Admin Workspace</p>
-            <h2 id="fleet-drawer-title" className="fleet-drawer-title">
-              {title}
-            </h2>
-            {subtitle ? <p className="fleet-drawer-subtitle">{subtitle}</p> : null}
-            {meta ? <div className="fleet-drawer-meta">{meta}</div> : null}
-          </div>
-          <button
-            type="button"
-            className="fleet-drawer-close"
-            onClick={onClose}
-            aria-label="Close panel"
-          >
-            <CloseOutlinedIcon fontSize="small" />
-          </button>
-        </header>
+        <div className="fleet-drawer-shell">
+          <header className="fleet-drawer-header">
+            <div className="fleet-drawer-heading">
+              <p className="fleet-drawer-eyebrow">Admin Workspace</p>
+              <h2 id="fleet-drawer-title" className="fleet-drawer-title">
+                {title}
+              </h2>
+              {subtitle ? <p className="fleet-drawer-subtitle">{subtitle}</p> : null}
+              {meta ? <div className="fleet-drawer-meta">{meta}</div> : null}
+            </div>
+            <button
+              type="button"
+              className="fleet-drawer-close"
+              onClick={onClose}
+              aria-label="Close panel"
+            >
+              <CloseOutlinedIcon fontSize="small" />
+            </button>
+          </header>
 
-        <div className="fleet-drawer-body">{children}</div>
+          <div className="fleet-drawer-body">{children}</div>
 
-        {footer ? <footer className="fleet-drawer-footer">{footer}</footer> : null}
+          {footer ? <footer className="fleet-drawer-footer">{footer}</footer> : null}
+        </div>
       </section>
     </div>
   );
