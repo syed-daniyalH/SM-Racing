@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext";
 import ProtectedRoute from "../../../components/ProtectedRoute";
@@ -10,9 +10,10 @@ import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { createSubmission } from "../../../utils/submissionApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
+import { getDrivers, getVehicles } from "../../../utils/fleetApi";
 import {
   DRIVER_OPTIONS,
-  getVehicleOptionsForDriver,
+  VEHICLE_OPTIONS,
   SESSION_TYPE_OPTIONS,
   PRESSURE_UNIT_OPTIONS,
   TRACK_OPTIONS,
@@ -104,6 +105,29 @@ const createDetailFormState = () => ({
   },
 });
 
+const buildDriverOption = (driver) => ({
+  id: String(driver.driverCode || driver.id || "").trim(),
+  label:
+    driver.fullName ||
+    driver.driverName ||
+    driver.displayName ||
+    driver.driverCode ||
+    driver.id ||
+    "Unknown driver",
+});
+
+const buildVehicleOption = (vehicle) => ({
+  id: String(vehicle.vehicleCode || vehicle.id || "").trim(),
+  driverId: String(vehicle.driverId || "").trim(),
+  label:
+    vehicle.vehicleCode ||
+    vehicle.registrationNumber ||
+    vehicle.make ||
+    vehicle.model ||
+    vehicle.id ||
+    "Unknown vehicle",
+});
+
 export default function NotesSubmission() {
   const router = useRouter();
   const params = useParams();
@@ -113,6 +137,8 @@ export default function NotesSubmission() {
   const [activeTab, setActiveTab] = useState("quick"); // 'quick' | 'detail'
   const [eventRunGroup, setEventRunGroup] = useState("");
   const [trackSelection, setTrackSelection] = useState(""); // dropdown value; '__OTHER__' => manual entry
+  const [driverOptions, setDriverOptions] = useState(() => DRIVER_OPTIONS);
+  const [vehicleOptions, setVehicleOptions] = useState(() => VEHICLE_OPTIONS);
 
   const [pressureTypeQuick, setPressureTypeQuick] = useState("cold");
   const [pressureTypeDetail, setPressureTypeDetail] = useState("cold");
@@ -179,6 +205,45 @@ export default function NotesSubmission() {
 
     if (eventId) loadRunGroup();
   }, [eventId]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadFleetOptions = async () => {
+      try {
+        const [driversResponse, vehiclesResponse] = await Promise.all([
+          getDrivers(),
+          getVehicles(),
+        ]);
+
+        if (!isActive) return;
+
+        const liveDrivers = (driversResponse?.drivers || [])
+          .filter((driver) => driver?.isActive !== false)
+          .map(buildDriverOption)
+          .filter((option) => option.id);
+
+        const liveVehicles = (vehiclesResponse?.vehicles || [])
+          .filter((vehicle) => vehicle?.isActive !== false)
+          .map(buildVehicleOption)
+          .filter((option) => option.id);
+
+        setDriverOptions(liveDrivers.length ? liveDrivers : DRIVER_OPTIONS);
+        setVehicleOptions(liveVehicles.length ? liveVehicles : VEHICLE_OPTIONS);
+      } catch (error) {
+        console.warn("Falling back to static fleet options:", error);
+        if (!isActive) return;
+        setDriverOptions(DRIVER_OPTIONS);
+        setVehicleOptions(VEHICLE_OPTIONS);
+      }
+    };
+
+    loadFleetOptions();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const toNumberOrUndefined = (value) =>
     value === "" || value === null || value === undefined
@@ -358,7 +423,7 @@ export default function NotesSubmission() {
         action: actionValue,
         confidence: Number(confidenceValue),
         data,
-        raw_text: rawTextValue?.trim() || undefined,
+        raw_text: rawTextValue ?? undefined,
         image_url: imageValue || undefined,
       };
 
@@ -431,15 +496,33 @@ export default function NotesSubmission() {
     ? setQuickConfidence
     : setDetailConfidence;
   const setImageValue = isQuickTab ? setQuickImage : setDetailImage;
-  const vehicleOptionsForDriver = getVehicleOptionsForDriver(
-    formState.driver_id,
+  const driverLabelMap = useMemo(
+    () =>
+      new Map(
+        driverOptions
+          .filter((driver) => driver?.id)
+          .map((driver) => [String(driver.id), driver.label]),
+      ),
+    [driverOptions],
   );
+  const vehicleOptionsForDriver = useMemo(() => {
+    if (!formState.driver_id) {
+      return vehicleOptions;
+    }
+
+    return vehicleOptions.filter(
+      (vehicle) => String(vehicle.driverId || "") === String(formState.driver_id),
+    );
+  }, [formState.driver_id, vehicleOptions]);
+
   const handleDriverChange = (driverId) => {
     updateFormFn("driver_id", driverId);
 
     if (
       formState.vehicle_id &&
-      !getVehicleOptionsForDriver(driverId).some(
+      !vehicleOptions.filter(
+        (vehicle) => String(vehicle.driverId || "") === String(driverId),
+      ).some(
         (vehicle) => vehicle.id === formState.vehicle_id,
       )
     ) {
@@ -566,7 +649,7 @@ export default function NotesSubmission() {
                 onChange={(e) => handleDriverChange(e.target.value)}
               >
                 <option value="">Select Driver</option>
-                {DRIVER_OPTIONS.map((d) => (
+                {driverOptions.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.label}
                   </option>
@@ -587,11 +670,21 @@ export default function NotesSubmission() {
                     : "Select Vehicle"}
                 </option>
                 {vehicleOptionsForDriver.length ? (
-                  vehicleOptionsForDriver.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.label}
-                    </option>
-                  ))
+                  vehicleOptionsForDriver.map((v) => {
+                    const assignedDriverLabel = v.driverId
+                      ? driverLabelMap.get(String(v.driverId)) || v.driverId
+                      : "";
+                    const optionLabel =
+                      formState.driver_id || !assignedDriverLabel
+                        ? v.label
+                        : `${v.label} · ${assignedDriverLabel}`;
+
+                    return (
+                      <option key={v.id} value={v.id}>
+                        {optionLabel}
+                      </option>
+                    );
+                  })
                 ) : (
                   <option value="" disabled>
                     No vehicles assigned to this driver

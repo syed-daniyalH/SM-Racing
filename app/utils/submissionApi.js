@@ -33,6 +33,7 @@ const buildSubmissionPayload = async (submissionData) => {
   }
 
   const payload = submissionData?.payload || submissionData?.data || {};
+  const payloadData = payload?.data || {};
 
   return {
     submission_ref:
@@ -47,12 +48,16 @@ const buildSubmissionPayload = async (submissionData) => {
       submissionData?.driverId ||
       payload?.driver_id ||
       payload?.driverId ||
+      payloadData?.driver_id ||
+      payloadData?.driverId ||
       null,
     vehicle_id:
       submissionData?.vehicle_id ||
       submissionData?.vehicleId ||
       payload?.vehicle_id ||
       payload?.vehicleId ||
+      payloadData?.vehicle_id ||
+      payloadData?.vehicleId ||
       null,
     raw_text: rawText,
     image_url: submissionData?.image_url || submissionData?.image || null,
