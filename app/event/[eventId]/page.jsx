@@ -56,13 +56,19 @@ const deriveEventStatus = (event) => {
   const startDate = toDate(event?.startDate || event?.start_date);
   const endDate = toDate(event?.endDate || event?.end_date);
   const now = new Date();
+  const submissionNotesOpen = Boolean(endDate && now > endDate);
 
   if (explicitStatus.includes("archiv")) {
     return { label: "Archived", tone: "neutral", note: "Event archived", icon: "archive" };
   }
 
   if (explicitStatus.includes("complete")) {
-    return { label: "Completed", tone: "neutral", note: "Event window closed", icon: "complete" };
+    return {
+      label: "Completed",
+      tone: "neutral",
+      note: submissionNotesOpen ? "Submission notes are open now" : "Submission notes unlock after the event ends",
+      icon: "complete",
+    };
   }
 
   if (explicitStatus.includes("upcoming")) {
@@ -70,7 +76,12 @@ const deriveEventStatus = (event) => {
   }
 
   if (isActiveFlag === true || (startDate && endDate && now >= startDate && now <= endDate)) {
-    return { label: "Active", tone: "success", note: "Mechanics can submit now", icon: "active" };
+    return {
+      label: "Active",
+      tone: "success",
+      note: "Submission notes unlock after the event ends",
+      icon: "active",
+    };
   }
 
   if (startDate && now < startDate) {
@@ -78,14 +89,19 @@ const deriveEventStatus = (event) => {
   }
 
   if (endDate && now > endDate) {
-    return { label: "Completed", tone: "neutral", note: "Event finished", icon: "complete" };
+    return { label: "Completed", tone: "neutral", note: "Submission notes are open now", icon: "complete" };
   }
 
   if (isActiveFlag === false) {
     return { label: "Inactive", tone: "warning", note: "Not currently active", icon: "inactive" };
   }
 
-  return { label: "Ready", tone: "accent", note: "Selected by the mechanic", icon: "ready" };
+  return {
+    label: "Ready",
+    tone: "accent",
+    note: "Submission notes unlock after the event ends",
+    icon: "ready",
+  };
 };
 
 export default function EventDetail() {

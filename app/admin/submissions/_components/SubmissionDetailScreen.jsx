@@ -7,7 +7,6 @@ import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
-import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
@@ -22,10 +21,7 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 
 import { useAuth } from "../../../context/AuthContext";
 import StatusBadge from "../../../components/Common/StatusBadge";
-import {
-  MetricCard,
-  EmptyStatePanel,
-} from "../../fleet/_components/ManagementUi";
+import { EmptyStatePanel } from "../../fleet/_components/ManagementUi";
 import {
   formatDate,
   formatDateTime,
@@ -829,7 +825,6 @@ export default function SubmissionDetailScreen({
   const submissionId = record?.submissionId || formatEntityId("SUB", record?.id);
   const eventName = getSubmissionEventLabel(record || submission || {});
   const driverName = getSubmissionDriverLabel(record || submission || {});
-  const vehicleName = getSubmissionVehicleLabel(record || submission || {});
   const trackName = getSubmissionTrackLabel(record || submission || {});
 
   const vehicleYear = record?.vehicle?.year || record?.vehicle?.vehicle_year || null;
@@ -1001,37 +996,6 @@ export default function SubmissionDetailScreen({
     );
   }
 
-  const summaryMetrics = [
-    {
-      icon: ReceiptLongOutlinedIcon,
-      label: "Submission",
-      value: submissionId,
-      helper: record.submittedAtLabel,
-      tone: "accent",
-    },
-    {
-      icon: DirectionsCarOutlinedIcon,
-      label: "Driver / Vehicle",
-      value: `${driverName}`,
-      helper: `${vehicleName}${vehicleYear ? ` | ${vehicleYear}` : ""}`,
-      tone: "info",
-    },
-    {
-      icon: TrackChangesOutlinedIcon,
-      label: "Event / Track",
-      value: eventName,
-      helper: trackName,
-      tone: "success",
-    },
-    {
-      icon: TimelineOutlinedIcon,
-      label: "Source / Status",
-      value: sourceLabel,
-      helper: `${status.label} | ${record.confidenceLabel || "-"}`,
-      tone: status.tone,
-    },
-  ];
-
   return (
     <div className="submission-detail-page">
       <div className="submission-detail-orb submission-detail-orb-one" />
@@ -1105,19 +1069,6 @@ export default function SubmissionDetailScreen({
             {previewMessage}
           </div>
         ) : null}
-
-        <div className="submission-detail-summary-grid">
-          {summaryMetrics.map((metric) => (
-            <MetricCard
-              key={metric.label}
-              icon={metric.icon}
-              label={metric.label}
-              value={metric.value}
-              helper={metric.helper}
-              tone={metric.tone}
-            />
-          ))}
-        </div>
 
         <div className="submission-detail-layout">
           <main className="submission-detail-main">
@@ -1541,10 +1492,10 @@ export default function SubmissionDetailScreen({
             className="fleet-btn fleet-btn-secondary"
             onClick={() => setIsEditing((current) => !current)}
             disabled={isSaving}
-          >
-            {isEditing ? <CancelOutlinedIcon fontSize="inherit" /> : <EditOutlinedIcon fontSize="inherit" />}
-            {isEditing ? "Cancel Edits" : "Edit"}
-          </button>
+            >
+              {isEditing ? <CancelOutlinedIcon fontSize="inherit" /> : <EditOutlinedIcon fontSize="inherit" />}
+              {isEditing ? "Cancel Edits" : "Edit"}
+            </button>
 
           {isEditing ? (
             <button
@@ -1557,26 +1508,6 @@ export default function SubmissionDetailScreen({
               {isSaving ? "Saving..." : "Save Changes"}
             </button>
           ) : null}
-
-          <button
-            type="button"
-            className="fleet-btn fleet-btn-primary"
-            onClick={handleApprove}
-            disabled={isSaving || isEditing}
-          >
-            <CheckCircleOutlineOutlinedIcon fontSize="inherit" />
-            Approve
-          </button>
-
-          <button
-            type="button"
-            className="fleet-btn fleet-btn-danger"
-            onClick={handleReject}
-            disabled={isSaving || isEditing}
-          >
-            <CancelOutlinedIcon fontSize="inherit" />
-            Reject
-          </button>
 
           <button
             type="button"

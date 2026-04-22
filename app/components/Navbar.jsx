@@ -123,11 +123,17 @@ export default function Navbar() {
               >
                 Events
                 </button>
-              <button 
-                className={`nav-link ${pathname === '/admin/submissions' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/submissions')}
+              <button
+                className={`nav-link ${
+                  pathname === '/admin/submissions' ||
+                  pathname.startsWith('/admin/submissions/') ||
+                  pathname === '/admin/submission-review-dashboard'
+                    ? 'active'
+                    : ''
+                }`}
+                onClick={() => router.push('/admin/submission-review-dashboard')}
               >
-                Submissions
+                Submission Review
               </button>
               </>
             ) : (

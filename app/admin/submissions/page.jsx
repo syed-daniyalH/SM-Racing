@@ -63,22 +63,22 @@ const STATUS_FILTER_OPTIONS = [
 ];
 
 const SUBMISSION_SPREADSHEET_COLUMNS = [
-  { key: "submissionId", label: "ID", width: "minmax(110px, 0.85fr)", sortable: true },
-  { key: "sessionDate", label: "Date", width: "minmax(110px, 0.85fr)", sortable: true },
-  { key: "sessionTime", label: "Time", width: "minmax(80px, 0.6fr)", sortable: true },
-  { key: "track", label: "Track", width: "minmax(180px, 1.2fr)", sortable: true },
-  { key: "driverName", label: "Driver Name", width: "minmax(160px, 1fr)", sortable: true },
-  { key: "driverId", label: "Driver ID", width: "minmax(100px, 0.75fr)", sortable: true },
-  { key: "vehicleId", label: "Vehicle ID", width: "minmax(130px, 0.9fr)", sortable: true },
-  { key: "sessionType", label: "Session Type", width: "minmax(120px, 0.85fr)", sortable: true },
-  { key: "sessionNumber", label: "Session #", width: "minmax(90px, 0.65fr)", sortable: true },
-  { key: "durationMin", label: "Duration (min)", width: "minmax(100px, 0.75fr)", sortable: true },
-  { key: "tireSet", label: "Tire Set", width: "minmax(100px, 0.75fr)", sortable: true },
-  { key: "notes", label: "Notes", width: "minmax(180px, 1.2fr)", sortable: true },
-  { key: "createdBy", label: "Created By", width: "minmax(120px, 0.8fr)", sortable: true },
-  { key: "createdAt", label: "Created At", width: "minmax(160px, 1fr)", sortable: true },
-  { key: "status", label: "Status", width: "minmax(140px, 0.9fr)", sortable: true },
-  { key: "actions", label: "Actions", width: "minmax(220px, 1.2fr)", sortable: false },
+  { key: "submissionId", label: "ID", width: "minmax(90px, 0.75fr)", sortable: true },
+  { key: "sessionDate", label: "Date", width: "minmax(95px, 0.8fr)", sortable: true },
+  { key: "sessionTime", label: "Time", width: "minmax(70px, 0.55fr)", sortable: true },
+  { key: "track", label: "Track", width: "minmax(150px, 1.05fr)", sortable: true },
+  { key: "driverName", label: "Driver Name", width: "minmax(140px, 0.95fr)", sortable: true },
+  { key: "driverId", label: "Driver ID", width: "minmax(90px, 0.65fr)", sortable: true },
+  { key: "vehicleId", label: "Vehicle ID", width: "minmax(110px, 0.8fr)", sortable: true },
+  { key: "sessionType", label: "Session Type", width: "minmax(110px, 0.8fr)", sortable: true },
+  { key: "sessionNumber", label: "Session #", width: "minmax(80px, 0.55fr)", sortable: true },
+  { key: "durationMin", label: "Duration (min)", width: "minmax(90px, 0.65fr)", sortable: true },
+  { key: "tireSet", label: "Tire Set", width: "minmax(90px, 0.65fr)", sortable: true },
+  { key: "notes", label: "Notes", width: "minmax(160px, 1.05fr)", sortable: true },
+  { key: "createdBy", label: "Created By", width: "minmax(100px, 0.7fr)", sortable: true },
+  { key: "createdAt", label: "Created At", width: "minmax(140px, 0.9fr)", sortable: true },
+  { key: "status", label: "Status", width: "minmax(120px, 0.85fr)", sortable: true },
+  { key: "actions", label: "Actions", width: "minmax(220px, 1.15fr)", sortable: false },
 ];
 
 const SUBMISSION_TABLE_COLUMNS = SUBMISSION_SPREADSHEET_COLUMNS.map((column) => column.width).join(" ");

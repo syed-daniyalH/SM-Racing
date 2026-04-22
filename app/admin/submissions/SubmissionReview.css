@@ -1051,12 +1051,6 @@
   gap: 0.6rem;
 }
 
-.submission-detail-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.8rem;
-}
-
 .submission-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr);
@@ -1252,7 +1246,13 @@
 
 .submission-detail-category-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 0.75rem;
+}
+
+.submission-detail-category-grid > .submission-detail-section-card {
+  height: 100%;
 }
 
 .submission-detail-group-stack {
@@ -1472,10 +1472,6 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .submission-detail-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .submission-detail-layout {
     grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
   }
@@ -1551,6 +1547,7 @@
 
   .submission-detail-field-grid,
   .submission-detail-field-grid-overview,
+  .submission-detail-category-grid,
   .submission-detail-issue-grid,
   .submission-detail-storage-grid,
   .submission-detail-sidebar {
@@ -1590,11 +1587,11 @@
     padding: 1rem 0.65rem 1.5rem;
   }
 
-  .submission-detail-summary-grid,
   .submission-detail-layout,
   .submission-detail-sidebar,
   .submission-detail-field-grid,
   .submission-detail-field-grid-overview,
+  .submission-detail-category-grid,
   .submission-detail-issue-grid,
   .submission-detail-storage-grid {
     grid-template-columns: 1fr;
@@ -1733,10 +1730,6 @@
 .submission-detail-anchor-row a:hover {
   border-color: #4a638f;
   background: #162440;
-}
-
-.submission-detail-summary-grid {
-  gap: 0.65rem;
 }
 
 .submission-detail-layout {
