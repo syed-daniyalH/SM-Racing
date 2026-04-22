@@ -10,7 +10,7 @@ const STATUS_META = {
   idle: {
     tone: "neutral",
     label: "Ready",
-    message: "Tap the mic to dictate a note.",
+    message: "",
   },
   listening: {
     tone: "accent",
@@ -354,6 +354,7 @@ export default function VoiceInputControl({
   const badgeMessage = !isSupported
     ? "Voice input is not supported in this browser. Use Chrome or Edge."
     : meta.message;
+  const displayMessage = isSupported ? message : badgeMessage;
   const buttonLabel = !isSupported
     ? "Unavailable"
     : status === "listening"
@@ -372,9 +373,11 @@ export default function VoiceInputControl({
         <div className="voice-input-header">
           <div className="voice-input-copy">
             <span className="voice-input-eyebrow">Voice Input</span>
-            <p className="voice-input-message" aria-live="polite">
-              {isSupported ? message : badgeMessage}
-            </p>
+            {displayMessage ? (
+              <p className="voice-input-message" aria-live="polite">
+                {displayMessage}
+              </p>
+            ) : null}
           </div>
 
           <div className="voice-input-status-wrap">

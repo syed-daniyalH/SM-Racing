@@ -1722,11 +1722,6 @@ export default function NotesSubmission() {
                     onChange={(e) => handleImageChange(e, setImageValue)}
                   />
                 </div>
-                <p className="form-hint">
-                  Unstructured notes from the mechanic (this becomes{" "}
-                  <code>raw_text</code>). Voice input appends into the same
-                  field so it can still be reviewed and edited before submit.
-                </p>
               </div>
             )}
 

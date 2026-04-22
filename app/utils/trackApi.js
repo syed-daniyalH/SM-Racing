@@ -1,6 +1,7 @@
 import { normalizeList, normalizeTrack } from "./apiTransforms";
 
-const STORAGE_KEY = "sm2_admin_tracks_v1";
+const STORAGE_KEY = "sm2_admin_tracks_v2";
+const LEGACY_STORAGE_KEY = "sm2_admin_tracks_v1";
 
 const nowIso = () => new Date().toISOString();
 
@@ -22,83 +23,14 @@ const buildApiError = (message, status = 400, data = null) => ({
 
 const cloneTracks = (tracks = []) => tracks.map((track) => ({ ...track }));
 
-export const mockTracks = [
-  {
-    track_id: "trk_sebring",
-    track_name: "Sebring International Raceway",
-    display_name: "Sebring",
-    short_code: "SEB",
-    country: "United States",
-    latitude: 27.4503,
-    longitude: -81.3488,
-    notes: "Legacy endurance circuit used for race-weekend testing and setup validation.",
-    status: "active",
-    is_active: true,
-    created_at: "2026-04-12T09:00:00Z",
-    updated_at: "2026-04-20T16:12:00Z",
-    archived_at: null,
-  },
-  {
-    track_id: "trk_spa",
-    track_name: "Circuit de Spa-Francorchamps",
-    display_name: "Spa",
-    short_code: "SPA",
-    country: "Belgium",
-    latitude: 50.4372,
-    longitude: 5.9714,
-    notes: "High-speed reference track with mixed weather conditions.",
-    status: "active",
-    is_active: true,
-    created_at: "2026-04-10T10:15:00Z",
-    updated_at: "2026-04-18T08:45:00Z",
-    archived_at: null,
-  },
-  {
-    track_id: "trk_bathurst",
-    track_name: "Mount Panorama Circuit",
-    display_name: "Bathurst",
-    short_code: "BATH",
-    country: "Australia",
-    latitude: -33.4378,
-    longitude: 149.5603,
-    notes: "Used for hill-climb style operations and endurance testing.",
-    status: "active",
-    is_active: true,
-    created_at: "2026-03-28T11:00:00Z",
-    updated_at: "2026-04-02T14:30:00Z",
-    archived_at: null,
-  },
-  {
-    track_id: "trk_silverstone",
-    track_name: "Silverstone Grand Prix Circuit",
-    display_name: "Silverstone",
-    short_code: "SILV",
-    country: "United Kingdom",
-    latitude: 52.0786,
-    longitude: -1.0169,
-    notes: "Primary British venue for high-throughput admin workflows.",
-    status: "active",
-    is_active: true,
-    created_at: "2026-03-20T12:20:00Z",
-    updated_at: "2026-04-16T13:05:00Z",
-    archived_at: null,
-  },
-  {
-    track_id: "trk_test",
-    track_name: "Local Test Circuit",
-    display_name: "Test Circuit",
-    short_code: "TEST",
-    country: "United States",
-    latitude: 34.0522,
-    longitude: -118.2437,
-    notes: "Archived test track used for validation and admin UI testing.",
-    status: "archived",
-    is_active: false,
-    created_at: "2026-02-12T09:00:00Z",
-    updated_at: "2026-04-01T11:40:00Z",
-    archived_at: "2026-04-01T11:40:00Z",
-  },
-];
+export const mockTracks = [];
+
+const seedEmptyTrackStorage = () => {
+  const emptyTracks = cloneTracks(mockTracks);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(emptyTracks));
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  return emptyTracks;
+};
 
 const readStoredTracks = () => {
   if (typeof window === "undefined") {
@@ -108,9 +40,7 @@ const readStoredTracks = () => {
   const raw = window.localStorage.getItem(STORAGE_KEY);
 
   if (raw === null) {
-    const seedTracks = cloneTracks(mockTracks);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seedTracks));
-    return seedTracks;
+    return seedEmptyTrackStorage();
   }
 
   try {
@@ -122,9 +52,7 @@ const readStoredTracks = () => {
 
     return parsed;
   } catch {
-    const seedTracks = cloneTracks(mockTracks);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seedTracks));
-    return seedTracks;
+    return seedEmptyTrackStorage();
   }
 };
 
