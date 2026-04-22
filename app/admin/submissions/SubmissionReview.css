@@ -305,6 +305,14 @@
   cursor: default;
 }
 
+.submission-sort-header.is-active {
+  color: #ffcfbf;
+}
+
+.submission-sort-header:hover:not(:disabled) {
+  color: #ffcfbf;
+}
+
 .submission-sort-header:disabled {
   opacity: 0.92;
 }
