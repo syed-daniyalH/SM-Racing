@@ -495,13 +495,6 @@ export default function EventsManagementPage() {
               >
                 Create Event
               </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => router.push("/admin/users")}
-              >
-                Manage Users
-              </button>
               <button type="button" className="btn btn-secondary" onClick={logout}>
                 Logout
               </button>
