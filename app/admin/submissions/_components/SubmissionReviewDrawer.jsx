@@ -109,9 +109,6 @@ export default function SubmissionReviewDrawer({
   allSubmissions = [],
   focusSection = "overview",
   onClose,
-  onMarkReviewed,
-  onApprove,
-  onFlag,
   onRetryValidation,
   onRetrySync,
   onArchive,
@@ -149,9 +146,7 @@ export default function SubmissionReviewDrawer({
 
   const submissionId = record.submissionId || record.submission_ref || formatEntityId("SUB", record.id);
   const canRetrySync = record.syncStateKey === "failed";
-  const canApprove = record.validationStateKey !== "failed" && record.validationStateKey !== "archived";
   const canArchive = record.validationStateKey !== "archived";
-  const canModify = record.validationStateKey !== "archived";
 
   const eventName = getSubmissionEventLabel(record);
   const driverName = getSubmissionDriverLabel(record);
@@ -173,31 +168,6 @@ export default function SubmissionReviewDrawer({
 
   const footer = (
     <div className="submission-drawer-actions">
-      <button
-        type="button"
-        className="fleet-btn fleet-btn-secondary"
-        onClick={() => onMarkReviewed?.(record)}
-        disabled={busyAction.startsWith("mark:") || record.isArchived}
-      >
-        {busyAction === `mark:${record.id}` ? "Working..." : "Mark as Reviewed"}
-      </button>
-      <button
-        type="button"
-        className="fleet-btn fleet-btn-primary"
-        onClick={() => onApprove?.(record)}
-        disabled={busyAction.startsWith("approve:") || !canApprove}
-        title={!canApprove ? "Resolve validation issues before approving." : "Approve submission"}
-      >
-        {busyAction === `approve:${record.id}` ? "Working..." : "Approve Submission"}
-      </button>
-      <button
-        type="button"
-        className="fleet-btn fleet-btn-danger"
-        onClick={() => onFlag?.(record)}
-        disabled={busyAction.startsWith("flag:") || record.isArchived}
-      >
-        {busyAction === `flag:${record.id}` ? "Working..." : "Flag for Correction"}
-      </button>
       <button
         type="button"
         className="fleet-btn fleet-btn-secondary"
@@ -231,7 +201,7 @@ export default function SubmissionReviewDrawer({
       wide
       onClose={onClose}
       title="Submission Review"
-      subtitle="Inspect raw input, parse results, sync state, and review findings from the admin console."
+      subtitle="Inspect raw input, parsed session details, sync state, and system findings from the admin console."
       meta={
         <div className="submission-drawer-meta">
           <StatusBadge
@@ -292,7 +262,7 @@ export default function SubmissionReviewDrawer({
           icon={WarningAmberOutlinedIcon}
           eyebrow="Validation Details"
           title="Validation Status"
-          description="Clear visibility into field-level issues, mismatch warnings, and review recommendations."
+          description="Clear visibility into field-level issues, mismatch warnings, and parser recommendations."
         >
           <div className="submission-review-strip">
             <div className="submission-review-strip-item">
@@ -302,10 +272,6 @@ export default function SubmissionReviewDrawer({
             <div className="submission-review-strip-item">
               <span className="submission-review-strip-label">Sync</span>
               <StatusBadge label={record.syncStateLabel} tone={record.syncStateTone} />
-            </div>
-            <div className="submission-review-strip-item">
-              <span className="submission-review-strip-label">Review</span>
-              <StatusBadge label={record.reviewStateLabel} tone="neutral" />
             </div>
             <div className="submission-review-strip-item">
               <span className="submission-review-strip-label">Confidence</span>
@@ -432,7 +398,7 @@ export default function SubmissionReviewDrawer({
           icon={DatasetOutlinedIcon}
           eyebrow="Parsed Data"
           title="Structured Submission Data"
-          description="Review the interpreted session details and structured telemetry before approval."
+          description="Review the interpreted session details and structured telemetry captured from the submission."
         >
           <div className="submission-structured-grid">
             <div className="submission-structured-card">
@@ -599,8 +565,8 @@ export default function SubmissionReviewDrawer({
             <KeyValue label="Processed At" value={formatDateTime(record.processedAt || record.updatedAt)} />
             <KeyValue label="Parser Version" value={record.parserVersion} />
             <KeyValue label="Source Channel" value={record.sourceChannel || record.sourceTypeLabel} />
-            <KeyValue label="Review Status" value={record.reviewStateLabel} />
-            <KeyValue label="Review State" value={record.validationStateLabel} />
+            <KeyValue label="Validation Status" value={record.validationStateLabel} />
+            <KeyValue label="Archive State" value={record.isArchived ? "Archived" : "Live"} />
           </div>
           <div className="submission-audit-card">
             <div className="submission-structured-title">Audit Snippet</div>

@@ -152,6 +152,7 @@ export default function NotesSubmission() {
   const [detailConfidence, setDetailConfidence] = useState(0.85);
   const [quickImage, setQuickImage] = useState(null);
   const [detailImage, setDetailImage] = useState(null);
+  const [quickVoiceInputUsed, setQuickVoiceInputUsed] = useState(false);
   const quickRawTextRef = useRef(null);
 
   const [quickForm, setQuickForm] = useState(() => createBaseFormState());
@@ -428,6 +429,7 @@ export default function NotesSubmission() {
     const actionValue = isQuick ? quickAction : detailAction;
     const confidenceValue = isQuick ? quickConfidence : detailConfidence;
     const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
+    const voiceInputUsed = isQuick ? quickVoiceInputUsed : false;
 
     try {
       const submissionId = generateUUID();
@@ -450,6 +452,13 @@ export default function NotesSubmission() {
         data,
         raw_text: rawTextValue ?? undefined,
         image_url: imageValue || undefined,
+        analysis_result: {
+          action: actionValue,
+          confidence: Number(confidenceValue),
+          run_group: eventRunGroup || undefined,
+          submission_mode: isQuick ? "quick" : "detail",
+          voice_input_used: voiceInputUsed,
+        },
       };
 
       const response = await createSubmission(payload);
@@ -466,6 +475,7 @@ export default function NotesSubmission() {
         setPressureTypeDetail("cold");
         setQuickImage(null);
         setDetailImage(null);
+        setQuickVoiceInputUsed(false);
         setQuickForm(createBaseFormState());
         setDetailForm(createDetailFormState());
         setError("");
@@ -1810,6 +1820,7 @@ export default function NotesSubmission() {
                   className="voice-input-bottom"
                   textareaRef={quickRawTextRef}
                   onValueChange={setRawTextValue}
+                  onTranscriptInserted={() => setQuickVoiceInputUsed(true)}
                   disabled={isSubmitting || !canSubmitNotes}
                 />
               )}

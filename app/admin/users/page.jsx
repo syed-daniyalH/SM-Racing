@@ -6,6 +6,7 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
 import LockResetOutlinedIcon from "@mui/icons-material/LockResetOutlined";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
@@ -17,8 +18,13 @@ import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
 import StatusBadge from "../../components/Common/StatusBadge";
-import { DrawerShell, EmptyStatePanel, MetricCard } from "../fleet/_components/ManagementUi";
-import { createAdminUser, getUsers, resetUserPassword } from "../../utils/authApi";
+import {
+  ConfirmDialog,
+  DrawerShell,
+  EmptyStatePanel,
+  MetricCard,
+} from "../fleet/_components/ManagementUi";
+import { createAdminUser, deleteUser, getUsers, resetUserPassword } from "../../utils/authApi";
 import "../fleet/fleetManagement.css";
 import "./UsersManagement.css";
 
@@ -148,6 +154,8 @@ export default function UsersManagement() {
   const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM_VALUES);
   const [passwordError, setPasswordError] = useState("");
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   const refreshUsers = useCallback(async () => {
     try {
@@ -304,6 +312,32 @@ export default function UsersManagement() {
     [currentUser],
   );
 
+  const canDeleteUser = useCallback(
+    (targetUser) => {
+      const currentRole = normalizeRole(currentUser?.role);
+      const targetRole = normalizeRole(targetUser?.role);
+
+      if (!targetUser?.id || !currentUser?.id) {
+        return false;
+      }
+
+      if (targetUser.id === currentUser.id) {
+        return false;
+      }
+
+      if (targetRole === "OWNER") {
+        return false;
+      }
+
+      if (currentRole === "OWNER") {
+        return true;
+      }
+
+      return currentRole === "ADMIN" && targetRole === "MECHANIC";
+    },
+    [currentUser],
+  );
+
   const getPasswordActionTitle = (targetUser) => {
     if (canResetPassword(targetUser)) {
       return `Change password for ${targetUser.name}`;
@@ -314,6 +348,30 @@ export default function UsersManagement() {
     }
 
     return "You do not have access to reset this password";
+  };
+
+  const getDeleteActionTitle = (targetUser) => {
+    if (canDeleteUser(targetUser)) {
+      return `Delete ${targetUser.name}`;
+    }
+
+    if (!targetUser?.id || !currentUser?.id) {
+      return "User is not available for deletion";
+    }
+
+    if (targetUser.id === currentUser.id) {
+      return "You cannot delete your own account";
+    }
+
+    if (normalizeRole(targetUser.role) === "OWNER") {
+      return "Owner accounts cannot be deleted";
+    }
+
+    if (normalizeRole(currentUser.role) === "ADMIN") {
+      return "Admins can only delete mechanic accounts";
+    }
+
+    return "You do not have access to delete this user";
   };
 
   const openPasswordPanel = (targetUser) => {
@@ -327,6 +385,16 @@ export default function UsersManagement() {
     setPasswordTarget(null);
     setPasswordForm(INITIAL_PASSWORD_FORM_VALUES);
     setPasswordError("");
+  };
+
+  const openDeleteDialog = (targetUser) => {
+    if (!canDeleteUser(targetUser)) return;
+    setDeleteTarget(targetUser);
+  };
+
+  const closeDeleteDialog = () => {
+    if (isDeletingUser) return;
+    setDeleteTarget(null);
   };
 
   const handlePasswordFormChange = (field, value) => {
@@ -386,6 +454,37 @@ export default function UsersManagement() {
       setPasswordError(getApiErrorMessage(error, "Failed to update password. Please try again."));
     } finally {
       setIsResettingPassword(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return;
+
+    try {
+      setIsDeletingUser(true);
+
+      const response = await deleteUser(deleteTarget.id);
+      setUsers((current) => current.filter((user) => user.id !== deleteTarget.id));
+      setNotice({
+        tone: "success",
+        title: "User deleted",
+        message:
+          response.message ||
+          `${deleteTarget.name} has been removed because the account was not in use.`,
+      });
+      setDeleteTarget(null);
+    } catch (error) {
+      console.error("Failed to delete user:", error);
+      setNotice({
+        tone: "danger",
+        title: "User not deleted",
+        message: getApiErrorMessage(
+          error,
+          "This account could not be deleted. It may still be referenced elsewhere.",
+        ),
+      });
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -757,17 +856,30 @@ export default function UsersManagement() {
                         </div>
 
                         <div className="fleet-table-cell users-action-cell" data-label="Admin Actions">
-                          <button
-                            type="button"
-                            className="users-password-action"
-                            onClick={() => openPasswordPanel(user)}
-                            disabled={!canResetPassword(user)}
-                            title={getPasswordActionTitle(user)}
-                            aria-label={getPasswordActionTitle(user)}
-                          >
-                            <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
-                            Change PW
-                          </button>
+                          <div className="users-action-group">
+                            <button
+                              type="button"
+                              className="users-password-action"
+                              onClick={() => openPasswordPanel(user)}
+                              disabled={!canResetPassword(user)}
+                              title={getPasswordActionTitle(user)}
+                              aria-label={getPasswordActionTitle(user)}
+                            >
+                              <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
+                              Change PW
+                            </button>
+                            <button
+                              type="button"
+                              className="users-delete-action"
+                              onClick={() => openDeleteDialog(user)}
+                              disabled={!canDeleteUser(user)}
+                              title={getDeleteActionTitle(user)}
+                              aria-label={getDeleteActionTitle(user)}
+                            >
+                              <DeleteOutlineOutlinedIcon sx={{ fontSize: 18 }} />
+                              Delete
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -925,6 +1037,27 @@ export default function UsersManagement() {
               ) : null}
             </form>
           </DrawerShell>
+
+          <ConfirmDialog
+            open={Boolean(deleteTarget)}
+            title={deleteTarget ? `Delete ${deleteTarget.name}?` : "Delete user?"}
+            message={
+              deleteTarget
+                ? `${deleteTarget.name} will be removed only if the account is not referenced by events, run groups, submissions, or drivers. This action cannot be undone.`
+                : ""
+            }
+            confirmLabel="Delete User"
+            cancelLabel="Keep User"
+            onConfirm={handleDeleteUser}
+            onCancel={closeDeleteDialog}
+            busy={isDeletingUser}
+            tone="danger"
+            confirmTitle={
+              deleteTarget
+                ? `Delete ${deleteTarget.name} if the account is unused`
+                : "Delete selected user"
+            }
+          />
         </div>
       </div>
     </ProtectedRoute>

@@ -260,7 +260,10 @@ export const updateSubmission = async (submissionId, submissionData) => {
 export const deleteSubmission = async (submissionId) => {
   try {
     const response = await axiosInstance.delete(`/submissions/${submissionId}`);
-    return response.data || { success: true };
+    return {
+      success: true,
+      message: response.data?.message || "Submission deleted successfully",
+    };
   } catch (error) {
     console.error("Delete Submission API Error:", {
       url: error.config?.url,

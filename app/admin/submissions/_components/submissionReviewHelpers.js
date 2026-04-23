@@ -69,8 +69,8 @@ const sourceTypeCatalog = {
 };
 
 const reviewStateCatalog = {
-  pending_review: { label: "Pending Review", tone: "warning" },
-  reviewed: { label: "Reviewed", tone: "neutral" },
+  pending_review: { label: "Pending Processing", tone: "warning" },
+  reviewed: { label: "Processed", tone: "neutral" },
   approved: { label: "Validated", tone: "success" },
   flagged: { label: "Validation Failed", tone: "danger" },
   archived: { label: "Archived", tone: "neutral" },
@@ -83,8 +83,8 @@ const syncStateCatalog = {
 };
 
 const validationStateCatalog = {
-  pending_review: { label: "Pending Review", tone: "warning" },
-  reviewed: { label: "Reviewed", tone: "neutral" },
+  pending_review: { label: "Pending Processing", tone: "warning" },
+  reviewed: { label: "Processed", tone: "neutral" },
   validated: { label: "Validated", tone: "success" },
   failed: { label: "Validation Failed", tone: "danger" },
   archived: { label: "Archived", tone: "neutral" },
@@ -738,10 +738,10 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   const validationSeverityMeta = validationSeverityCatalog[validationSeverityKey] || validationSeverityCatalog.clean;
   const recommendation =
     validationStateKey === "failed"
-      ? "Correct the failed fields, then retry validation before approval."
+      ? "Correct the failed fields, then retry validation so the record stays accurate."
       : validationMessages.length
-        ? "Review the parsed data against the raw input and approve once it matches."
-        : "Submission looks clean and can be approved or marked reviewed.";
+        ? "Inspect the parsed data against the raw input and retry validation if needed."
+        : "Submission is stored successfully and looks clean.";
 
   const auditSnippet =
     normalizeText(analysisResult.audit_snippet || analysisResult.auditSnippet) ||

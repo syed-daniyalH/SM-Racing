@@ -50,6 +50,7 @@ const ERROR_MESSAGES = {
 export default function VoiceInputControl({
   textareaRef,
   onValueChange,
+  onTranscriptInserted,
   disabled = false,
   className = "",
 }) {
@@ -102,6 +103,10 @@ export default function VoiceInputControl({
     const cleanedTranscript = transcript.trim().replace(/\s+/g, " ");
     if (!cleanedTranscript) {
       return;
+    }
+
+    if (typeof onTranscriptInserted === "function") {
+      onTranscriptInserted(cleanedTranscript);
     }
 
     onValueChange((currentValue = "") => {

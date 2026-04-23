@@ -172,6 +172,27 @@ export const resetUserPassword = async (userId, password) => {
 };
 
 /**
+ * Delete a user from the admin area when the account is no longer referenced.
+ */
+export const deleteUser = async (userId) => {
+  try {
+    const response = await axiosInstance.delete(`/users/${userId}`);
+
+    return {
+      success: true,
+      message: response.data?.message || "User deleted successfully",
+    };
+  } catch (error) {
+    console.error("Admin user delete API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to delete user");
+  }
+};
+
+/**
  * Login user and return a normalized user plus token.
  */
 export const loginUser = async (credentials) => {

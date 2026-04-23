@@ -30,6 +30,7 @@ import {
 } from "./_components/submissionReviewHelpers";
 import SubmissionReviewDrawer from "./_components/SubmissionReviewDrawer";
 import {
+  deleteSubmission,
   getAllSubmissions,
   retryFailedSubmission,
   updateSubmission,
@@ -39,7 +40,7 @@ import "./SubmissionReview.css";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CameraAltOutlinedIcon from "@mui/icons-material/CameraAltOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
-import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import DatasetOutlinedIcon from "@mui/icons-material/DatasetOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
@@ -55,8 +56,8 @@ import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 
 const STATUS_FILTER_OPTIONS = [
   { value: "all", label: "All Statuses" },
-  { value: "pending_review", label: "Pending Review" },
-  { value: "reviewed", label: "Reviewed" },
+  { value: "pending_review", label: "Pending Processing" },
+  { value: "reviewed", label: "Processed" },
   { value: "validated", label: "Validated" },
   { value: "failed", label: "Validation Failed" },
   { value: "archived", label: "Archived" },
@@ -70,7 +71,7 @@ const SUBMISSION_SPREADSHEET_COLUMNS = [
   { key: "driverName", label: "Driver", width: "minmax(170px, 1.2fr)", sortable: true },
   { key: "createdAt", label: "Created At", width: "minmax(150px, 1fr)", sortable: true },
   { key: "status", label: "Status", width: "minmax(150px, 1fr)", sortable: true },
-  { key: "actions", label: "Actions", width: "minmax(210px, 1.2fr)", sortable: false },
+  { key: "actions", label: "Actions", width: "minmax(250px, 1.4fr)", sortable: false },
 ];
 
 const SUBMISSION_TABLE_COLUMNS = SUBMISSION_SPREADSHEET_COLUMNS.map((column) => column.width).join(" ");
@@ -222,6 +223,7 @@ export default function SubmissionReviewPage() {
   const [drawerFocus, setDrawerFocus] = useState("overview");
   const [busyAction, setBusyAction] = useState("");
   const [archiveTarget, setArchiveTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const showDemoSubmission = useCallback((message) => {
     if (!DEMO_SUBMISSIONS.length) return;
@@ -253,7 +255,7 @@ export default function SubmissionReviewPage() {
 
       if (list.length === 0) {
         showDemoSubmission(
-          "No live submissions were returned, so a sample submission is shown for review.",
+          "No live submissions were returned, so a sample submission is shown for inspection.",
         );
         return;
       }
@@ -264,7 +266,7 @@ export default function SubmissionReviewPage() {
 
       if (isOfflineError(error)) {
         showDemoSubmission(
-          "The backend is unreachable right now, so a sample submission is shown for review.",
+          "The backend is unreachable right now, so a sample submission is shown for inspection.",
         );
         return;
       }
@@ -526,60 +528,6 @@ export default function SubmissionReviewPage() {
     );
   };
 
-  const handleMarkReviewed = async (record) => {
-    const patch = buildReviewAnalysisPatch({
-      submission: record,
-      allSubmissions: submissionRecords,
-      reviewState: "REVIEWED",
-      reviewerId: user?.id || null,
-      reviewerName: user?.name || user?.email || null,
-      note: "Marked as reviewed from the Submission Review monitor.",
-    });
-
-    await persistAnalysisUpdate(
-      record,
-      patch,
-      "mark",
-      "Submission marked as reviewed.",
-    );
-  };
-
-  const handleApproveSubmission = async (record) => {
-    const patch = buildReviewAnalysisPatch({
-      submission: record,
-      allSubmissions: submissionRecords,
-      reviewState: "APPROVED",
-      reviewerId: user?.id || null,
-      reviewerName: user?.name || user?.email || null,
-      note: "Approved from the Submission Review monitor.",
-    });
-
-    await persistAnalysisUpdate(
-      record,
-      patch,
-      "approve",
-      "Submission approved and validation state updated.",
-    );
-  };
-
-  const handleFlagForCorrection = async (record) => {
-    const patch = buildReviewAnalysisPatch({
-      submission: record,
-      allSubmissions: submissionRecords,
-      reviewState: "FLAGGED",
-      reviewerId: user?.id || null,
-      reviewerName: user?.name || user?.email || null,
-      note: "Flagged for correction from the Submission Review monitor.",
-    });
-
-    await persistAnalysisUpdate(
-      record,
-      patch,
-      "flag",
-      "Submission flagged for correction.",
-    );
-  };
-
   const handleRetrySync = async (record) => {
     const submissionId = record.id || record._id || record.submissionId;
     if (!submissionId) return;
@@ -632,6 +580,46 @@ export default function SubmissionReviewPage() {
       "Submission archived and retained for audit history.",
     );
     setArchiveTarget(null);
+  };
+
+  const handleDeleteSubmission = async (record) => {
+    const submissionId = record?.id || record?._id || record?.submissionId;
+    if (!submissionId) return;
+
+    try {
+      setBusyAction(`delete:${submissionId}`);
+      const response = await deleteSubmission(submissionId);
+
+      setSubmissions((current) =>
+        current.filter(
+          (submission) =>
+            String(submission.id || submission._id || submission.submissionId) !==
+            String(submissionId),
+        ),
+      );
+
+      if (String(selectedSubmissionId) === String(submissionId)) {
+        setDrawerOpen(false);
+        setSelectedSubmissionId(null);
+        setDrawerFocus("overview");
+      }
+
+      setDeleteTarget(null);
+      setNotice({
+        tone: "success",
+        message:
+          response?.message ||
+          `Submission ${getSubmissionId(record) || submissionId} was deleted successfully.`,
+      });
+    } catch (error) {
+      console.error("Submission delete failed:", error);
+      setNotice({
+        tone: "error",
+        message: getApiErrorMessage(error, "Unable to delete submission."),
+      });
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const handleExportRows = (rows, format = "csv", fileName = "submission-review") => {
@@ -751,9 +739,9 @@ export default function SubmissionReviewPage() {
     },
     {
       icon: WarningAmberOutlinedIcon,
-      label: "Pending Review",
+      label: "Pending Processing",
       value: summaryCounts.pendingReview,
-      helper: "Waiting on validation or approval.",
+      helper: "Stored already, but still showing warnings or sync follow-up.",
       tone: "warning",
     },
     {
@@ -868,32 +856,6 @@ export default function SubmissionReviewPage() {
               }}
             />
             <ActionIconButton
-              icon={CheckCircleOutlineOutlinedIcon}
-              label="Approve"
-              title="Approve Submission"
-              tone="success"
-              onClick={(event) => {
-                event.stopPropagation();
-                handleApproveSubmission(submission);
-              }}
-              disabled={
-                busyAction === `approve:${submission.id}` ||
-                submission.validationStateKey === "failed" ||
-                submission.validationStateKey === "archived"
-              }
-            />
-            <ActionIconButton
-              icon={CancelOutlinedIcon}
-              label="Reject"
-              title="Reject Submission"
-              tone="danger"
-              onClick={(event) => {
-                event.stopPropagation();
-                handleFlagForCorrection(submission);
-              }}
-              disabled={busyAction === `flag:${submission.id}` || submission.validationStateKey === "archived"}
-            />
-            <ActionIconButton
               icon={DownloadOutlinedIcon}
               label="CSV"
               title="Export CSV"
@@ -913,6 +875,17 @@ export default function SubmissionReviewPage() {
               }}
               disabled={busyAction === `archive:${submission.id}`}
             />
+            <ActionIconButton
+              icon={DeleteOutlineOutlinedIcon}
+              label="Delete"
+              title="Delete Submission"
+              tone="danger"
+              onClick={(event) => {
+                event.stopPropagation();
+                setDeleteTarget(submission);
+              }}
+              disabled={busyAction === `delete:${submission.id}` || busyAction === `archive:${submission.id}`}
+            />
           </div>
         );
       default:
@@ -931,7 +904,7 @@ export default function SubmissionReviewPage() {
             <p className="submission-monitor-eyebrow">Admin Operations</p>
             <h1>Submission Review</h1>
             <p className="submission-monitor-subtitle">
-              Review Make.com bulk submissions in an Excel-style sheet, validate records, and open a polished right-side drawer for full inspection.
+              Inspect Make.com bulk submissions in an Excel-style sheet, monitor system state, and open a polished right-side drawer for full detail.
             </p>
           </div>
 
@@ -1137,7 +1110,7 @@ export default function SubmissionReviewPage() {
             <div>
               <h2 className="submission-table-title">Bulk Submission Spreadsheet</h2>
               <p className="submission-table-subtitle">
-                Click any row to open the right-side review drawer with raw input, parsed fields, and audit notes.
+                Click any row to open the right-side inspection drawer with raw input, parsed fields, and audit notes.
               </p>
             </div>
           </div>
@@ -1214,7 +1187,7 @@ export default function SubmissionReviewPage() {
             <EmptyStatePanel
               icon={PendingActionsOutlinedIcon}
               title="No submissions yet"
-              description="Incoming mechanic submissions will appear here with validation, sync, and review state once they arrive."
+              description="Incoming mechanic submissions will appear here with validation and sync state once they arrive."
               action={
                 <button
                   type="button"
@@ -1235,9 +1208,6 @@ export default function SubmissionReviewPage() {
         allSubmissions={submissionRecords}
         focusSection={drawerFocus}
         onClose={closeDrawer}
-        onMarkReviewed={handleMarkReviewed}
-        onApprove={handleApproveSubmission}
-        onFlag={handleFlagForCorrection}
         onRetryValidation={handleRetryValidation}
         onRetrySync={handleRetrySync}
         onArchive={(record) => setArchiveTarget(record)}
@@ -1260,6 +1230,24 @@ export default function SubmissionReviewPage() {
         onCancel={() => setArchiveTarget(null)}
         onConfirm={() => handleArchiveSubmission(archiveTarget)}
         icon={ArchiveOutlinedIcon}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete Submission"
+        message={
+          deleteTarget
+            ? `Delete ${deleteTarget.submissionId || deleteTarget.submission_ref || getSubmissionId(deleteTarget)}? This removes the submission review record and its normalized structured detail rows from the admin system.`
+            : "Delete this submission?"
+        }
+        confirmLabel={busyAction === `delete:${deleteTarget?.id}` ? "Working..." : "Delete Submission"}
+        cancelLabel="Cancel"
+        confirmTitle="Delete Submission"
+        tone="danger"
+        busy={busyAction === `delete:${deleteTarget?.id}`}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => handleDeleteSubmission(deleteTarget)}
+        icon={WarningAmberOutlinedIcon}
       />
     </ProtectedRoute>
   );

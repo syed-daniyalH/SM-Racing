@@ -199,6 +199,10 @@ export const normalizeSubmission = (submission) => {
   const event = normalizeEvent(submission.event);
   const payload = submission.payload || submission.data || {};
   const analysisResult = submission.analysis_result || submission.analysisResult || {};
+  const sessionPayload =
+    payload && typeof payload === "object" && payload.data && typeof payload.data === "object"
+      ? payload.data
+      : payload;
 
   return {
     ...submission,
@@ -219,10 +223,22 @@ export const normalizeSubmission = (submission) => {
     userId: submission.created_by_id || submission.userId || null,
     raw_text: submission.raw_text || submission.rawText || "",
     image: submission.image_url || submission.image || null,
-    data: payload,
+    data: sessionPayload,
     payload,
     analysis_result: analysisResult,
     analysisResult,
+    submissionMode:
+      analysisResult?.submission_mode || analysisResult?.submissionMode || null,
+    sourceType:
+      analysisResult?.source_type || analysisResult?.sourceType || null,
+    structuredOnly:
+      analysisResult?.structured_only ?? analysisResult?.structuredOnly ?? false,
+    hasStructuredData:
+      analysisResult?.has_structured_data ?? analysisResult?.hasStructuredData ?? false,
+    hasRawText:
+      analysisResult?.has_raw_text ?? analysisResult?.hasRawText ?? false,
+    hasImage:
+      analysisResult?.has_image ?? analysisResult?.hasImage ?? false,
     confidence:
       analysisResult?.confidence ??
       analysisResult?.confidence_score ??

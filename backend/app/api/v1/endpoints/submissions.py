@@ -2,12 +2,12 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_roles
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import DB_SCHEMA, get_db
 from app.core.enums import SubmissionStatus, UserRole
 from app.models.driver import Driver
 from app.models.event import Event
@@ -75,6 +75,67 @@ def _submission_stmt():
 def _load_submission(db: Session, submission_id: UUID) -> Submission | None:
     stmt = select(Submission).options(*_submission_options()).where(Submission.id == submission_id)
     return db.scalar(stmt)
+
+
+def _structured_submission_rows(db: Session, submission_ref: str) -> list[dict]:
+    return list(
+        db.execute(
+            text(
+                f"""
+                SELECT submission_id, id_seance
+                FROM {DB_SCHEMA}.submission_inputs
+                WHERE raw_payload_json ->> 'submission_ref' = :submission_ref
+                """
+            ),
+            {"submission_ref": submission_ref},
+        ).mappings()
+    )
+
+
+def _cleanup_structured_submission_rows(db: Session, submission_ref: str) -> None:
+    structured_rows = _structured_submission_rows(db, submission_ref)
+    if not structured_rows:
+        return
+
+    seance_ids = {
+        row["id_seance"]
+        for row in structured_rows
+        if row.get("id_seance")
+    }
+
+    for row in structured_rows:
+        db.execute(
+            text(
+                f"""
+                DELETE FROM {DB_SCHEMA}.submission_inputs
+                WHERE submission_id = :submission_id
+                """
+            ),
+            {"submission_id": row["submission_id"]},
+        )
+
+    for id_seance in seance_ids:
+        remaining_links = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                FROM {DB_SCHEMA}.submission_inputs
+                WHERE id_seance = :id_seance
+                """
+            ),
+            {"id_seance": id_seance},
+        ).scalar_one()
+
+        if remaining_links == 0:
+            db.execute(
+                text(
+                    f"""
+                    DELETE FROM {DB_SCHEMA}.seances
+                    WHERE id_seance = :id_seance
+                    """
+                ),
+                {"id_seance": id_seance},
+            )
 
 
 def _validate_submission_relations(
@@ -355,15 +416,17 @@ def update_submission(
     return loaded_submission
 
 
-@router.delete("/{submission_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{submission_id}")
 def delete_submission(
     submission_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
-) -> None:
+) -> dict[str, str]:
     submission = db.get(Submission, submission_id)
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
+    _cleanup_structured_submission_rows(db, submission.submission_ref)
     db.delete(submission)
     db.commit()
+    return {"message": "Submission deleted successfully"}
