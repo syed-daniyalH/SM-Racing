@@ -5,11 +5,13 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.core.database import Base
+from app.core.db_schema import SM2RACING_SCHEMA
 from app.models.base import TimestampMixin
 
 
 class Driver(Base, TimestampMixin):
     __tablename__ = "drivers"
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     driver_id: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
@@ -22,7 +24,7 @@ class Driver(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     active = synonym("is_active")
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey(f"{SM2RACING_SCHEMA}.users.id"), nullable=True)
 
     created_by_user = relationship("User")
     vehicles = relationship("Vehicle", back_populates="driver")

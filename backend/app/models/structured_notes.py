@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.db_schema import SM2RACING_SCHEMA
 
 
 class Track(Base):
     __tablename__ = "tracks"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     name: Mapped[str] = mapped_column(String(255), primary_key=True)
     latitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
@@ -23,7 +24,7 @@ class Track(Base):
 
 class TireInventory(Base):
     __tablename__ = "tire_inventory"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     tire_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     manufacturer: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -32,50 +33,48 @@ class TireInventory(Base):
     purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     heat_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
     track_time_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(
-        Enum("ACTIVE", "DISCARDED", name="sm2_tire_inventory_status", schema="sm2"),
-        nullable=False,
-        default="ACTIVE",
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class Seance(Base):
     __tablename__ = "seances"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id_seance: Mapped[str] = mapped_column(String(120), primary_key=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     session_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     track: Mapped[str] = mapped_column(
         String(255),
-        ForeignKey("sm2.tracks.name", onupdate="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.tracks.name", onupdate="CASCADE"),
         nullable=False,
     )
-    driver_id: Mapped[str] = mapped_column(String(32), ForeignKey("drivers.driver_id", onupdate="CASCADE"), nullable=False)
-    vehicle_id: Mapped[str] = mapped_column(String(64), ForeignKey("vehicles.vehicle_id", onupdate="CASCADE"), nullable=False)
+    driver_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey(f"{SM2RACING_SCHEMA}.drivers.driver_id", onupdate="CASCADE"),
+        nullable=False,
+    )
+    vehicle_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey(f"{SM2RACING_SCHEMA}.vehicles.vehicle_id", onupdate="CASCADE"),
+        nullable=False,
+    )
     session_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     session_number: Mapped[int] = mapped_column(Integer, nullable=False)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tire_set: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(
-        Enum("ACTIVE", "ARCHIVED", name="sm2_status", schema="sm2"),
-        nullable=False,
-        default="ACTIVE",
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Pressure(Base):
     __tablename__ = "pressures"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id_seance: Mapped[str] = mapped_column(
         String(120),
-        ForeignKey("sm2.seances.id_seance", ondelete="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.seances.id_seance", ondelete="CASCADE"),
         primary_key=True,
     )
     cold_fl: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
@@ -90,11 +89,11 @@ class Pressure(Base):
 
 class Suspension(Base):
     __tablename__ = "suspensions"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id_seance: Mapped[str] = mapped_column(
         String(120),
-        ForeignKey("sm2.seances.id_seance", ondelete="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.seances.id_seance", ondelete="CASCADE"),
         primary_key=True,
     )
     rebound_fl: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
@@ -112,11 +111,11 @@ class Suspension(Base):
 
 class Alignment(Base):
     __tablename__ = "alignment"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id_seance: Mapped[str] = mapped_column(
         String(120),
-        ForeignKey("sm2.seances.id_seance", ondelete="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.seances.id_seance", ondelete="CASCADE"),
         primary_key=True,
     )
     camber_fl: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
@@ -140,11 +139,11 @@ class Alignment(Base):
 
 class TireTemperature(Base):
     __tablename__ = "tire_temperatures"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id_seance: Mapped[str] = mapped_column(
         String(120),
-        ForeignKey("sm2.seances.id_seance", ondelete="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.seances.id_seance", ondelete="CASCADE"),
         primary_key=True,
     )
     fl_in: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
@@ -164,22 +163,22 @@ class TireTemperature(Base):
 
 class TireHistory(Base):
     __tablename__ = "tire_history"
-    __table_args__ = {"schema": "sm2"}
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     tire_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("sm2.tire_inventory.tire_id", onupdate="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.tire_inventory.tire_id", onupdate="CASCADE"),
         primary_key=True,
     )
     id_seance: Mapped[str] = mapped_column(
         String(120),
-        ForeignKey("sm2.seances.id_seance", ondelete="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.seances.id_seance", ondelete="CASCADE"),
         primary_key=True,
     )
     usage_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     track: Mapped[str | None] = mapped_column(
         String(255),
-        ForeignKey("sm2.tracks.name", onupdate="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.tracks.name", onupdate="CASCADE"),
         nullable=True,
     )
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)

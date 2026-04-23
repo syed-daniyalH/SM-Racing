@@ -16,6 +16,8 @@ services:
         value: '^https://.*\.vercel\.app$'
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_SCHEMA
+        value: sm2racing
       - key: JWT_SECRET_KEY
         sync: false
       - key: MAKE_WEBHOOK_URL

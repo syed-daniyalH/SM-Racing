@@ -4,17 +4,19 @@ from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.core.database import Base
+from app.core.db_schema import SM2RACING_SCHEMA
 from app.models.base import TimestampMixin
 
 
 class Vehicle(Base, TimestampMixin):
     __tablename__ = "vehicles"
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     vehicle_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     driver_id: Mapped[str | None] = mapped_column(
         String(32),
-        ForeignKey("drivers.driver_id", onupdate="CASCADE"),
+        ForeignKey(f"{SM2RACING_SCHEMA}.drivers.driver_id", onupdate="CASCADE"),
         nullable=True,
     )
     make: Mapped[str] = mapped_column(String(120), nullable=False)

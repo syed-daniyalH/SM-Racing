@@ -5,11 +5,13 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.db_schema import SM2RACING_SCHEMA
 from app.models.base import TimestampMixin
 
 
 class Event(Base, TimestampMixin):
     __tablename__ = "events"
+    __table_args__ = {"schema": SM2RACING_SCHEMA}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -17,7 +19,7 @@ class Event(Base, TimestampMixin):
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(f"{SM2RACING_SCHEMA}.users.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     created_by_user = relationship("User", back_populates="created_events", foreign_keys=[created_by_id])

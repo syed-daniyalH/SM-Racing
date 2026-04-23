@@ -17,7 +17,7 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.submission import SubmissionCreate, SubmissionRead, SubmissionUpdate
 from app.services.make_webhook_service import send_submission_to_make
-from app.services.structured_submission_service import StructuredSubmissionError, save_structured_submission
+from app.services.submission_ingest_service import persist_structured_submission
 
 
 router = APIRouter()
@@ -52,7 +52,7 @@ def _event_submission_end_to_utc(event: Event) -> datetime | None:
     if end_date is None:
         return None
 
-    # Admin scheduling is date-based, so midnight end dates stay open for the full end day.
+    # Admin events are date-based, so a midnight end date should stay open through that full day.
     if _is_midnight(end_date):
         return end_date + timedelta(days=1)
 
@@ -120,9 +120,37 @@ def _validate_submission_relations(
     return driver, vehicle
 
 
+def _build_submission_candidate(
+    submission_in: SubmissionCreate,
+    current_user: User,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+) -> Submission:
+    submission = Submission(
+        submission_ref=submission_in.submission_ref,
+        event_id=event.id,
+        run_group_id=run_group.id,
+        driver_id=driver.id if driver else None,
+        vehicle_id=vehicle.id if vehicle else None,
+        created_by_id=current_user.id,
+        raw_text=submission_in.raw_text,
+        image_url=submission_in.image_url,
+        payload=submission_in.payload,
+        analysis_result=submission_in.analysis_result,
+        status=SubmissionStatus.PENDING,
+    )
+    submission.event = event
+    submission.run_group = run_group
+    submission.driver = driver
+    submission.vehicle = vehicle
+    return submission
+
+
 def _finalize_delivery(db: Session, submission: Submission) -> Submission:
     if not settings.make_webhook_url:
-        submission.status = SubmissionStatus.PENDING
+        submission.status = SubmissionStatus.SENT
         submission.error_message = None
         db.commit()
         db.refresh(submission)
@@ -158,11 +186,13 @@ def list_submissions_by_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Submission]:
-    event = db.get(Event, event_id)
+    event = db.scalar(select(Event).options(joinedload(Event.run_group)).where(Event.id == event_id))
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
     stmt = _submission_stmt().where(Submission.event_id == event_id)
+    if event.run_group:
+        stmt = stmt.where(Submission.run_group_id == event.run_group.id)
     if current_user.role not in (UserRole.OWNER, UserRole.ADMIN):
         stmt = stmt.where(Submission.created_by_id == current_user.id)
     return list(db.scalars(stmt).unique().all())
@@ -222,28 +252,25 @@ def create_submission(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Submission already exists")
 
-    submission = Submission(
-        submission_ref=submission_in.submission_ref,
-        event_id=submission_in.event_id,
-        run_group_id=submission_in.run_group_id,
-        driver_id=driver.id if driver else None,
-        vehicle_id=vehicle.id if vehicle else None,
-        created_by_id=current_user.id,
-        raw_text=submission_in.raw_text,
-        image_url=submission_in.image_url,
-        payload=submission_in.payload,
-        analysis_result=submission_in.analysis_result,
-        status=SubmissionStatus.PENDING,
-    )
+    submission = _build_submission_candidate(submission_in, current_user, event, run_group, driver, vehicle)
+
     db.add(submission)
     db.flush()
 
     try:
-        save_structured_submission(db, submission, event, driver, vehicle, current_user)
+        persist_structured_submission(
+            db,
+            submission=submission,
+            event=event,
+            run_group=run_group,
+            driver=driver,
+            vehicle=vehicle,
+            current_user=current_user,
+        )
         db.commit()
-    except StructuredSubmissionError as exc:
+    except HTTPException:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise
     except Exception as exc:
         db.rollback()
         raise HTTPException(
@@ -286,10 +313,23 @@ def retry_submission(
 
     submission.status = SubmissionStatus.PENDING
     submission.error_message = None
+
+    if settings.make_webhook_url:
+        try:
+            send_submission_to_make(submission)
+            submission.status = SubmissionStatus.SENT
+            submission.error_message = None
+        except Exception as exc:
+            submission.status = SubmissionStatus.FAILED
+            submission.error_message = str(exc)
+    else:
+        submission.status = SubmissionStatus.SENT
+        submission.error_message = None
+
     db.commit()
     db.refresh(submission)
 
-    return _finalize_delivery(db, _load_submission(db, submission_id) or submission)
+    return _load_submission(db, submission_id) or submission
 
 
 @router.put("/{submission_id}", response_model=SubmissionRead)
