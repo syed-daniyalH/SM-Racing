@@ -121,6 +121,10 @@ def _validate_submission_relations(
 
 def _finalize_delivery(db: Session, submission: Submission) -> Submission:
     if not settings.make_webhook_url:
+        submission.status = SubmissionStatus.SENT
+        submission.error_message = None
+        db.commit()
+        db.refresh(submission)
         return submission
 
     try:

@@ -643,10 +643,11 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   }
 
   const driverId = getSubmissionDriverId(normalized, data);
+  const driverCode = getSubmissionDriverCode(normalized);
   const vehicleId = getSubmissionVehicleId(normalized, data);
   const vehicleDriverId = normalized.vehicle?.driverId || normalized.vehicle?.driver_id || null;
   const driverVehicleMismatch =
-    Boolean(driverId && vehicleId && vehicleDriverId && String(vehicleDriverId) !== String(driverId));
+    Boolean(driverCode && vehicleId && vehicleDriverId && String(vehicleDriverId) !== String(driverCode));
   if (driverVehicleMismatch) {
     hardIssues.push("vehicle-driver-mismatch");
   }
