@@ -38,5 +38,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql("DROP SCHEMA IF EXISTS sm2 CASCADE")
+    # Intentionally no-op.
+    #
+    # The project now uses sm2racing as the canonical schema and we no longer
+    # keep destructive downgrade logic here. This revision stays in the chain
+    # only so older environments can resolve history safely.
+    pass
