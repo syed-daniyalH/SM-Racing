@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.submission import SubmissionCreate, SubmissionRead, SubmissionUpdate
 from app.services.make_webhook_service import send_submission_to_make
+from app.services.structured_submission_service import StructuredSubmissionError, save_structured_submission
 
 
 router = APIRouter()
@@ -121,7 +122,7 @@ def _validate_submission_relations(
 
 def _finalize_delivery(db: Session, submission: Submission) -> Submission:
     if not settings.make_webhook_url:
-        submission.status = SubmissionStatus.SENT
+        submission.status = SubmissionStatus.PENDING
         submission.error_message = None
         db.commit()
         db.refresh(submission)
@@ -235,7 +236,21 @@ def create_submission(
         status=SubmissionStatus.PENDING,
     )
     db.add(submission)
-    db.commit()
+    db.flush()
+
+    try:
+        save_structured_submission(db, submission, event, driver, vehicle, current_user)
+        db.commit()
+    except StructuredSubmissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save structured submission",
+        ) from exc
+
     db.refresh(submission)
 
     loaded_submission = _load_submission(db, submission.id)
