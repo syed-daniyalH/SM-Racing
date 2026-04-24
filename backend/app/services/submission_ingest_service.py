@@ -11,9 +11,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.enums import TireInventoryStatus
 from app.models.driver import Driver
 from app.models.event import Event
 from app.models.run_group import RunGroup
+from app.models.structured_notes import TireHistory, TireInventory
 from app.models.submission import Submission
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -52,6 +54,32 @@ def _to_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     return float(value)
+
+
+def _normalize_tire_inventory_status(value: Any) -> str | None:
+    cleaned = _clean_blank(value)
+    if cleaned is None:
+        return None
+
+    normalized = cleaned.upper()
+    if normalized not in {member.value for member in TireInventoryStatus}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tire_inventory.status must be ACTIVE or DISCARDED",
+        )
+    return normalized
+
+
+def _to_positive_float(value: Any, field_name: str) -> float | None:
+    parsed = _to_float(value)
+    if parsed is None:
+        return None
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} must be greater than 0",
+        )
+    return parsed
 
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
@@ -126,6 +154,10 @@ def _driver_aliases(driver: Driver) -> list[str]:
 
 def _created_by_value(user: User) -> str:
     return _clean_blank(user.name) or _clean_blank(user.email) or str(user.id)
+
+
+def _submission_correlation_id(submission: Submission) -> str:
+    return _clean_blank(getattr(submission, "correlation_id", None)) or submission.submission_ref
 
 
 def _upsert_master_driver(db: Session, driver: Driver) -> None:
@@ -267,13 +299,15 @@ def _upsert_track(db: Session, track_name: str) -> None:
 def _insert_submission_input(
     db: Session,
     *,
-    id_seance: str,
+    id_seance: str | None,
     submission_type: str,
     source: str,
     raw_text: str | None,
     raw_payload: dict[str, Any],
     confidence: float | None,
     created_by: str,
+    validation_status: str = "APPLIED",
+    validation_message: str | None = None,
 ) -> int:
     raw_payload_json = json.dumps(raw_payload, ensure_ascii=False, sort_keys=True, default=str)
     return db.execute(
@@ -299,8 +333,8 @@ def _insert_submission_input(
                 :confidence,
                 :created_by,
                 now(),
-                'APPLIED',
-                NULL
+                :validation_status,
+                :validation_message
             )
             RETURNING submission_id
             """
@@ -313,6 +347,8 @@ def _insert_submission_input(
             "raw_payload_json": raw_payload_json,
             "confidence": confidence,
             "created_by": created_by,
+            "validation_status": validation_status,
+            "validation_message": validation_message,
         },
     ).scalar_one()
 
@@ -358,6 +394,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
                 purchase_date,
                 heat_cycles,
                 track_time_min,
+                status,
                 created_at,
                 updated_at
             ) VALUES (
@@ -368,6 +405,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
                 :purchase_date,
                 :heat_cycles,
                 :track_time_min,
+                COALESCE(:status, 'ACTIVE'),
                 now(),
                 now()
             )
@@ -378,6 +416,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
                 purchase_date = COALESCE(EXCLUDED.purchase_date, {_table("tire_inventory")}.purchase_date),
                 heat_cycles = COALESCE(EXCLUDED.heat_cycles, {_table("tire_inventory")}.heat_cycles),
                 track_time_min = COALESCE(EXCLUDED.track_time_min, {_table("tire_inventory")}.track_time_min),
+                status = COALESCE(:status, {_table("tire_inventory")}.status),
                 updated_at = now()
             """
         ),
@@ -389,6 +428,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
             "purchase_date": _clean_blank(tire_inventory.get("purchase_date")),
             "heat_cycles": _to_int(tire_inventory.get("heat_cycles")),
             "track_time_min": _to_int(tire_inventory.get("track_time_min")),
+            "status": _normalize_tire_inventory_status(tire_inventory.get("status")),
         },
     )
 
@@ -445,7 +485,144 @@ def _insert_media_file(
     ).scalar_one()
 
 
-def persist_structured_submission(
+def _find_submission_input_id(db: Session, submission_ref: str) -> int | None:
+    row = db.execute(
+        text(
+            f"""
+            SELECT submission_id
+            FROM {_table("submission_inputs")}
+            WHERE raw_payload_json ->> 'submission_ref' = :submission_ref
+            ORDER BY submission_id DESC
+            LIMIT 1
+            """
+        ),
+        {"submission_ref": submission_ref},
+    ).mappings().first()
+    if not row:
+        return None
+    return int(row["submission_id"])
+
+
+def _media_file_exists(db: Session, submission_input_id: int) -> bool:
+    return (
+        db.execute(
+            text(
+                f"""
+                SELECT 1
+                FROM {_table("media_files")}
+                WHERE submission_id = :submission_id
+                LIMIT 1
+                """
+            ),
+            {"submission_id": submission_input_id},
+        ).first()
+        is not None
+    )
+
+
+def _latest_media_file_id(db: Session, submission_input_id: int) -> int | None:
+    row = db.execute(
+        text(
+            f"""
+            SELECT media_id
+            FROM {_table("media_files")}
+            WHERE submission_id = :submission_id
+            ORDER BY uploaded_at DESC, media_id DESC
+            LIMIT 1
+            """
+        ),
+        {"submission_id": submission_input_id},
+    ).mappings().first()
+    if not row:
+        return None
+    return int(row["media_id"])
+
+
+def _write_audit_log(
+    db: Session,
+    *,
+    action: str,
+    status: str,
+    message: str | None = None,
+    payload: dict[str, Any] | None = None,
+    user: str | None = None,
+) -> None:
+    db.execute(
+        text(
+            f"""
+            INSERT INTO {_table("logs")} (
+                action,
+                status,
+                message,
+                payload,
+                "user",
+                logged_at
+            ) VALUES (
+                :action,
+                :status,
+                :message,
+                CAST(:payload AS jsonb),
+                :user,
+                now()
+            )
+            """
+        ),
+        {
+            "action": action,
+            "status": status,
+            "message": message,
+            "payload": json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, default=str),
+            "user": user,
+        },
+    )
+
+
+def _submission_type_from_payload(payload: dict[str, Any]) -> str:
+    session_data = get_session_payload(payload)
+    if any(
+        key in session_data
+        for key in ("suspension", "alignment", "tire_temperatures", "tire_inventory")
+    ):
+        return "detail"
+    return "quick"
+
+
+def _build_submission_input_snapshot(
+    *,
+    submission: Submission,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+    payload: dict[str, Any],
+    source: str,
+    submission_type: str,
+    current_user: User | None,
+) -> dict[str, Any]:
+    analysis_result = _dict_or_empty(submission.analysis_result)
+    return {
+        "submission_ref": submission.submission_ref,
+        "correlation_id": _submission_correlation_id(submission),
+        "event_id": str(event.id),
+        "event_name": event.name,
+        "run_group_id": str(run_group.id),
+        "run_group_raw_text": run_group.raw_text,
+        "driver_id": driver.driver_id if driver is not None else None,
+        "vehicle_id": vehicle.vehicle_id if vehicle is not None else None,
+        "raw_text": submission.raw_text,
+        "image_url": submission.image_url,
+        "analysis_result": analysis_result,
+        "payload": payload,
+        "data": get_session_payload(payload),
+        "source": source,
+        "submission_type": submission_type,
+        "validation_status": "PENDING",
+        "created_by": _created_by_value(current_user) if current_user is not None else "make-webhook",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def stage_submission_input(
     db: Session,
     *,
     submission: Submission,
@@ -454,7 +631,141 @@ def persist_structured_submission(
     driver: Driver | None,
     vehicle: Vehicle | None,
     current_user: User,
-) -> None:
+    source: str = "pwa",
+) -> int:
+    payload = _dict_or_empty(submission.payload)
+    submission_type = _submission_type_from_payload(payload)
+    snapshot = _build_submission_input_snapshot(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        payload=payload,
+        source=source,
+        submission_type=submission_type,
+        current_user=current_user,
+    )
+    confidence = _normalize_confidence(snapshot["analysis_result"].get("confidence"))
+    submission_input_id = _insert_submission_input(
+        db,
+        id_seance=None,
+        submission_type=submission_type,
+        source=source,
+        raw_text=submission.raw_text,
+        raw_payload=snapshot,
+        confidence=confidence,
+        created_by=snapshot["created_by"],
+        validation_status="PENDING",
+        validation_message=None,
+    )
+
+    if submission.image_url:
+        _insert_media_file(
+            db,
+            submission_id=submission_input_id,
+            submission_ref=submission.submission_ref,
+            image_url=submission.image_url,
+            uploaded_by=snapshot["created_by"],
+        )
+
+    _write_audit_log(
+        db,
+        action="submission.stage.raw",
+        status="SUCCESS",
+        message=f"Staged raw submission {submission.submission_ref}",
+        payload={
+            "submission_ref": submission.submission_ref,
+            "correlation_id": _submission_correlation_id(submission),
+            "submission_input_id": submission_input_id,
+            "source": source,
+            "submission_type": submission_type,
+        },
+        user=snapshot["created_by"],
+    )
+
+    return submission_input_id
+
+
+def _insert_ocr_result(
+    db: Session,
+    *,
+    submission_input_id: int,
+    raw_ocr_text: str | None = None,
+    cleaned_ocr_text: str | None = None,
+    extracted_json: dict[str, Any] | None = None,
+    ocr_confidence: float | None = None,
+    parser_version: str | None = None,
+    review_status: str | None = None,
+) -> int | None:
+    if not any(
+        value not in (None, "", {})
+        for value in (
+            raw_ocr_text,
+            cleaned_ocr_text,
+            extracted_json,
+            ocr_confidence,
+            parser_version,
+            review_status,
+        )
+    ):
+        return None
+
+    media_id = _latest_media_file_id(db, submission_input_id)
+    normalized_review_status = (review_status or "PENDING").strip().upper()
+    if normalized_review_status not in {"PENDING", "APPROVED", "REJECTED", "CORRECTED"}:
+        normalized_review_status = "PENDING"
+
+    return db.execute(
+        text(
+            f"""
+            INSERT INTO {_table("ocr_results")} (
+                submission_id,
+                media_id,
+                raw_ocr_text,
+                cleaned_ocr_text,
+                extracted_json,
+                ocr_confidence,
+                parser_version,
+                review_status,
+                created_at
+            ) VALUES (
+                :submission_id,
+                :media_id,
+                :raw_ocr_text,
+                :cleaned_ocr_text,
+                CAST(:extracted_json AS jsonb),
+                :ocr_confidence,
+                :parser_version,
+                :review_status,
+                now()
+            )
+            RETURNING ocr_id
+            """
+        ),
+        {
+            "submission_id": submission_input_id,
+            "media_id": media_id,
+            "raw_ocr_text": raw_ocr_text,
+            "cleaned_ocr_text": cleaned_ocr_text,
+            "extracted_json": json.dumps(extracted_json or {}, ensure_ascii=False, sort_keys=True, default=str),
+            "ocr_confidence": ocr_confidence,
+            "parser_version": parser_version,
+            "review_status": normalized_review_status,
+        },
+    ).scalar_one()
+
+
+def persist_structured_submission(
+    db: Session,
+    *,
+    submission: Submission,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+    current_user: User | None,
+) -> int | None:
     payload = _dict_or_empty(submission.payload)
     session_data = get_session_payload(payload)
     analysis_result = _dict_or_empty(submission.analysis_result)
@@ -491,7 +802,7 @@ def persist_structured_submission(
     tire_set = _clean_blank(session_data.get("tire_set"))
     duration_min = _to_int(session_data.get("duration_min"))
     raw_text = submission.raw_text
-    created_by = _created_by_value(current_user)
+    created_by = _created_by_value(current_user) if current_user is not None else "make-webhook"
 
     tire_inventory = _dict_or_empty(session_data.get("tire_inventory"))
     if tire_set or tire_inventory:
@@ -518,6 +829,7 @@ def persist_structured_submission(
 
     raw_payload_snapshot = {
         "submission_ref": submission.submission_ref,
+        "correlation_id": _submission_correlation_id(submission),
         "event_id": str(event.id),
         "event_name": event.name,
         "run_group_id": str(run_group.id),
@@ -529,6 +841,7 @@ def persist_structured_submission(
         "image_url": submission.image_url,
         "data": session_data,
     }
+    submission_input_id = _find_submission_input_id(db, submission.submission_ref)
 
     id_seance = db.execute(
         text(
@@ -593,29 +906,32 @@ def persist_structured_submission(
         },
     ).scalar_one()
 
-    submission_input_id = _insert_submission_input(
-        db,
-        id_seance=id_seance,
-        submission_type=submission_type,
-        source="pwa",
-        raw_text=raw_text,
-        raw_payload=raw_payload_snapshot,
-        confidence=confidence,
-        created_by=created_by,
-    )
-
-    db.execute(
-        text(
-            f"""
-            UPDATE {_table("submission_inputs")}
-            SET id_seance = :id_seance,
-                validation_status = 'APPLIED',
-                validation_message = NULL
-            WHERE submission_id = :submission_id
-            """
-        ),
-        {"id_seance": id_seance, "submission_id": submission_input_id},
-    )
+    if submission_input_id is None:
+        submission_input_id = _insert_submission_input(
+            db,
+            id_seance=id_seance,
+            submission_type=submission_type,
+            source="make",
+            raw_text=raw_text,
+            raw_payload=raw_payload_snapshot,
+            confidence=confidence,
+            created_by=created_by,
+            validation_status="APPLIED",
+            validation_message=None,
+        )
+    else:
+        db.execute(
+            text(
+                f"""
+                UPDATE {_table("submission_inputs")}
+                SET id_seance = :id_seance,
+                    validation_status = 'APPLIED',
+                    validation_message = NULL
+                WHERE submission_id = :submission_id
+                """
+            ),
+            {"id_seance": id_seance, "submission_id": submission_input_id},
+        )
 
     pressures = _dict_or_empty(session_data.get("pressures"))
     if pressures:
@@ -717,7 +1033,7 @@ def persist_structured_submission(
             "corner_weight_rr": _to_float(alignment.get("corner_weight_rr")),
             "cross_weight_pct": _to_float(alignment.get("cross_weight_pct")),
             "rake_mm": _to_float(alignment.get("rake_mm")),
-            "wheelbase_mm": _to_float(alignment.get("wheelbase_mm")),
+            "wheelbase_mm": _to_positive_float(alignment.get("wheelbase_mm"), "wheelbase_mm"),
         }
         _upsert_single_row(
             db,
@@ -768,7 +1084,41 @@ def persist_structured_submission(
             values=tire_temperature_values,
         )
 
-    if submission.image_url:
+    if tire_set and db.get(TireInventory, tire_set) is not None:
+        db.execute(
+            text(
+                f"""
+                INSERT INTO {_table("tire_history")} (
+                    tire_id,
+                    id_seance,
+                    usage_date,
+                    track,
+                    duration_min,
+                    created_at
+                ) VALUES (
+                    :tire_id,
+                    :id_seance,
+                    :usage_date,
+                    :track,
+                    :duration_min,
+                    now()
+                )
+                ON CONFLICT (tire_id, id_seance) DO UPDATE
+                SET usage_date = COALESCE(EXCLUDED.usage_date, {_table("tire_history")}.usage_date),
+                    track = COALESCE(EXCLUDED.track, {_table("tire_history")}.track),
+                    duration_min = COALESCE(EXCLUDED.duration_min, {_table("tire_history")}.duration_min)
+                """
+            ),
+            {
+                "tire_id": tire_set,
+                "id_seance": id_seance,
+                "usage_date": session_date,
+                "track": track_name,
+                "duration_min": duration_min,
+            },
+        )
+
+    if submission.image_url and not _media_file_exists(db, submission_input_id):
         _insert_media_file(
             db,
             submission_id=submission_input_id,
@@ -776,3 +1126,19 @@ def persist_structured_submission(
             image_url=submission.image_url,
             uploaded_by=created_by,
         )
+
+    _write_audit_log(
+        db,
+        action="submission.apply.structured",
+        status="SUCCESS",
+        message=f"Structured submission applied for {submission.submission_ref}",
+        payload={
+            "submission_ref": submission.submission_ref,
+            "correlation_id": _submission_correlation_id(submission),
+            "submission_input_id": submission_input_id,
+            "id_seance": id_seance,
+        },
+        user=created_by,
+    )
+
+    return submission_input_id

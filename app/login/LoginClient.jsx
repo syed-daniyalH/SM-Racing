@@ -198,7 +198,7 @@ export default function LoginContent() {
 
           <div className="login-footer">
             <p className="footer-text">
-              Don't have an account?{" "}
+              Don&apos;t have an account?{" "}
               <button
                 type="button"
                 onClick={() => router.push("/signup")}

@@ -1,7 +1,7 @@
 """move suspension settings to four-corner fields
 
 Revision ID: 0004_sm2_susp_adj
-Revises: 0003_sm2_prod_schema
+Revises: 0002_sm2_racing_schema
 Create Date: 2026-04-21 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "0004_sm2_susp_adj"
-down_revision = "0003_sm2_prod_schema"
+down_revision = "0002_sm2_racing_schema"
 branch_labels = None
 depends_on = None
 

@@ -21,24 +21,43 @@ const unwrapSubmissionList = (data) =>
 
 const buildApiError = (error, fallbackMessage) => ({
   status: error.response?.status,
+  code:
+    (!Array.isArray(error.response?.data?.detail) &&
+      error.response?.data?.detail &&
+      typeof error.response.data.detail === "object" &&
+      (error.response.data.detail.code || error.response.data.detail.error_code)) ||
+    error.response?.data?.code ||
+    null,
   message:
     error.response?.data?.message ||
+    (!Array.isArray(error.response?.data?.detail) &&
+      error.response?.data?.detail &&
+      typeof error.response.data.detail === "object" &&
+      (error.response.data.detail.message || error.response.data.detail.msg)) ||
     error.response?.data?.error ||
     (Array.isArray(error.response?.data?.detail)
       ? error.response.data.detail
           .map((item) => item?.msg || item?.message || JSON.stringify(item))
           .join("; ")
-      : error.response?.data?.detail) ||
+      : typeof error.response?.data?.detail === "string"
+        ? error.response.data.detail
+        : null) ||
     error.message ||
     fallbackMessage,
   error:
     error.response?.data?.error ||
     error.response?.data?.message ||
+    (!Array.isArray(error.response?.data?.detail) &&
+      error.response?.data?.detail &&
+      typeof error.response.data.detail === "object" &&
+      (error.response.data.detail.message || error.response.data.detail.msg)) ||
     (Array.isArray(error.response?.data?.detail)
       ? error.response.data.detail
           .map((item) => item?.msg || item?.message || JSON.stringify(item))
           .join("; ")
-      : error.response?.data?.detail) ||
+      : typeof error.response?.data?.detail === "string"
+        ? error.response.data.detail
+        : null) ||
     error.message ||
     fallbackMessage,
   detail: error.response?.data?.detail,
@@ -51,6 +70,7 @@ const buildSubmissionPayload = async (submissionData) => {
     submissionData?.run_group_id || submissionData?.runGroupId || null;
   const rawText =
     submissionData?.raw_text ?? submissionData?.rawText ?? null;
+  const imageUrl = submissionData?.image_url || submissionData?.image || null;
 
   if (!runGroupId && legacyEventId) {
     const runGroupResponse = await getRunGroupByEvent(legacyEventId);
@@ -58,36 +78,48 @@ const buildSubmissionPayload = async (submissionData) => {
     runGroupId = runGroup?.id || runGroup?._id || null;
   }
 
-  const payload = submissionData?.payload || submissionData?.data || {};
-  const payloadData = payload?.data || {};
+  const nestedPayload = submissionData?.payload || submissionData?.data || {};
+  const payloadData = nestedPayload?.data || {};
+  const correlationId =
+    submissionData?.correlation_id ||
+    submissionData?.correlationId ||
+    nestedPayload?.correlation_id ||
+    nestedPayload?.correlationId ||
+    generateUUID();
+  const sessionId =
+    submissionData?.session_id ||
+    submissionData?.sessionId ||
+    submissionData?.submission_ref ||
+    submissionData?.submissionId ||
+    submissionData?.submission_id ||
+    nestedPayload?.session_id ||
+    nestedPayload?.sessionId ||
+    payloadData?.session_id ||
+    payloadData?.sessionId ||
+    generateUUID();
 
-  return {
-    submission_ref:
-      submissionData?.submission_ref ||
-      submissionData?.submissionId ||
-      submissionData?.submission_id ||
-      generateUUID(),
+  const payload = {
+    submission_ref: sessionId,
+    correlation_id: correlationId,
     event_id: legacyEventId,
     run_group_id: runGroupId,
     driver_id:
       submissionData?.driver_id ||
       submissionData?.driverId ||
-      payload?.driver_id ||
-      payload?.driverId ||
+      nestedPayload?.driver_id ||
+      nestedPayload?.driverId ||
       payloadData?.driver_id ||
       payloadData?.driverId ||
       null,
     vehicle_id:
       submissionData?.vehicle_id ||
       submissionData?.vehicleId ||
-      payload?.vehicle_id ||
-      payload?.vehicleId ||
+      nestedPayload?.vehicle_id ||
+      nestedPayload?.vehicleId ||
       payloadData?.vehicle_id ||
       payloadData?.vehicleId ||
       null,
-    raw_text: rawText,
-    image_url: submissionData?.image_url || submissionData?.image || null,
-    payload,
+    payload: nestedPayload,
     analysis_result:
       submissionData?.analysis_result ||
       submissionData?.analysisResult ||
@@ -97,6 +129,16 @@ const buildSubmissionPayload = async (submissionData) => {
         run_group: submissionData?.runGroup || submissionData?.run_group || null,
       },
   };
+
+  if (typeof rawText === "string" && rawText.trim()) {
+    payload.raw_text = rawText;
+  }
+
+  if (imageUrl) {
+    payload.image_url = imageUrl;
+  }
+
+  return payload;
 };
 
 export const createSubmission = async (submissionData) => {

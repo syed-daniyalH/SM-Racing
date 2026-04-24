@@ -19,3 +19,12 @@ class RunGroupCode(str, Enum):
     YELLOW = "YELLOW"
     GREEN = "GREEN"
 
+
+class TireInventoryStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    DISCARDED = "DISCARDED"
+
+
+class SeanceStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"

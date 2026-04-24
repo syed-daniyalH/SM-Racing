@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
@@ -747,7 +748,14 @@ const AttachmentCard = ({ attachment }) => {
       </div>
 
       {isImage ? (
-        <img className="submission-detail-media" src={attachment.url} alt={attachment.name} />
+        <Image
+          className="submission-detail-media"
+          src={attachment.url}
+          alt={attachment.name}
+          width={1200}
+          height={800}
+          unoptimized
+        />
       ) : isAudio ? (
         <audio controls className="submission-detail-audio" src={attachment.url} />
       ) : (
@@ -810,7 +818,7 @@ export default function SubmissionDetailScreen({
     setIsEditing(false);
     setIsDirty(false);
     setNotice(null);
-  }, [record?.id, record?.updatedAt, record?.submittedAt]);
+  }, [record]);
 
   const status = useMemo(() => normalizeStatus(record), [record]);
   const attachmentList = useMemo(
@@ -1347,10 +1355,13 @@ export default function SubmissionDetailScreen({
                   <div className="submission-raw-card submission-raw-image-card">
                     <div className="submission-raw-card-title">media_preview</div>
                     {record.imageUrl ? (
-                      <img
+                      <Image
                         className="submission-proof-image submission-detail-preview-image"
                         src={record.imageUrl}
                         alt="Submission media preview"
+                        width={1200}
+                        height={800}
+                        unoptimized
                       />
                     ) : (
                       <div className="submission-image-empty">

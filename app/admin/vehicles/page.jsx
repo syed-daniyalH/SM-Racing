@@ -86,6 +86,51 @@ function VehicleDriverSelect({
       onChange={(_, nextValue) => onChange(nextValue?.id || "")}
       isOptionEqualToValue={(option, currentValue) => option.id === currentValue.id}
       getOptionLabel={(option) => option.label || ""}
+      slotProps={{
+        popper: {
+          sx: {
+            zIndex: 2200,
+          },
+        },
+        paper: {
+          elevation: 0,
+          sx: {
+            mt: 1,
+            borderRadius: "12px",
+            overflow: "hidden",
+            backgroundColor: "#111111",
+            color: "#ffffff",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.42)",
+          },
+        },
+        listbox: {
+          sx: {
+            p: 0.5,
+            bgcolor: "#111111",
+            color: "#ffffff",
+            "& .MuiAutocomplete-option": {
+              alignItems: "flex-start",
+              gap: "0.1rem",
+              minHeight: "auto",
+              px: 1.25,
+              py: 1,
+              borderRadius: "10px",
+              mx: 0.25,
+              my: 0.25,
+              "&:hover": {
+                backgroundColor: "rgba(255, 107, 53, 0.1)",
+              },
+              "&.Mui-focused": {
+                backgroundColor: "rgba(255, 107, 53, 0.1)",
+              },
+              "&[aria-selected='true']": {
+                backgroundColor: "rgba(255, 107, 53, 0.16) !important",
+              },
+            },
+          },
+        },
+      }}
       renderOption={(props, option) => (
         <li {...props} key={option.id}>
           <div className="fleet-cell-stack" style={{ padding: "0.35rem 0" }}>
@@ -150,6 +195,7 @@ function VehicleDrawerContent({
   driverMap,
 }) {
   const readOnly = mode === "view";
+  const isCreateMode = mode === "create";
   const effectiveStatus = readOnly ? vehicle?.isActive !== false : formValues.status !== "archived";
 
   const onFieldChange = (field, value) => {
@@ -165,19 +211,25 @@ function VehicleDrawerContent({
       ? driverMap.get(String(vehicle.driverId))
       : null;
   const driverSummary = selectedDriver
-    ? `${getDriverDisplayName(selectedDriver) || getDriverFullName(selectedDriver)} · ${formatEntityId(
+    ? `${getDriverDisplayName(selectedDriver) || getDriverFullName(selectedDriver)} - ${formatEntityId(
         "DRV",
         selectedDriver.driver_id || selectedDriver.id,
       )}`
     : "No driver assigned";
+  const vehicleIdSummary = isCreateMode
+    ? "Assigned after save"
+    : vehicle?.vehicle_id || formatEntityId("VEH", vehicle?.id);
+  const createdUpdatedSummary = isCreateMode
+    ? "Created when the record is saved"
+    : `${formatDate(vehicle?.createdAt)} - ${formatDateTime(vehicle?.updatedAt)}`;
 
   return (
     <div className="fleet-page-section" style={{ gap: "1.15rem" }}>
       <div className="fleet-detail-grid">
         <div className="fleet-detail-card">
           <p className="fleet-detail-label">Vehicle ID</p>
-          <p className="fleet-detail-value fleet-mono" title={vehicle?.vehicle_id || vehicle?.id || ""}>
-            {vehicle?.vehicle_id || formatEntityId("VEH", vehicle?.id)}
+          <p className="fleet-detail-value fleet-mono" title={vehicleIdSummary}>
+            {vehicleIdSummary}
           </p>
         </div>
         <div className="fleet-detail-card">
@@ -196,7 +248,7 @@ function VehicleDrawerContent({
         <div className="fleet-detail-card">
           <p className="fleet-detail-label">Created / Updated</p>
           <p className="fleet-detail-value">
-            {formatDate(vehicle?.createdAt)} · {formatDateTime(vehicle?.updatedAt)}
+            {createdUpdatedSummary}
           </p>
         </div>
       </div>
@@ -463,7 +515,7 @@ export default function VehiclesManagementPage() {
         return {
           id: driver.driver_id || driver.id,
           label: displayName,
-          sublabel: `${getDriverFullName(driver) || "No full name"} · ${formatEntityId("DRV", driver.driver_id || driver.id)}`,
+          sublabel: `${getDriverFullName(driver) || "No full name"} - ${formatEntityId("DRV", driver.driver_id || driver.id)}`,
           searchText: [
             displayName,
             getDriverFullName(driver),

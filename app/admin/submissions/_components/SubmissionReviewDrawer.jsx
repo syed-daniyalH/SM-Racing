@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import Image from "next/image";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import CloudSyncOutlinedIcon from "@mui/icons-material/CloudSyncOutlined";
@@ -375,10 +376,13 @@ export default function SubmissionReviewDrawer({
             <div className="submission-raw-card submission-raw-image-card">
               <div className="submission-raw-card-title">Proof Attachment</div>
               {record.imageUrl ? (
-                <img
+                <Image
                   className="submission-proof-image"
                   src={record.imageUrl}
                   alt="Submission proof"
+                  width={1200}
+                  height={800}
+                  unoptimized
                 />
               ) : (
                 <div className="submission-image-empty">

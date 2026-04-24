@@ -209,6 +209,7 @@ export const normalizeSubmission = (submission) => {
     id,
     _id: id,
     submissionId: submission.submission_ref || submission.submissionId || id,
+    correlationId: submission.correlation_id || submission.correlationId || null,
     eventId: submission.event_id || submission.eventId || event?.id || null,
     runGroup:
       runGroup?.normalized ||

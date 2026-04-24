@@ -435,9 +435,24 @@ def normalize_alignment_values(
     section: dict[str, Any] = payload_section if isinstance(payload_section, dict) else {}
     values: dict[str, Any] = {}
 
+    def _first_positive_number(*candidates: Any) -> Any | None:
+        for candidate in candidates:
+            if candidate in (None, ""):
+                continue
+            try:
+                if float(candidate) > 0:
+                    return candidate
+            except (TypeError, ValueError):
+                continue
+        return None
+
     for column in target_columns:
         if column == "wheelbase_mm":
-            values[column] = source_row.get(column) or wheelbase_mm or section.get(column)
+            values[column] = _first_positive_number(
+                source_row.get(column),
+                wheelbase_mm,
+                section.get(column),
+            )
         else:
             values[column] = source_row.get(column)
             if values[column] in (None, ""):

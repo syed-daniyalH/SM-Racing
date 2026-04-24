@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.enums import SeanceStatus, TireInventoryStatus
 from app.models.driver import Driver
 from app.models.event import Event
 from app.models.structured_notes import (
@@ -40,9 +41,6 @@ STRUCTURED_HINT_KEYS = {
     "tire_temperatures",
     "tire_inventory",
 }
-
-ALLOWED_TIRE_STATUSES = {"ACTIVE", "DISCARDED"}
-
 
 class StructuredSubmissionError(ValueError):
     pass
@@ -134,16 +132,25 @@ def _parse_decimal(value: Any, field_name: str) -> Decimal | None:
         raise StructuredSubmissionError(f"{field_name} must be a valid number") from None
 
 
-def _parse_tire_status(value: Any) -> str | None:
+def _parse_positive_decimal(value: Any, field_name: str) -> Decimal | None:
+    parsed = _parse_decimal(value, field_name)
+    if parsed is None:
+        return None
+    if parsed <= 0:
+        raise StructuredSubmissionError(f"{field_name} must be greater than 0")
+    return parsed
+
+
+def _parse_tire_status(value: Any) -> TireInventoryStatus | None:
     cleaned = _clean_text(value)
     if not cleaned:
         return None  # preserve the existing status when the field is blank
 
     normalized = cleaned.upper()
-    if normalized not in ALLOWED_TIRE_STATUSES:
-        raise StructuredSubmissionError("tire_inventory.status must be ACTIVE or DISCARDED")
-
-    return normalized
+    try:
+        return TireInventoryStatus[normalized]
+    except KeyError as exc:
+        raise StructuredSubmissionError("tire_inventory.status must be ACTIVE or DISCARDED") from exc
 
 
 def _set_if_not_none(instance: Any, attribute: str, value: Any) -> None:
@@ -213,7 +220,7 @@ def save_structured_submission(
     session_type = _clean_text(payload.get("session_type")) or "Practice"
     session_number = _parse_int(payload.get("session_number"), "session_number", default=1)
     duration_min = _parse_int(payload.get("duration_min"), "duration_min", default=30)
-    wheelbase_mm = _parse_decimal(payload.get("wheelbase_mm"), "wheelbase_mm")
+    wheelbase_mm = _parse_positive_decimal(payload.get("wheelbase_mm"), "wheelbase_mm")
     notes = _clean_text(submission.raw_text)
     created_by = _get_actor_label(current_user)
 
@@ -288,7 +295,7 @@ def save_structured_submission(
             "tire_set": tire_set,
             "notes": notes,
             "created_by": created_by,
-            "status": "ACTIVE",
+            "status": SeanceStatus.ACTIVE,
         },
     )
     db.flush()

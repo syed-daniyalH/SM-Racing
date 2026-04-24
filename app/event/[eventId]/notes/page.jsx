@@ -9,6 +9,7 @@ import VoiceInputControl from "../../../components/Common/VoiceInputControl";
 import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { createSubmission } from "../../../utils/submissionApi";
+import { getTrackCatalog } from "../../../utils/trackCatalogApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
 import { getEventSubmissionState } from "../../../utils/eventSchedule";
@@ -28,9 +29,95 @@ const getCurrentLocalTimeValue = () => {
   return `${hours}:${minutes}`;
 };
 
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,119}$/;
+const TIRE_INVENTORY_STATUS_OPTIONS = [
+  { id: "ACTIVE", label: "Active" },
+  { id: "DISCARDED", label: "Discarded" },
+];
+
+const isValidDateValue = (value) => {
+  const cleaned = String(value || "").trim();
+  if (!DATE_PATTERN.test(cleaned)) {
+    return false;
+  }
+
+  const [year, month, day] = cleaned.split("-").map((part) => Number(part));
+  if (![year, month, day].every((part) => Number.isInteger(part))) {
+    return false;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  return (
+    parsed.getFullYear() === year &&
+    parsed.getMonth() === month - 1 &&
+    parsed.getDate() === day
+  );
+};
+
+const isValidTimeValue = (value) => TIME_PATTERN.test(String(value || "").trim());
+
+const isValidSessionId = (value) => SESSION_ID_PATTERN.test(String(value || "").trim());
+
+const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicleOptions }) => {
+  const errors = {};
+  const validDriverIds = new Set(
+    (driverOptions || [])
+      .map((driver) => String(driver?.id || "").trim())
+      .filter(Boolean),
+  );
+  const validVehicleIds = new Set(
+    (vehicleOptions || [])
+      .map((vehicle) => String(vehicle?.id || "").trim())
+      .filter(Boolean),
+  );
+
+  if (!isValidDateValue(formState.date)) {
+    errors.date = "Please enter a valid date.";
+  }
+
+  if (!isValidTimeValue(formState.time)) {
+    errors.time = "Please enter a valid time.";
+  }
+
+  if (!String(formState.session_type || "").trim()) {
+    errors.session_type = "Session type is required.";
+  }
+
+  if (!isValidSessionId(formState.session_id)) {
+    errors.session_id = "Session ID is required and must follow the correct format.";
+  }
+
+  const wheelbaseValue = String(formState.wheelbase_mm ?? "").trim();
+  if (wheelbaseValue) {
+    const parsedWheelbase = Number(wheelbaseValue);
+    if (!Number.isFinite(parsedWheelbase) || parsedWheelbase <= 0) {
+      errors.wheelbase_mm = "Wheelbase must be greater than 0.";
+    }
+  }
+
+  if (!String(trackValue || "").trim()) {
+    errors.track = "Please select a track.";
+  }
+
+  const driverId = String(formState.driver_id || "").trim();
+  if (!driverId || !validDriverIds.has(driverId)) {
+    errors.driver_id = "Please select a driver.";
+  }
+
+  const vehicleId = String(formState.vehicle_id || "").trim();
+  if (!vehicleId || !validVehicleIds.has(vehicleId)) {
+    errors.vehicle_id = "Please select a vehicle.";
+  }
+
+  return errors;
+};
+
 const createBaseFormState = () => ({
   date: "",
   time: getCurrentLocalTimeValue(),
+  session_id: generateUUID(),
   track: "",
   driver_id: "",
   vehicle_id: "",
@@ -48,7 +135,6 @@ const createBaseFormState = () => ({
 
 const createDetailFormState = () => ({
   ...createBaseFormState(),
-  wheelbase_mm: 0,
   suspension: {
     rebound_fl: "",
     rebound_fr: "",
@@ -102,7 +188,7 @@ const createDetailFormState = () => ({
     purchase_date: "",
     heat_cycles: "",
     track_time_min: "",
-    status: "",
+    status: "ACTIVE",
   },
 });
 
@@ -138,6 +224,7 @@ export default function NotesSubmission() {
   const [activeTab, setActiveTab] = useState("quick"); // 'quick' | 'detail'
   const [eventRunGroup, setEventRunGroup] = useState("");
   const [trackSelection, setTrackSelection] = useState(""); // dropdown value; '__OTHER__' => manual entry
+  const [trackCatalog, setTrackCatalog] = useState([]);
   const [driverOptions, setDriverOptions] = useState(() => DRIVER_OPTIONS);
   const [vehicleOptions, setVehicleOptions] = useState(() => VEHICLE_OPTIONS);
 
@@ -150,10 +237,14 @@ export default function NotesSubmission() {
   const [detailAction, setDetailAction] = useState("ADD_SEANCE");
   const [quickConfidence, setQuickConfidence] = useState(0.85);
   const [detailConfidence, setDetailConfidence] = useState(0.85);
+  const [detailDraftStatus, setDetailDraftStatus] = useState("idle");
+  const [detailDraftReady, setDetailDraftReady] = useState(false);
   const [quickImage, setQuickImage] = useState(null);
   const [detailImage, setDetailImage] = useState(null);
   const [quickVoiceInputUsed, setQuickVoiceInputUsed] = useState(false);
   const quickRawTextRef = useRef(null);
+  const detailDraftHydratedRef = useRef(false);
+  const detailDraftSaveTimeoutRef = useRef(null);
 
   const [quickForm, setQuickForm] = useState(() => createBaseFormState());
 
@@ -163,6 +254,47 @@ export default function NotesSubmission() {
   const [submissionStatus, setSubmissionStatus] = useState("pending"); // sent, pending, failed
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldTouched, setFieldTouched] = useState({ quick: {}, detail: {} });
+  const [validationAttempted, setValidationAttempted] = useState({
+    quick: false,
+    detail: false,
+  });
+  const currentUserStorageKey = useMemo(() => {
+    const resolveUserKey = (candidate) =>
+      candidate?.id ||
+      candidate?._id ||
+      candidate?.userId ||
+      candidate?.email ||
+      candidate?.user?.id ||
+      candidate?.user?._id ||
+      candidate?.user?.userId ||
+      candidate?.user?.email ||
+      null;
+
+    if (typeof window !== "undefined") {
+      try {
+        const storedUser = window.localStorage.getItem("sm2_user");
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser);
+          const storedKey = resolveUserKey(parsedUser);
+          if (storedKey) {
+            return String(storedKey);
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to read stored user for draft key:", error);
+      }
+    }
+
+    return resolveUserKey(user) || "anonymous";
+  }, [user]);
+  const detailDraftStorageKey = useMemo(() => {
+    if (!eventId || !currentUserStorageKey) {
+      return null;
+    }
+
+    return `sm2:submission-draft:${eventId}:${currentUserStorageKey}`;
+  }, [currentUserStorageKey, eventId]);
 
   useEffect(() => {
     // Load event from API
@@ -247,6 +379,261 @@ export default function NotesSubmission() {
     };
   }, []);
 
+  const clearDetailDraft = () => {
+    if (!detailDraftStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem(detailDraftStorageKey);
+    } catch (error) {
+      console.warn("Failed to clear detail draft:", error);
+    }
+
+    if (detailDraftSaveTimeoutRef.current) {
+      window.clearTimeout(detailDraftSaveTimeoutRef.current);
+      detailDraftSaveTimeoutRef.current = null;
+    }
+
+    detailDraftHydratedRef.current = false;
+    setDetailDraftReady(false);
+    setDetailDraftStatus("idle");
+  };
+
+  const persistDetailDraftSnapshot = (nextDetailForm) => {
+    if (
+      activeTab !== "detail" ||
+      !detailDraftStorageKey ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    if (detailDraftSaveTimeoutRef.current) {
+      window.clearTimeout(detailDraftSaveTimeoutRef.current);
+    }
+
+    setDetailDraftStatus("saving");
+    detailDraftSaveTimeoutRef.current = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          detailDraftStorageKey,
+          JSON.stringify({
+            detailForm: nextDetailForm,
+            pressureTypeDetail,
+            detailAction,
+            detailConfidence,
+            savedAt: new Date().toISOString(),
+          }),
+        );
+        detailDraftHydratedRef.current = true;
+        setDetailDraftReady(true);
+        setDetailDraftStatus("saved");
+      } catch (error) {
+        console.warn("Failed to save detail draft:", error);
+      }
+    }, 150);
+  };
+
+  useEffect(() => {
+    detailDraftHydratedRef.current = false;
+    setDetailDraftReady(false);
+
+    if (!detailDraftStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedDraft = window.localStorage.getItem(detailDraftStorageKey);
+      if (!storedDraft) {
+        detailDraftHydratedRef.current = true;
+        setDetailDraftReady(true);
+        setDetailDraftStatus("idle");
+        return;
+      }
+
+      const parsedDraft = JSON.parse(storedDraft);
+      if (!parsedDraft || typeof parsedDraft !== "object") {
+        detailDraftHydratedRef.current = true;
+        setDetailDraftReady(true);
+        setDetailDraftStatus("idle");
+        return;
+      }
+
+      if (parsedDraft.detailForm && typeof parsedDraft.detailForm === "object") {
+        setDetailForm((prev) => ({
+          ...prev,
+          ...parsedDraft.detailForm,
+          pressures: {
+            ...prev.pressures,
+            ...parsedDraft.detailForm.pressures,
+            cold: {
+              ...prev.pressures.cold,
+              ...parsedDraft.detailForm.pressures?.cold,
+            },
+            hot: {
+              ...prev.pressures.hot,
+              ...parsedDraft.detailForm.pressures?.hot,
+            },
+          },
+          suspension: {
+            ...prev.suspension,
+            ...parsedDraft.detailForm.suspension,
+          },
+          alignment: {
+            ...prev.alignment,
+            ...parsedDraft.detailForm.alignment,
+          },
+          tire_temperatures: {
+            ...prev.tire_temperatures,
+            ...parsedDraft.detailForm.tire_temperatures,
+          },
+          tire_inventory: {
+            ...prev.tire_inventory,
+            ...parsedDraft.detailForm.tire_inventory,
+          },
+        }));
+      }
+
+      if (typeof parsedDraft.trackSelection === "string") {
+        setTrackSelection(parsedDraft.trackSelection);
+      } else if (parsedDraft.detailForm?.track) {
+        setTrackSelection(
+          parsedDraft.detailForm.track === event?.track
+            ? parsedDraft.detailForm.track
+            : "__OTHER__",
+        );
+      }
+      if (typeof parsedDraft.pressureTypeDetail === "string") {
+        setPressureTypeDetail(parsedDraft.pressureTypeDetail);
+      }
+      if (typeof parsedDraft.detailAction === "string") {
+        setDetailAction(parsedDraft.detailAction);
+      }
+      if (typeof parsedDraft.detailConfidence === "number") {
+        setDetailConfidence(parsedDraft.detailConfidence);
+      }
+
+      detailDraftHydratedRef.current = true;
+      setDetailDraftReady(true);
+      setDetailDraftStatus("restored");
+    } catch (error) {
+      console.warn("Failed to load detail draft:", error);
+      detailDraftHydratedRef.current = true;
+      setDetailDraftReady(true);
+      setDetailDraftStatus("idle");
+    }
+  }, [detailDraftStorageKey, event?.track]);
+
+  useEffect(() => {
+    if (
+      !detailDraftStorageKey ||
+      typeof window === "undefined" ||
+      currentUserStorageKey === "anonymous"
+    ) {
+      return;
+    }
+
+    const anonymousDraftKey = `sm2:submission-draft:${eventId}:anonymous`;
+
+    try {
+      const currentDraft = window.localStorage.getItem(detailDraftStorageKey);
+      if (currentDraft) {
+        return;
+      }
+
+      const anonymousDraft = window.localStorage.getItem(anonymousDraftKey);
+      if (!anonymousDraft) {
+        return;
+      }
+
+      window.localStorage.setItem(detailDraftStorageKey, anonymousDraft);
+      detailDraftHydratedRef.current = true;
+      setDetailDraftReady(true);
+      setDetailDraftStatus("restored");
+    } catch (error) {
+      console.warn("Failed to migrate anonymous detail draft:", error);
+    }
+  }, [currentUserStorageKey, detailDraftStorageKey, eventId]);
+
+  useEffect(() => {
+    if (detailDraftSaveTimeoutRef.current) {
+      window.clearTimeout(detailDraftSaveTimeoutRef.current);
+      detailDraftSaveTimeoutRef.current = null;
+    }
+
+    if (
+      activeTab !== "detail" ||
+      !detailDraftStorageKey ||
+      typeof window === "undefined" ||
+      !detailDraftHydratedRef.current ||
+      !detailDraftReady
+    ) {
+      return undefined;
+    }
+
+    setDetailDraftStatus("saving");
+    detailDraftSaveTimeoutRef.current = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          detailDraftStorageKey,
+          JSON.stringify({
+            detailForm,
+            trackSelection,
+            pressureTypeDetail,
+            detailAction,
+            detailConfidence,
+            savedAt: new Date().toISOString(),
+          }),
+        );
+        setDetailDraftStatus("saved");
+      } catch (error) {
+        console.warn("Failed to save detail draft:", error);
+      }
+    }, 800);
+
+    return () => {
+      if (detailDraftSaveTimeoutRef.current) {
+        window.clearTimeout(detailDraftSaveTimeoutRef.current);
+        detailDraftSaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    activeTab,
+    detailAction,
+    detailConfidence,
+    detailDraftStorageKey,
+    detailDraftReady,
+    detailForm,
+    pressureTypeDetail,
+    trackSelection,
+  ]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadTrackCatalog = async () => {
+      try {
+        const response = await getTrackCatalog();
+
+        if (!isActive) return;
+
+        setTrackCatalog(response.tracks || []);
+      } catch (error) {
+        console.warn("Falling back to the current event track only:", error);
+        if (!isActive) return;
+
+        setTrackCatalog([]);
+      }
+    };
+
+    loadTrackCatalog();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
   const submissionState = useMemo(() => getEventSubmissionState(event), [event]);
   const canSubmitNotes = submissionState.isOpen;
   const submissionUnavailableMessage = submissionState.isUpcoming
@@ -274,20 +661,32 @@ export default function NotesSubmission() {
   };
 
   const updateDetailForm = (key, value) => {
-    setDetailForm((prev) => ({ ...prev, [key]: value }));
+    setDetailForm((prev) => {
+      const next = { ...prev, [key]: value };
+      persistDetailDraftSnapshot(next);
+      return next;
+    });
   };
 
   const updatePressure = (setFn, type, corner, value) => {
-    setFn((prev) => ({
-      ...prev,
-      pressures: {
-        ...prev.pressures,
-        [type]: {
-          ...prev.pressures[type],
-          [corner]: value,
+    setFn((prev) => {
+      const next = {
+        ...prev,
+        pressures: {
+          ...prev.pressures,
+          [type]: {
+            ...prev.pressures[type],
+            [corner]: value,
+          },
         },
-      },
-    }));
+      };
+
+      if (!isQuickTab) {
+        persistDetailDraftSnapshot(next);
+      }
+
+      return next;
+    });
   };
 
   const updateNested = (setFn, path, value) => {
@@ -300,6 +699,9 @@ export default function NotesSubmission() {
         cursor = cursor[path[i]];
       }
       cursor[path[path.length - 1]] = value;
+      if (!isQuickTab) {
+        persistDetailDraftSnapshot(updated);
+      }
       return updated;
     });
   };
@@ -317,9 +719,10 @@ export default function NotesSubmission() {
     reader.readAsDataURL(file);
   };
 
-  const buildData = (formState, pressureType) => ({
+  const buildData = (formState) => ({
     date: formState.date || undefined,
     time: formState.time || undefined,
+    session_id: formState.session_id || undefined,
     track: formState.track || undefined,
     driver_id: formState.driver_id || undefined,
     vehicle_id: formState.vehicle_id || undefined,
@@ -330,11 +733,17 @@ export default function NotesSubmission() {
     wheelbase_mm: toNumberOrUndefined(formState.wheelbase_mm),
     pressures: {
       unit: formState.pressures?.unit || "psi",
-      [pressureType]: {
-        fl: toNumberOrUndefined(formState.pressures?.[pressureType]?.fl),
-        fr: toNumberOrUndefined(formState.pressures?.[pressureType]?.fr),
-        rl: toNumberOrUndefined(formState.pressures?.[pressureType]?.rl),
-        rr: toNumberOrUndefined(formState.pressures?.[pressureType]?.rr),
+      cold: {
+        fl: toNumberOrUndefined(formState.pressures?.cold?.fl),
+        fr: toNumberOrUndefined(formState.pressures?.cold?.fr),
+        rl: toNumberOrUndefined(formState.pressures?.cold?.rl),
+        rr: toNumberOrUndefined(formState.pressures?.cold?.rr),
+      },
+      hot: {
+        fl: toNumberOrUndefined(formState.pressures?.hot?.fl),
+        fr: toNumberOrUndefined(formState.pressures?.hot?.fr),
+        rl: toNumberOrUndefined(formState.pressures?.hot?.rl),
+        rr: toNumberOrUndefined(formState.pressures?.hot?.rr),
       },
     },
   });
@@ -418,52 +827,84 @@ export default function NotesSubmission() {
       return;
     }
 
+    const isQuick = activeTab === "quick";
+    const tabKey = isQuick ? "quick" : "detail";
+    const formState = isQuick ? quickForm : detailForm;
+    const rawTextValue = isQuick ? quickRawText : null;
+    const imageValue = isQuick ? quickImage : null;
+    const actionValue = isQuick ? quickAction : detailAction;
+    const confidenceValue = isQuick ? quickConfidence : detailConfidence;
+    const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
+    const voiceInputUsed = isQuick ? quickVoiceInputUsed : undefined;
+    const submissionErrors = validateSubmissionFields({
+      formState,
+      trackValue,
+      driverOptions,
+      vehicleOptions: vehicleOptionsForDriver,
+    });
+
+    if (Object.keys(submissionErrors).length > 0) {
+      markCurrentTabRequiredFieldsTouched();
+      setValidationAttempted((prev) => ({
+        ...prev,
+        [tabKey]: true,
+      }));
+      setSubmissionStatus("failed");
+      setError("Please fix the highlighted fields before submitting.");
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmissionStatus("pending");
     setError("");
 
-    const isQuick = activeTab === "quick";
-    const formState = isQuick ? quickForm : detailForm;
-    const rawTextValue = isQuick ? quickRawText : detailRawText;
-    const imageValue = isQuick ? quickImage : detailImage;
-    const actionValue = isQuick ? quickAction : detailAction;
-    const confidenceValue = isQuick ? quickConfidence : detailConfidence;
-    const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
-    const voiceInputUsed = isQuick ? quickVoiceInputUsed : false;
-
     try {
-      const submissionId = generateUUID();
+      const submissionId = String(formState.session_id || "").trim() || generateUUID();
+      const correlationId = generateUUID();
       const eventIdToSend = event?._id || event?.id || eventId;
 
       // Ensure track comes from dropdown unless "Other"
-      const normalizedFormState = { ...formState, track: trackValue };
+      const normalizedFormState = {
+        ...formState,
+        session_id: submissionId,
+        track: trackValue,
+      };
 
-      const data = buildData(normalizedFormState, pressureType);
+      const data = buildData(normalizedFormState);
       if (!isQuick) {
         Object.assign(data, buildDetailExtensions(normalizedFormState));
       }
 
       const payload = {
         submissionId,
+        session_id: submissionId,
+        correlation_id: correlationId,
         eventId: eventIdToSend,
         runGroup: eventRunGroup || undefined,
         action: actionValue,
         confidence: Number(confidenceValue),
         data,
-        raw_text: rawTextValue ?? undefined,
-        image_url: imageValue || undefined,
         analysis_result: {
           action: actionValue,
           confidence: Number(confidenceValue),
           run_group: eventRunGroup || undefined,
           submission_mode: isQuick ? "quick" : "detail",
-          voice_input_used: voiceInputUsed,
+          ...(isQuick && voiceInputUsed !== undefined
+            ? { voice_input_used: voiceInputUsed }
+            : {}),
         },
+        ...(isQuick
+          ? {
+              raw_text: rawTextValue ?? undefined,
+              image_url: imageValue || undefined,
+            }
+          : {}),
       };
 
       const response = await createSubmission(payload);
 
       if (response.success) {
+        clearDetailDraft();
         setSubmissionStatus("sent");
         setQuickRawText("");
         setDetailRawText("");
@@ -479,6 +920,8 @@ export default function NotesSubmission() {
         setQuickForm(createBaseFormState());
         setDetailForm(createDetailFormState());
         setError("");
+        setFieldTouched({ quick: {}, detail: {} });
+        setValidationAttempted({ quick: false, detail: false });
 
         setTimeout(() => {
           router.push(`/event/${eventId}/submissions`);
@@ -486,15 +929,19 @@ export default function NotesSubmission() {
       } else {
         setSubmissionStatus("failed");
         setError(
+          response?.submission?.errorMessage ||
           response.message ||
-            response.submission?.errorMessage ||
             "Failed to submit notes. Please try again.",
         );
       }
     } catch (error) {
       console.error("Submission error:", error);
       setSubmissionStatus("failed");
+      const structuredError = error?.code
+        ? `${error.code}: ${error?.message || error?.error || "Submission failed."}`
+        : null;
       const errorMessage =
+        structuredError ||
         error?.message ||
         error?.error ||
         "Failed to submit notes. Please try again.";
@@ -540,7 +987,36 @@ export default function NotesSubmission() {
     );
   }, [formState.driver_id, vehicleOptions]);
 
+  const trackOptionsForSelect = useMemo(() => {
+    const seen = new Set();
+    const nextOptions = [];
+
+    const addTrack = (trackInput) => {
+      const normalizedId = String(
+        trackInput?.id || trackInput?.label || trackInput || "",
+      ).trim();
+      const normalizedLabel = String(
+        trackInput?.label || trackInput?.id || trackInput || "",
+      ).trim();
+
+      if (!normalizedId) return;
+
+      const lookupKey = normalizedId.toLowerCase();
+      if (seen.has(lookupKey)) return;
+
+      seen.add(lookupKey);
+      nextOptions.push({ id: normalizedId, label: normalizedLabel });
+    };
+
+    TRACK_OPTIONS.forEach((track) => addTrack(track));
+    addTrack(event?.track);
+    trackCatalog.forEach((track) => addTrack(track));
+
+    return nextOptions;
+  }, [event?.track, trackCatalog]);
+
   const handleDriverChange = (driverId) => {
+    markActiveFieldTouched("driver_id");
     updateFormFn("driver_id", driverId);
 
     if (
@@ -551,6 +1027,7 @@ export default function NotesSubmission() {
         (vehicle) => vehicle.id === formState.vehicle_id,
       )
     ) {
+      markActiveFieldTouched("vehicle_id");
       updateFormFn("vehicle_id", "");
     }
   };
@@ -558,6 +1035,59 @@ export default function NotesSubmission() {
     trackSelection === "__OTHER__"
       ? formState.track
       : trackSelection || formState.track || event?.track || "";
+  const activeTabKey = isQuickTab ? "quick" : "detail";
+  const activeFieldTouched = fieldTouched[activeTabKey] || {};
+  const activeValidationAttempted = validationAttempted[activeTabKey] || false;
+  const validationErrors = useMemo(
+    () =>
+      validateSubmissionFields({
+        formState,
+        trackValue,
+        driverOptions,
+        vehicleOptions: vehicleOptionsForDriver,
+      }),
+    [driverOptions, formState, trackValue, vehicleOptionsForDriver],
+  );
+  const shouldShowFieldError = (field) =>
+    activeValidationAttempted || Boolean(activeFieldTouched[field]);
+  const getFieldError = (field) =>
+    shouldShowFieldError(field) ? validationErrors[field] || "" : "";
+  const getFieldClassName = (baseClassName, field) =>
+    `${baseClassName} ${getFieldError(field) ? "input-error" : ""}`.trim();
+  const renderFieldError = (field) =>
+    getFieldError(field) ? (
+      <p className="field-error" role="alert">
+        {getFieldError(field)}
+      </p>
+    ) : null;
+  const markActiveFieldTouched = (field) => {
+    setFieldTouched((prev) => ({
+      ...prev,
+      [activeTabKey]: {
+        ...(prev[activeTabKey] || {}),
+        [field]: true,
+      },
+    }));
+  };
+  const updateRequiredField = (field, value) => {
+    markActiveFieldTouched(field);
+    updateFormFn(field, value);
+  };
+  const markCurrentTabRequiredFieldsTouched = () => {
+    setFieldTouched((prev) => ({
+      ...prev,
+      [activeTabKey]: {
+        ...(prev[activeTabKey] || {}),
+        date: true,
+        time: true,
+        track: true,
+        session_id: true,
+        session_type: true,
+        driver_id: true,
+        vehicle_id: true,
+      },
+    }));
+  };
 
   if (!event) {
     return (
@@ -588,6 +1118,7 @@ export default function NotesSubmission() {
           <div className="tab-toggle">
             <button
               type="button"
+              data-testid="submission-tab-quick"
               className={`tab-button ${isQuickTab ? "active" : ""}`}
               onClick={() => setActiveTab("quick")}
             >
@@ -595,12 +1126,36 @@ export default function NotesSubmission() {
             </button>
             <button
               type="button"
+              data-testid="submission-tab-detail"
               className={`tab-button ${!isQuickTab ? "active" : ""}`}
               onClick={() => setActiveTab("detail")}
             >
               Detail Submission
             </button>
           </div>
+
+          {!isQuickTab && detailDraftStorageKey ? (
+            <p
+              style={{
+                marginTop: "0.75rem",
+                color:
+                  detailDraftStatus === "saving"
+                    ? "#f0b429"
+                    : detailDraftStatus === "saved" || detailDraftStatus === "restored"
+                      ? "#7ddc95"
+                      : "#9aa4b2",
+                fontSize: "0.85rem",
+              }}
+            >
+              {detailDraftStatus === "saving"
+                ? "Saving draft locally..."
+                : detailDraftStatus === "saved"
+                  ? "Draft saved locally on this device."
+                  : detailDraftStatus === "restored"
+                    ? "Draft restored from this device."
+                    : "Draft autosave is enabled for the detailed form."}
+            </p>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="notes-form">
             <div className="form-group">
@@ -609,59 +1164,96 @@ export default function NotesSubmission() {
                 <div>
                   <label className="form-label sub-label">Date</label>
                   <input
-                    className="input"
+                    data-testid="submission-date"
+                    className={getFieldClassName("input", "date")}
                     type="date"
                     value={formState.date}
-                    onChange={(e) => updateFormFn("date", e.target.value)}
+                    onChange={(e) => updateRequiredField("date", e.target.value)}
+                    onBlur={() => markActiveFieldTouched("date")}
+                    title="Use YYYY-MM-DD."
+                    aria-invalid={Boolean(getFieldError("date"))}
                   />
+                  {renderFieldError("date")}
                 </div>
                 <div>
                   <label className="form-label sub-label">Time</label>
                   <input
-                    className="input"
+                    data-testid="submission-time"
+                    className={getFieldClassName("input", "time")}
                     type="time"
+                    step="60"
                     value={formState.time}
-                    onChange={(e) => updateFormFn("time", e.target.value)}
+                    onChange={(e) => updateRequiredField("time", e.target.value)}
+                    onBlur={() => markActiveFieldTouched("time")}
+                    title="Use 24-hour HH:MM."
+                    aria-invalid={Boolean(getFieldError("time"))}
                   />
+                  {renderFieldError("time")}
                 </div>
+              </div>
+              <div style={{ marginTop: "0.75rem" }}>
+                <label className="form-label sub-label">Session ID</label>
+                <input
+                  data-testid="submission-session-id"
+                  className={getFieldClassName("input", "session_id")}
+                  type="text"
+                  value={formState.session_id}
+                  onChange={(e) => updateRequiredField("session_id", e.target.value)}
+                  onBlur={() => markActiveFieldTouched("session_id")}
+                  maxLength={120}
+                  autoComplete="off"
+                  placeholder="Unique session reference"
+                  title="Use letters, numbers, dashes, or underscores."
+                  spellCheck={false}
+                  aria-invalid={Boolean(getFieldError("session_id"))}
+                />
+                <p className="field-hint">
+                  Unique reference for this submission. You can keep the generated value or edit it.
+                </p>
+                {renderFieldError("session_id")}
               </div>
               <div style={{ marginTop: "0.75rem" }}>
                 <label className="form-label sub-label">Track</label>
                 <select
-                  className="select"
+                  data-testid="submission-track-select"
+                  className={getFieldClassName("select", "track")}
                   value={trackSelection || (event?.track ? event.track : "")}
                   onChange={(e) => {
                     setTrackSelection(e.target.value);
                     if (e.target.value !== "__OTHER__") {
-                      updateFormFn("track", e.target.value);
+                      updateRequiredField("track", e.target.value);
                     } else {
                       // keep existing manual value
-                      updateFormFn("track", formState.track || "");
+                      updateRequiredField("track", formState.track || "");
                     }
                   }}
+                  onBlur={() => markActiveFieldTouched("track")}
+                  title="Choose the event track or select Other to type a custom value."
+                  aria-invalid={Boolean(getFieldError("track"))}
                 >
-                  {event?.track && (
-                    <option value={event.track}>{event.track}</option>
-                  )}
-                  {TRACK_OPTIONS.filter((t) => t.id !== event?.track).map(
-                    (t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ),
-                  )}
+                  <option value="">Select Track</option>
+                  {trackOptionsForSelect.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {track.label}
+                    </option>
+                  ))}
                 </select>
                 {trackSelection === "__OTHER__" && (
                   <div style={{ marginTop: "0.5rem" }}>
                     <input
-                      className="input"
+                      data-testid="submission-track-manual"
+                      className={getFieldClassName("input", "track")}
                       type="text"
                       placeholder="Type track name"
                       value={formState.track}
-                      onChange={(e) => updateFormFn("track", e.target.value)}
+                      onChange={(e) => updateRequiredField("track", e.target.value)}
+                      onBlur={() => markActiveFieldTouched("track")}
+                      title="Type the exact track name."
+                      aria-invalid={Boolean(getFieldError("track"))}
                     />
                   </div>
                 )}
+                {renderFieldError("track")}
               </div>
 
               <div style={{ marginTop: "0.75rem" }}>
@@ -679,9 +1271,13 @@ export default function NotesSubmission() {
             <div className="form-group">
               <label className="form-label">Driver</label>
               <select
-                className="select"
+                data-testid="submission-driver-select"
+                className={getFieldClassName("select", "driver_id")}
                 value={formState.driver_id}
                 onChange={(e) => handleDriverChange(e.target.value)}
+                onBlur={() => markActiveFieldTouched("driver_id")}
+                title="Pick the driver assigned to this session."
+                aria-invalid={Boolean(getFieldError("driver_id"))}
               >
                 <option value="">Select Driver</option>
                 {driverOptions.map((d) => (
@@ -690,14 +1286,19 @@ export default function NotesSubmission() {
                   </option>
                 ))}
               </select>
+              {renderFieldError("driver_id")}
             </div>
 
             <div className="form-group">
               <label className="form-label">Vehicle</label>
               <select
-                className="select"
+                data-testid="submission-vehicle-select"
+                className={getFieldClassName("select", "vehicle_id")}
                 value={formState.vehicle_id}
-                onChange={(e) => updateFormFn("vehicle_id", e.target.value)}
+                onChange={(e) => updateRequiredField("vehicle_id", e.target.value)}
+                onBlur={() => markActiveFieldTouched("vehicle_id")}
+                title="Pick the vehicle used for this session."
+                aria-invalid={Boolean(getFieldError("vehicle_id"))}
               >
                 <option value="">
                   {formState.driver_id
@@ -726,6 +1327,7 @@ export default function NotesSubmission() {
                   </option>
                 )}
               </select>
+              {renderFieldError("vehicle_id")}
             </div>
 
             <div className="form-group">
@@ -734,18 +1336,22 @@ export default function NotesSubmission() {
                 <div>
                   <label className="form-label sub-label">Session Type</label>
                   <select
-                    className="select"
+                    data-testid="submission-session-type"
+                    className={getFieldClassName("select", "session_type")}
                     value={formState.session_type}
-                    onChange={(e) =>
-                      updateFormFn("session_type", e.target.value)
-                    }
+                    onChange={(e) => updateRequiredField("session_type", e.target.value)}
+                    onBlur={() => markActiveFieldTouched("session_type")}
+                    title="Choose the session classification."
+                    aria-invalid={Boolean(getFieldError("session_type"))}
                   >
+                    <option value="">Select session type</option>
                     {SESSION_TYPE_OPTIONS.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.label}
                       </option>
                     ))}
                   </select>
+                  {renderFieldError("session_type")}
                 </div>
                 <div>
                   <label className="form-label sub-label">Session #</label>
@@ -780,22 +1386,30 @@ export default function NotesSubmission() {
                 <div>
                   <label className="form-label sub-label">Wheelbase (mm)</label>
                   <input
-                    className="input"
+                    data-testid="submission-wheelbase"
+                    className={getFieldClassName("input", "wheelbase_mm")}
                     type="number"
-                    min="0"
+                    min="1"
                     step="1"
                     placeholder="2450"
                     value={formState.wheelbase_mm}
                     onChange={(e) =>
                       updateFormFn("wheelbase_mm", e.target.value)
                     }
+                    onBlur={() => markActiveFieldTouched("wheelbase_mm")}
+                    aria-invalid={Boolean(getFieldError("wheelbase_mm"))}
                   />
+                  <p className="field-hint">
+                    Optional. Leave blank if the wheelbase is unknown.
+                  </p>
+                  {renderFieldError("wheelbase_mm")}
                 </div>
               </div>
               <div className="grid-2" style={{ marginTop: "0.75rem" }}>
                 <div>
                   <label className="form-label sub-label">Tire Set</label>
                   <input
+                    data-testid="detail-tire-set"
                     className="input"
                     type="text"
                     placeholder="Y-S3"
@@ -809,10 +1423,16 @@ export default function NotesSubmission() {
                     className="select"
                     value={formState.pressures.unit}
                     onChange={(e) =>
-                      setFormFn((prev) => ({
-                        ...prev,
-                        pressures: { ...prev.pressures, unit: e.target.value },
-                      }))
+                      setFormFn((prev) => {
+                        const next = {
+                          ...prev,
+                          pressures: { ...prev.pressures, unit: e.target.value },
+                        };
+                        if (!isQuickTab) {
+                          persistDetailDraftSnapshot(next);
+                        }
+                        return next;
+                      })
                     }
                   >
                     {PRESSURE_UNIT_OPTIONS.map((u) => (
@@ -841,6 +1461,7 @@ export default function NotesSubmission() {
                 <div>
                   <label className="form-label sub-label">FL</label>
                   <input
+                    data-testid="detail-pressure-fl"
                     className="input"
                     type="number"
                     step="0.1"
@@ -906,10 +1527,10 @@ export default function NotesSubmission() {
                         e.target.value,
                       )
                     }
-                  />
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
 
             {!isQuickTab && (
               <>
@@ -919,6 +1540,7 @@ export default function NotesSubmission() {
                     <div>
                       <label className="form-label sub-label">Rebound FL</label>
                       <input
+                        data-testid="detail-suspension-rebound-fl"
                         className="input"
                         type="number"
                         step="1"
@@ -1121,6 +1743,7 @@ export default function NotesSubmission() {
                     <div>
                       <label className="form-label sub-label">Camber FL</label>
                       <input
+                        data-testid="detail-alignment-camber-fl"
                         className="input"
                         type="number"
                         step="0.1"
@@ -1420,6 +2043,7 @@ export default function NotesSubmission() {
                         }}
                       >
                         <input
+                          data-testid="detail-temp-fl-in"
                           className="input"
                           type="number"
                           step="0.1"
@@ -1747,9 +2371,9 @@ export default function NotesSubmission() {
                     </div>
                     <div>
                       <label className="form-label sub-label">Status</label>
-                      <input
-                        className="input"
-                        type="text"
+                      <select
+                        data-testid="detail-tire-status"
+                        className="select"
                         value={detailForm.tire_inventory.status}
                         onChange={(e) =>
                           updateNested(
@@ -1758,7 +2382,13 @@ export default function NotesSubmission() {
                             e.target.value,
                           )
                         }
-                      />
+                      >
+                        {TIRE_INVENTORY_STATUS_OPTIONS.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -1771,6 +2401,7 @@ export default function NotesSubmission() {
                   <label className="form-label">Race Notes (Raw Text)</label>
                 </div>
                 <textarea
+                  data-testid="quick-raw-notes"
                   className="textarea raw-notes-textarea"
                   placeholder='e.g. "s1 30min nico gt4 Y-S3 pf 27 wb 2450"'
                   value={rawTextValue}
@@ -1782,6 +2413,7 @@ export default function NotesSubmission() {
                 <div style={{ marginTop: "0.5rem" }}>
                   <label className="form-label sub-label">Photo</label>
                   <input
+                    data-testid="quick-photo-input"
                     className="input"
                     type="file"
                     accept="image/*"
@@ -1816,13 +2448,15 @@ export default function NotesSubmission() {
 
             <div className={`form-actions ${isQuickTab ? "form-actions-with-voice" : ""}`}>
               {isQuickTab && (
-                <VoiceInputControl
-                  className="voice-input-bottom"
-                  textareaRef={quickRawTextRef}
-                  onValueChange={setRawTextValue}
-                  onTranscriptInserted={() => setQuickVoiceInputUsed(true)}
-                  disabled={isSubmitting || !canSubmitNotes}
-                />
+                <div data-testid="quick-voice-control">
+                  <VoiceInputControl
+                    className="voice-input-bottom"
+                    textareaRef={quickRawTextRef}
+                    onValueChange={setRawTextValue}
+                    onTranscriptInserted={() => setQuickVoiceInputUsed(true)}
+                    disabled={isSubmitting || !canSubmitNotes}
+                  />
+                </div>
               )}
 
               <div className="form-action-buttons">

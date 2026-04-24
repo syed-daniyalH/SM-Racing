@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 import {
   Box,
   Typography,
@@ -458,24 +459,31 @@ export default function SubmissionPreview({ data, previewId }) {
             }}
             onClick={() => image && setOpenImage(true)}
           >
-            <SectionHeader
-              icon={ImageElementIcon}
-              title="Proof Attachment"
-              isMobile={isMobile}
-            />
-            {image ? (
-              <Box
-                component="img"
-                src={image}
-                sx={{
-                  width: "100%",
-                  height: { xs: 200, sm: 130 },
-                  objectFit: "cover",
-                }}
+              <SectionHeader
+                icon={ImageElementIcon}
+                title="Proof Attachment"
+                isMobile={isMobile}
               />
-            ) : (
-              <Box sx={{ py: 4, color: "#ccc" }}>
-                <ImageElementIcon sx={{ fontSize: 40 }} />
+              {image ? (
+                <Box
+                  sx={{
+                    position: "relative",
+                    width: "100%",
+                    height: { xs: 200, sm: 130 },
+                  }}
+                >
+                  <Image
+                    src={image}
+                    alt="Proof attachment"
+                    fill
+                    unoptimized
+                    sizes="(max-width: 600px) 100vw, 50vw"
+                    style={{ objectFit: "cover" }}
+                  />
+                </Box>
+              ) : (
+                <Box sx={{ py: 4, color: "#ccc" }}>
+                  <ImageElementIcon sx={{ fontSize: 40 }} />
                 <Typography variant="caption" sx={{ display: "block" }}>
                   No Image Uploaded
                 </Typography>
@@ -503,16 +511,19 @@ export default function SubmissionPreview({ data, previewId }) {
           >
             <CloseIcon />
           </IconButton>
-          <img
-            src={image}
-            alt="Proof"
-            style={{
-              width: "100%",
-              maxHeight: "85vh",
-              borderRadius: "8px",
-              objectFit: "contain",
-            }}
-          />
+          <Box sx={{ position: "relative", width: "90vw", maxWidth: "1000px", height: "85vh" }}>
+            <Image
+              src={image}
+              alt="Proof"
+              fill
+              unoptimized
+              sizes="90vw"
+              style={{
+                objectFit: "contain",
+                borderRadius: "8px",
+              }}
+            />
+          </Box>
         </Box>
       </Modal>
     </Box>

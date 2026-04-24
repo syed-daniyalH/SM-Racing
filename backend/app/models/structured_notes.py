@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schema import SM2RACING_SCHEMA
+from app.core.enums import SeanceStatus, TireInventoryStatus
 
 
 class Track(Base):
@@ -33,6 +34,11 @@ class TireInventory(Base):
     purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     heat_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
     track_time_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[TireInventoryStatus] = mapped_column(
+        Enum(TireInventoryStatus, name="sm2_tire_inventory_status", schema=SM2RACING_SCHEMA),
+        nullable=False,
+        default=TireInventoryStatus.ACTIVE,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -66,6 +72,11 @@ class Seance(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    status: Mapped[SeanceStatus] = mapped_column(
+        Enum(SeanceStatus, name="sm2_status", schema=SM2RACING_SCHEMA),
+        nullable=False,
+        default=SeanceStatus.ACTIVE,
+    )
 
 
 class Pressure(Base):
