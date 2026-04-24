@@ -18,7 +18,6 @@ import {
   VEHICLE_OPTIONS,
   SESSION_TYPE_OPTIONS,
   PRESSURE_UNIT_OPTIONS,
-  TRACK_OPTIONS,
 } from "../../../utils/staticOptions";
 import "./NotesSubmission.css";
 
@@ -1056,7 +1055,6 @@ export default function NotesSubmission() {
       nextOptions.push({ id: normalizedId, label: normalizedLabel });
     };
 
-    TRACK_OPTIONS.forEach((track) => addTrack(track));
     addTrack(event?.track);
     trackCatalog.forEach((track) => addTrack(track));
 
@@ -1364,6 +1362,7 @@ export default function NotesSubmission() {
                       {track.label}
                     </option>
                   ))}
+                  <option value="__OTHER__">Other (type manually)</option>
                 </select>
                 {trackSelection === "__OTHER__" && (
                   <div style={{ marginTop: "0.5rem" }}>

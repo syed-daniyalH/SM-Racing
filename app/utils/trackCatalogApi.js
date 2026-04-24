@@ -42,7 +42,7 @@ export const getTrackCatalog = async () => {
     return {
       tracks: items
         .map(normalizeTrackOption)
-        .filter(Boolean)
+        .filter((track) => track && track.active !== false)
         .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" })),
     };
   } catch (error) {
