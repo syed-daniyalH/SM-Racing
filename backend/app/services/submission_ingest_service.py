@@ -23,6 +23,7 @@ from app.services.submission_payload_service import get_session_payload
 
 
 DB_SCHEMA = get_settings().database_schema
+SESSION_ID_PATTERN = re.compile(r"^\d{8}-\d{4}-[A-Z0-9]+-S\d+$")
 
 
 def _table(name: str) -> str:
@@ -813,7 +814,16 @@ def persist_structured_submission(
             tire_inventory_payload["manufacturer"] = "Unknown"
         _upsert_tire_inventory(db, tire_inventory_payload)
 
-    id_seance = _seance_business_id(
+    provided_session_id = _clean_blank(session_data.get("session_id"))
+    if provided_session_id is not None:
+        provided_session_id = provided_session_id.upper()
+        if not SESSION_ID_PATTERN.fullmatch(provided_session_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="session_id must follow YYYYMMDD-HHMM-DRIVERID-S<number>",
+            )
+
+    id_seance = provided_session_id or _seance_business_id(
         track_name=track_name,
         session_started_at=started_at,
         driver_code=driver.driver_id,

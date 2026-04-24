@@ -3,8 +3,10 @@ import axios from "axios";
 // Create axios instance with base configuration.
 // Local development uses /api/v1 through the Next.js proxy.
 // Production should set NEXT_PUBLIC_API_URL to the Render backend /api/v1 URL.
+const apiBaseURL = (process.env.NEXT_PUBLIC_API_URL || "/api/v1").trim();
+
 const axiosInstance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
+  baseURL: apiBaseURL,
 
   headers: {
     "Content-Type": "application/json",

@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(default="change-me")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    )
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
     make_callback_secret: str | None = None
@@ -28,7 +30,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, value: Any) -> list[str]:
         if value is None:
-            return ["http://localhost:3000"]
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
         if isinstance(value, str):
             stripped = value.strip()

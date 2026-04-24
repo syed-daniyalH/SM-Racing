@@ -31,7 +31,7 @@ const getCurrentLocalTimeValue = () => {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,119}$/;
+const SESSION_ID_PATTERN = /^\d{8}-\d{4}-[A-Z0-9]+-S\d+$/;
 const TIRE_INVENTORY_STATUS_OPTIONS = [
   { id: "ACTIVE", label: "Active" },
   { id: "DISCARDED", label: "Discarded" },
@@ -59,6 +59,30 @@ const isValidDateValue = (value) => {
 const isValidTimeValue = (value) => TIME_PATTERN.test(String(value || "").trim());
 
 const isValidSessionId = (value) => SESSION_ID_PATTERN.test(String(value || "").trim());
+
+const normalizeSessionDriverSegment = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const buildGeneratedSessionId = (date, time, driverId, sessionNumber) => {
+  const normalizedDate = String(date || "").trim();
+  const normalizedTime = String(time || "").trim();
+  const normalizedDriverId = normalizeSessionDriverSegment(driverId);
+  const normalizedSessionNumber = String(sessionNumber ?? "").trim();
+
+  if (
+    !isValidDateValue(normalizedDate) ||
+    !isValidTimeValue(normalizedTime) ||
+    !normalizedDriverId ||
+    !/^\d+$/.test(normalizedSessionNumber)
+  ) {
+    return "";
+  }
+
+  return `${normalizedDate.replace(/-/g, "")}-${normalizedTime.replace(":", "")}-${normalizedDriverId}-S${normalizedSessionNumber}`;
+};
 
 const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicleOptions }) => {
   const errors = {};
@@ -117,7 +141,7 @@ const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicl
 const createBaseFormState = () => ({
   date: "",
   time: getCurrentLocalTimeValue(),
-  session_id: generateUUID(),
+  session_id: "",
   track: "",
   driver_id: "",
   vehicle_id: "",
@@ -254,6 +278,10 @@ export default function NotesSubmission() {
   const [submissionStatus, setSubmissionStatus] = useState("pending"); // sent, pending, failed
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [sessionIdMode, setSessionIdMode] = useState({
+    quick: "auto",
+    detail: "auto",
+  });
   const [fieldTouched, setFieldTouched] = useState({ quick: {}, detail: {} });
   const [validationAttempted, setValidationAttempted] = useState({
     quick: false,
@@ -461,6 +489,22 @@ export default function NotesSubmission() {
       }
 
       if (parsedDraft.detailForm && typeof parsedDraft.detailForm === "object") {
+        const restoredGeneratedSessionId = buildGeneratedSessionId(
+          parsedDraft.detailForm.date,
+          parsedDraft.detailForm.time,
+          parsedDraft.detailForm.driver_id,
+          parsedDraft.detailForm.session_number,
+        );
+        const restoredSessionId = String(parsedDraft.detailForm.session_id || "").trim();
+        setSessionIdMode((prev) => ({
+          ...prev,
+          detail:
+            restoredSessionId &&
+            restoredSessionId !== restoredGeneratedSessionId
+              ? "manual"
+              : "auto",
+        }));
+
         setDetailForm((prev) => ({
           ...prev,
           ...parsedDraft.detailForm,
@@ -919,6 +963,10 @@ export default function NotesSubmission() {
         setQuickVoiceInputUsed(false);
         setQuickForm(createBaseFormState());
         setDetailForm(createDetailFormState());
+        setSessionIdMode({
+          quick: "auto",
+          detail: "auto",
+        });
         setError("");
         setFieldTouched({ quick: {}, detail: {} });
         setValidationAttempted({ quick: false, detail: false });
@@ -1036,6 +1084,29 @@ export default function NotesSubmission() {
       ? formState.track
       : trackSelection || formState.track || event?.track || "";
   const activeTabKey = isQuickTab ? "quick" : "detail";
+  const generatedQuickSessionId = useMemo(
+    () =>
+      buildGeneratedSessionId(
+        quickForm.date,
+        quickForm.time,
+        quickForm.driver_id,
+        quickForm.session_number,
+      ),
+    [quickForm.date, quickForm.time, quickForm.driver_id, quickForm.session_number],
+  );
+  const generatedDetailSessionId = useMemo(
+    () =>
+      buildGeneratedSessionId(
+        detailForm.date,
+        detailForm.time,
+        detailForm.driver_id,
+        detailForm.session_number,
+      ),
+    [detailForm.date, detailForm.time, detailForm.driver_id, detailForm.session_number],
+  );
+  const generatedSessionId = isQuickTab
+    ? generatedQuickSessionId
+    : generatedDetailSessionId;
   const activeFieldTouched = fieldTouched[activeTabKey] || {};
   const activeValidationAttempted = validationAttempted[activeTabKey] || false;
   const validationErrors = useMemo(
@@ -1060,6 +1131,41 @@ export default function NotesSubmission() {
         {getFieldError(field)}
       </p>
     ) : null;
+
+  useEffect(() => {
+    if (sessionIdMode.quick !== "auto") {
+      return;
+    }
+
+    setQuickForm((prev) => {
+      if (prev.session_id === generatedQuickSessionId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        session_id: generatedQuickSessionId,
+      };
+    });
+  }, [generatedQuickSessionId, sessionIdMode.quick]);
+
+  useEffect(() => {
+    if (sessionIdMode.detail !== "auto") {
+      return;
+    }
+
+    setDetailForm((prev) => {
+      if (prev.session_id === generatedDetailSessionId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        session_id: generatedDetailSessionId,
+      };
+    });
+  }, [generatedDetailSessionId, sessionIdMode.detail]);
+
   const markActiveFieldTouched = (field) => {
     setFieldTouched((prev) => ({
       ...prev,
@@ -1198,18 +1304,39 @@ export default function NotesSubmission() {
                   className={getFieldClassName("input", "session_id")}
                   type="text"
                   value={formState.session_id}
-                  onChange={(e) => updateRequiredField("session_id", e.target.value)}
+                  onChange={(e) => {
+                    setSessionIdMode((prev) => ({
+                      ...prev,
+                      [activeTabKey]: "manual",
+                    }));
+                    updateRequiredField("session_id", e.target.value.toUpperCase());
+                  }}
                   onBlur={() => markActiveFieldTouched("session_id")}
                   maxLength={120}
                   autoComplete="off"
-                  placeholder="Unique session reference"
-                  title="Use letters, numbers, dashes, or underscores."
+                  placeholder="YYYYMMDD-HHMM-DRIVERID-S1"
+                  title="Format: YYYYMMDD-HHMM-DRIVERID-S1"
                   spellCheck={false}
                   aria-invalid={Boolean(getFieldError("session_id"))}
                 />
                 <p className="field-hint">
-                  Unique reference for this submission. You can keep the generated value or edit it.
+                  Auto-generated from date, time, driver, and session number. You can still edit it.
                 </p>
+                <div style={{ marginTop: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setSessionIdMode((prev) => ({
+                        ...prev,
+                        [activeTabKey]: "auto",
+                      }));
+                      updateRequiredField("session_id", generatedSessionId);
+                    }}
+                  >
+                    Use Generated ID
+                  </button>
+                </div>
                 {renderFieldError("session_id")}
               </div>
               <div style={{ marginTop: "0.75rem" }}>
