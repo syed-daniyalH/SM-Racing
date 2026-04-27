@@ -1,18 +1,24 @@
 /** @type {import('next').NextConfig} */
-const isProduction = process.env.NODE_ENV === "production";
+const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
+
+const normalizeApiProxyTarget = (value) => {
+  const target = trimTrailingSlash(value || "http://127.0.0.1:8000");
+  return target.replace(/\/api\/v1$/i, "");
+};
+
+const apiProxyTarget = normalizeApiProxyTarget(
+  process.env.SM2_API_PROXY_TARGET ||
+    process.env.BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_PROXY_TARGET,
+);
 
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
-    // Keep the local FastAPI proxy only for development.
-    if (isProduction) {
-      return [];
-    }
-
     return [
       {
         source: "/api/v1/:path*",
-        destination: "http://127.0.0.1:8000/api/v1/:path*",
+        destination: `${apiProxyTarget}/api/v1/:path*`,
       },
     ];
   },

@@ -30,7 +30,9 @@ const getCurrentLocalTimeValue = () => {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-const SESSION_ID_PATTERN = /^\d{8}-\d{4}-[A-Z0-9]+-S\d+$/;
+const GENERATED_SESSION_ID_PATTERN = /^\d{8}-\d{4}-[A-Z0-9]+-S\d+$/;
+const LEGACY_SESSION_ID_PATTERN =
+  /^[A-Z0-9]+-\d{8}-\d{4}-[A-Z0-9]+-\d+-[A-Z0-9]+-[A-Z0-9][A-Z0-9-]*$/;
 const TIRE_INVENTORY_STATUS_OPTIONS = [
   { id: "ACTIVE", label: "Active" },
   { id: "DISCARDED", label: "Discarded" },
@@ -57,7 +59,13 @@ const isValidDateValue = (value) => {
 
 const isValidTimeValue = (value) => TIME_PATTERN.test(String(value || "").trim());
 
-const isValidSessionId = (value) => SESSION_ID_PATTERN.test(String(value || "").trim());
+const isValidSessionId = (value) => {
+  const cleaned = String(value || "").trim().toUpperCase();
+  return (
+    GENERATED_SESSION_ID_PATTERN.test(cleaned) ||
+    LEGACY_SESSION_ID_PATTERN.test(cleaned)
+  );
+};
 
 const normalizeSessionDriverSegment = (value) =>
   String(value || "")
@@ -109,7 +117,8 @@ const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicl
   }
 
   if (!isValidSessionId(formState.session_id)) {
-    errors.session_id = "Session ID is required and must follow the correct format.";
+    errors.session_id =
+      "Session ID must use the generated format or a legacy session reference.";
   }
 
   const wheelbaseValue = String(formState.wheelbase_mm ?? "").trim();

@@ -19,6 +19,24 @@ const unwrapSubmission = (data) =>
 const unwrapSubmissionList = (data) =>
   normalizeList(data?.submissions || data?.data || data, normalizeSubmission);
 
+const buildNetworkErrorMessage = (error, fallbackMessage) => {
+  if (error.response) {
+    return null;
+  }
+
+  const apiBaseURL = axiosInstance.defaults.baseURL || "/api/v1";
+  const target =
+    apiBaseURL === "/api/v1"
+      ? "the local API proxy (/api/v1 -> FastAPI on 127.0.0.1:8000)"
+      : apiBaseURL;
+
+  if (error.code === "ERR_NETWORK" || error.message === "Network Error") {
+    return `Cannot reach SM2 API at ${target}. Please make sure the backend is running and try again.`;
+  }
+
+  return fallbackMessage;
+};
+
 const buildApiError = (error, fallbackMessage) => ({
   status: error.response?.status,
   code:
@@ -42,6 +60,7 @@ const buildApiError = (error, fallbackMessage) => ({
       : typeof error.response?.data?.detail === "string"
         ? error.response.data.detail
         : null) ||
+    buildNetworkErrorMessage(error, fallbackMessage) ||
     error.message ||
     fallbackMessage,
   error:
@@ -58,6 +77,7 @@ const buildApiError = (error, fallbackMessage) => ({
       : typeof error.response?.data?.detail === "string"
         ? error.response.data.detail
         : null) ||
+    buildNetworkErrorMessage(error, fallbackMessage) ||
     error.message ||
     fallbackMessage,
   detail: error.response?.data?.detail,
