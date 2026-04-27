@@ -3,11 +3,29 @@
 import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "../context/AuthContext"
-import { getActiveEvent } from "../utils/eventApi"
 import "./Navbar.css"
 
 const getEventId = (event) =>
   event?.id || event?._id || event?.eventId || event?.event_id || null
+
+const readStoredActiveEventId = () => {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  try {
+    const storedUser = window.localStorage.getItem("sm2_user")
+    if (!storedUser) {
+      return null
+    }
+
+    const parsedUser = JSON.parse(storedUser)
+    return getEventId(parsedUser?.active_event_id || parsedUser?.activeEventId)
+  } catch (error) {
+    console.warn("Failed to read stored active event:", error)
+    return null
+  }
+}
 
 export default function Navbar() {
   const router = useRouter()
@@ -23,32 +41,23 @@ export default function Navbar() {
   const currentEventId = currentEventIdMatch?.[1] || null
 
   useEffect(() => {
-    let cancelled = false
-
-    const loadActiveEvent = async () => {
-      if (!user || isAdmin()) {
-        setActiveEventId(null)
-        return
-      }
-
-      try {
-        const activeEvent = await getActiveEvent()
-        if (!cancelled) {
-          setActiveEventId(getEventId(activeEvent))
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setActiveEventId(null)
-        }
-      }
+    if (!user || isAdmin()) {
+      setActiveEventId(null)
+      return
     }
 
-    loadActiveEvent()
-
-    return () => {
-      cancelled = true
+    if (currentEventId) {
+      setActiveEventId(currentEventId)
+      return
     }
-  }, [user, isAdmin, pathname])
+
+    const userActiveEventId =
+      getEventId(user?.active_event_id) ||
+      getEventId(user?.activeEventId) ||
+      readStoredActiveEventId()
+
+    setActiveEventId(userActiveEventId || null)
+  }, [currentEventId, isAdmin, user])
 
   if (isAuthPage || isSubmissionReportPage || !user) {
     return null

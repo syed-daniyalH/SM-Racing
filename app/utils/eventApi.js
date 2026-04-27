@@ -64,6 +64,68 @@ const buildApiError = (error, fallbackMessage) => ({
   data: error.response?.data,
 });
 
+const getEventId = (event) =>
+  event?.id || event?._id || event?.eventId || event?.event_id || null;
+
+const readApiErrorDetail = (error) => {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail && typeof detail === "object") {
+    return detail.message || detail.detail || detail.error || null;
+  }
+
+  return null;
+};
+
+const persistActiveEventId = (event) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const eventId = getEventId(event);
+  if (!eventId) {
+    return;
+  }
+
+  try {
+    const storedUser = window.localStorage.getItem("sm2_user");
+    if (!storedUser) {
+      return;
+    }
+
+    const parsedUser = JSON.parse(storedUser);
+    if (!parsedUser || typeof parsedUser !== "object") {
+      return;
+    }
+
+    const nextUser = {
+      ...parsedUser,
+      active_event_id: eventId,
+      activeEventId: eventId,
+    };
+
+    window.localStorage.setItem("sm2_user", JSON.stringify(nextUser));
+  } catch (persistError) {
+    console.warn("Failed to persist active event selection:", persistError);
+  }
+};
+
+const isMissingActiveEventError = (error) => {
+  if (error.response?.status !== 404) {
+    return false;
+  }
+
+  const detail = String(readApiErrorDetail(error) || "").toLowerCase();
+  return (
+    detail.includes("active event not set") ||
+    detail.includes("active event not found")
+  );
+};
+
 export const getEvents = async () => {
   try {
     const response = await axiosInstance.get("/events");
@@ -152,9 +214,11 @@ export const archiveEvent = async (eventId) => {
 export const selectActiveEvent = async (eventId) => {
   try {
     const response = await axiosInstance.post(`/events/${eventId}/select`);
+    const event = unwrapEvent(response.data);
+    persistActiveEventId(event);
     return {
       success: true,
-      event: unwrapEvent(response.data),
+      event,
     };
   } catch (error) {
     console.error("Select Active Event API Error:", {
@@ -171,6 +235,10 @@ export const getActiveEvent = async () => {
     const response = await axiosInstance.get("/events/active");
     return unwrapEvent(response.data);
   } catch (error) {
+    if (isMissingActiveEventError(error)) {
+      return null;
+    }
+
     console.error("Get Active Event API Error:", {
       url: error.config?.url,
       status: error.response?.status,
