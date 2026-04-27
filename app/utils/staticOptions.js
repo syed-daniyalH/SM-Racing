@@ -16,14 +16,6 @@ export const VEHICLE_OPTIONS = [
   { id: 'NG-GT4-2025', label: '-NG-GT4-2025 belongs to driver NG', driverId: 'NG' },
 ]
 
-export const getVehicleOptionsForDriver = (driverId) => {
-  if (!driverId) {
-    return VEHICLE_OPTIONS;
-  }
-
-  return VEHICLE_OPTIONS.filter((vehicle) => vehicle.driverId === driverId);
-}
-
 export const SESSION_TYPE_OPTIONS = [
   { id: 'Practice', label: 'Practice' },
   { id: 'Qualifying', label: 'Qualifying' },
@@ -32,11 +24,4 @@ export const SESSION_TYPE_OPTIONS = [
 
 export const PRESSURE_UNIT_OPTIONS = [
   { id: 'psi', label: 'psi' },
-]
-
-export const TRACK_OPTIONS = [
-  { id: 'Sebring International Raceway', label: 'Sebring International Raceway' },
-  { id: 'Daytona International Speedway', label: 'Daytona International Speedway' },
-  { id: 'Road Atlanta', label: 'Road Atlanta' },
-  { id: '__OTHER__', label: 'Other (type manually)' },
 ]

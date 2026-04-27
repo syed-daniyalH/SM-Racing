@@ -115,9 +115,6 @@ export const normalizeAdminEvent = (event) => {
   };
 };
 
-export const normalizeAdminEventList = (events = []) =>
-  events.map(normalizeAdminEvent).filter(Boolean);
-
 export const getEventLifecycle = (event, now = new Date()) => {
   if (!event) {
     return { key: "unknown", label: "Unknown", tone: "neutral" };
@@ -329,23 +326,3 @@ export const getEventSummaryCounts = (events = []) => {
 
   return summary;
 };
-
-export const getEventFormPayload = (values) => ({
-  name: values?.name?.trim(),
-  track: values?.track?.trim(),
-  runGroup: values?.runGroup?.trim() || "",
-  startDate: values?.startDate,
-  endDate: values?.endDate,
-  status: values?.status || "active",
-  notes: values?.notes?.trim() || "",
-});
-
-export const toEventApiPayload = (values) => ({
-  name: values?.name?.trim(),
-  track: values?.track?.trim(),
-  run_group_raw_text: values?.runGroup?.trim() || undefined,
-  startDate: values?.startDate,
-  endDate: values?.endDate,
-  is_active: values?.status ? values.status !== "archived" : undefined,
-  notes: values?.notes?.trim() || undefined,
-});

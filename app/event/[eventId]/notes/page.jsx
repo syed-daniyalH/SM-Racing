@@ -146,6 +146,37 @@ const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicl
   return errors;
 };
 
+const getSubmissionFailureMessage = (errorLike) => {
+  const code = String(errorLike?.code || "").trim().toUpperCase();
+  const message = String(
+    errorLike?.message ||
+    errorLike?.error ||
+    "",
+  ).trim();
+
+  if (code === "SUBMISSION_ALREADY_EXISTS") {
+    return "This Session ID already exists. Use a new Session ID or click Use Generated ID.";
+  }
+
+  if (code === "SUBMISSION_DUPLICATE") {
+    return "A note for this event, driver, vehicle, date, time, and session number already exists. Review the previous submission or adjust the session details.";
+  }
+
+  if (code === "SUBMISSION_SAVE_FAILED") {
+    return "The backend could not save this submission. Please try once more. If it happens again, check the backend logs for the exact error.";
+  }
+
+  if (code === "SUBMISSION_LOAD_FAILED") {
+    return "The backend saved the note but could not reload it. Check Submissions before retrying so you do not create a duplicate.";
+  }
+
+  if (code === "SUBMISSION_RETRY_FAILED") {
+    return "The backend could not retry this submission right now. Please try again.";
+  }
+
+  return message || "Failed to submit notes. Please try again.";
+};
+
 const createBaseFormState = () => ({
   date: "",
   time: getCurrentLocalTimeValue(),
@@ -986,22 +1017,13 @@ export default function NotesSubmission() {
         setSubmissionStatus("failed");
         setError(
           response?.submission?.errorMessage ||
-          response.message ||
-            "Failed to submit notes. Please try again.",
+          getSubmissionFailureMessage(response),
         );
       }
     } catch (error) {
       console.error("Submission error:", error);
       setSubmissionStatus("failed");
-      const structuredError = error?.code
-        ? `${error.code}: ${error?.message || error?.error || "Submission failed."}`
-        : null;
-      const errorMessage =
-        structuredError ||
-        error?.message ||
-        error?.error ||
-        "Failed to submit notes. Please try again.";
-      setError(errorMessage);
+      setError(getSubmissionFailureMessage(error));
     } finally {
       setIsSubmitting(false);
     }

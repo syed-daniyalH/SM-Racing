@@ -22,8 +22,7 @@ const buildApiError = (message, status = 400, data = null) => ({
 });
 
 const cloneTracks = (tracks = []) => tracks.map((track) => ({ ...track }));
-
-export const mockTracks = [];
+const mockTracks = [];
 
 const seedEmptyTrackStorage = () => {
   const emptyTracks = cloneTracks(mockTracks);
@@ -147,17 +146,6 @@ export const getTracks = async () => {
   return {
     tracks: normalizeList(tracks, normalizeTrack),
   };
-};
-
-export const getTrackById = async (trackId) => {
-  const tracks = readStoredTracks();
-  const found = tracks.find((track) => String(track.track_id || track.id || "") === String(trackId));
-
-  if (!found) {
-    throw buildApiError("Track not found", 404);
-  }
-
-  return normalizeTrack(found);
 };
 
 export const createTrack = async (trackData) => {

@@ -130,27 +130,6 @@ export const getTrackSummaryCounts = (tracks = []) => {
   };
 };
 
-export const formatTrackCoordinates = (track = null) => {
-  const latitude = parseNullableNumber(track?.latitude);
-  const longitude = parseNullableNumber(track?.longitude);
-
-  if (latitude === null && longitude === null) {
-    return "Not configured";
-  }
-
-  const coordinates = [];
-
-  if (latitude !== null) {
-    coordinates.push(`Lat ${latitude.toFixed(4)}`);
-  }
-
-  if (longitude !== null) {
-    coordinates.push(`Lng ${longitude.toFixed(4)}`);
-  }
-
-  return coordinates.join(" · ") || "Not configured";
-};
-
 export const sortTracksByLatest = (tracks = []) =>
   [...tracks].sort((left, right) => {
     const leftTime = new Date(left.updatedAt || left.createdAt || 0).getTime();

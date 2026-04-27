@@ -43,15 +43,6 @@ const parseInstant = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export const parseEventDateValue = (value) => {
-  const parts = extractCalendarDateParts(value);
-  if (parts) {
-    return buildUtcDate(parts.year, parts.monthIndex, parts.day);
-  }
-
-  return parseInstant(value);
-};
-
 export const getEventStartBoundary = (value) => {
   const parts = extractCalendarDateParts(value);
   if (parts) {
@@ -100,20 +91,6 @@ export const formatEventDateRange = (startDate, endDate) => {
   if (start === "-" && end === "-") return "-";
   if (start === end) return start;
   return `${start} - ${end}`;
-};
-
-export const toEventDateInputValue = (value) => {
-  const parts = extractCalendarDateParts(value);
-  if (parts) {
-    return `${parts.year}-${String(parts.monthIndex + 1).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-  }
-
-  const date = parseInstant(value);
-  if (!date) {
-    return "";
-  }
-
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 };
 
 export const getEventLifecycle = (event, now = new Date()) => {

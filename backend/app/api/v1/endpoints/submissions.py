@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -33,6 +34,7 @@ from app.services.submission_payload_service import (
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _submission_error(
@@ -46,6 +48,38 @@ def _submission_error(
     if detail is not None:
         payload["detail"] = detail
     return HTTPException(status_code=status_code, detail=payload)
+
+
+def _submission_log_summary(
+    *,
+    submission_ref: str | None,
+    correlation_id: str | None,
+    event_id: UUID | None,
+    run_group_id: UUID | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+    current_user_id: UUID | None,
+    payload: dict | None = None,
+) -> str:
+    session_payload = get_session_payload(payload)
+    session_date = normalize_optional_text(session_payload.get("date"))
+    session_time = normalize_optional_text(session_payload.get("time"))
+    session_number = session_payload.get("session_number")
+    session_type = normalize_optional_text(session_payload.get("session_type"))
+
+    return (
+        f"submission_ref={submission_ref or 'none'} "
+        f"correlation_id={correlation_id or 'none'} "
+        f"event_id={event_id or 'none'} "
+        f"run_group_id={run_group_id or 'none'} "
+        f"driver_id={driver_id or 'none'} "
+        f"vehicle_id={vehicle_id or 'none'} "
+        f"user_id={current_user_id or 'none'} "
+        f"session_date={session_date or 'none'} "
+        f"session_time={session_time or 'none'} "
+        f"session_type={session_type or 'none'} "
+        f"session_number={session_number if session_number not in (None, '') else 'none'}"
+    )
 
 
 def _is_integrity_duplicate_error(exc: IntegrityError) -> bool:
@@ -406,6 +440,16 @@ def create_submission(
         )
 
     correlation_id = normalize_optional_text(submission_in.correlation_id) or str(uuid4())
+    submission_log_summary = _submission_log_summary(
+        submission_ref=submission_in.submission_ref,
+        correlation_id=correlation_id,
+        event_id=submission_in.event_id,
+        run_group_id=submission_in.run_group_id,
+        driver_id=submission_in.driver_id,
+        vehicle_id=submission_in.vehicle_id,
+        current_user_id=current_user.id,
+        payload=submission_in.payload,
+    )
 
     duplicate_submission = _find_existing_session_duplicate(
         db,
@@ -487,16 +531,40 @@ def create_submission(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        if not _is_integrity_duplicate_error(exc):
+            logger.exception(
+                "Unexpected submission integrity error while saving (%s)",
+                submission_log_summary,
+            )
+            raise _submission_error(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "SUBMISSION_SAVE_FAILED",
+                "Failed to save submission",
+            ) from exc
+
+        logger.warning(
+            "Submission duplicate integrity conflict while saving (%s)",
+            submission_log_summary,
+        )
         raise _submission_error(
             status.HTTP_409_CONFLICT,
             "SUBMISSION_DUPLICATE",
             "Submission already exists or conflicts with an existing session",
         ) from exc
-    except HTTPException:
+    except HTTPException as exc:
         db.rollback()
+        logger.warning(
+            "Submission rejected after entering save pipeline (%s): %s",
+            submission_log_summary,
+            getattr(exc, "detail", exc),
+        )
         raise
     except Exception as exc:
         db.rollback()
+        logger.exception(
+            "Unexpected submission save failure (%s)",
+            submission_log_summary,
+        )
         raise _submission_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "SUBMISSION_SAVE_FAILED",
@@ -507,6 +575,10 @@ def create_submission(
 
     loaded_submission = _load_submission(db, submission.id)
     if loaded_submission is None:
+        logger.error(
+            "Submission saved but failed to reload from database (%s)",
+            submission_log_summary,
+        )
         raise _submission_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "SUBMISSION_LOAD_FAILED",
@@ -553,6 +625,17 @@ def retry_submission(
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
+    retry_log_summary = _submission_log_summary(
+        submission_ref=submission.submission_ref,
+        correlation_id=submission.correlation_id,
+        event_id=submission.event_id,
+        run_group_id=submission.run_group_id,
+        driver_id=getattr(submission.driver, "driver_id", None),
+        vehicle_id=getattr(submission.vehicle, "vehicle_id", None),
+        current_user_id=current_user.id,
+        payload=submission.payload,
+    )
+
     submission.status = SubmissionStatus.PENDING
     submission.error_message = None
     try:
@@ -562,16 +645,40 @@ def retry_submission(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        if not _is_integrity_duplicate_error(exc):
+            logger.exception(
+                "Unexpected submission integrity error while retrying (%s)",
+                retry_log_summary,
+            )
+            raise _submission_error(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "SUBMISSION_RETRY_FAILED",
+                "Failed to retry submission",
+            ) from exc
+
+        logger.warning(
+            "Submission duplicate integrity conflict while retrying (%s)",
+            retry_log_summary,
+        )
         raise _submission_error(
             status.HTTP_409_CONFLICT,
             "SUBMISSION_DUPLICATE",
             "Submission already exists or conflicts with an existing session",
         ) from exc
-    except HTTPException:
+    except HTTPException as exc:
         db.rollback()
+        logger.warning(
+            "Submission retry rejected after entering save pipeline (%s): %s",
+            retry_log_summary,
+            getattr(exc, "detail", exc),
+        )
         raise
     except Exception as exc:
         db.rollback()
+        logger.exception(
+            "Unexpected submission retry failure (%s)",
+            retry_log_summary,
+        )
         raise _submission_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "SUBMISSION_RETRY_FAILED",

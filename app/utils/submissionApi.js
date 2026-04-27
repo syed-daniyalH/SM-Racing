@@ -1,6 +1,6 @@
 import axiosInstance from "./axiosInstance";
 import { normalizeList, normalizeSubmission } from "./apiTransforms";
-import { getRunGroupByEvent } from "./runGroupApi";
+import { getRunGroup } from "./runGroupApi";
 import { generateUUID } from "./uuid";
 
 /**
@@ -93,7 +93,7 @@ const buildSubmissionPayload = async (submissionData) => {
   const imageUrl = submissionData?.image_url || submissionData?.image || null;
 
   if (!runGroupId && legacyEventId) {
-    const runGroupResponse = await getRunGroupByEvent(legacyEventId);
+    const runGroupResponse = await getRunGroup(legacyEventId);
     const runGroup = runGroupResponse?.runGroup || runGroupResponse;
     runGroupId = runGroup?.id || runGroup?._id || null;
   }
@@ -269,24 +269,6 @@ export const getSubmissionsByEvent = async (eventId) => {
   }
 };
 
-/**
- * Get all submissions by a specific user (OWNER + MECHANIC)
- * @param {string} userId - User ID
- * @returns {Promise} API response with submissions array
- */
-export const getSubmissionsByUser = async (userId) => {
-  try {
-    const response = await axiosInstance.get(`/submissions/user/${userId}`);
-    return unwrapSubmissionList(response.data);
-  } catch (error) {
-    console.error("Get Submissions By User API Error:", {
-      url: error.config?.url,
-      status: error.response?.status,
-      data: error.response?.data,
-    });
-    throw error.response?.data || error.message;
-  }
-};
 
 /**
  * Update submission (OWNER only)

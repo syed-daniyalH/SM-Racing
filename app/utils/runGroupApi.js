@@ -82,25 +82,6 @@ export const getRunGroup = async (eventId) => {
 }
 
 /**
- * Get run group by event ID (Alternative route)
- * @param {string|number} eventId - Event ID
- * @returns {Promise} API response with run group data
- */
-export const getRunGroupByEvent = async (eventId) => {
-  try {
-    const response = await axiosInstance.get(`/run-groups/event/${eventId}`);
-    return unwrapRunGroup(response.data);
-  } catch (error) {
-    console.error("Get Run Group By Event API Error:", {
-      url: error.config?.url,
-      status: error.response?.status,
-      data: error.response?.data
-    });
-    throw buildApiError(error, "Failed to load run group");
-  }
-}
-
-/**
  * Update run group (OWNER only)
  * @param {Object} runGroupData - { eventId, rawText }
  * @returns {Promise} API response
@@ -132,14 +113,3 @@ export const updateRunGroup = async (runGroupData) => {
     throw buildApiError(error, "Failed to update run group");
   }
 }
-
-/**
- * Delete run group (OWNER only)
- * @param {string|number} eventId - Event ID
- * @returns {Promise} API response
- */
-export const deleteRunGroup = async (eventId) => {
-  throw new Error(
-    `Run group deletion is not supported in the FastAPI backend for event ${eventId}.`,
-  );
-};

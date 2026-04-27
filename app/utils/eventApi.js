@@ -67,20 +67,6 @@ const buildApiError = (error, fallbackMessage) => ({
 const getEventId = (event) =>
   event?.id || event?._id || event?.eventId || event?.event_id || null;
 
-const readApiErrorDetail = (error) => {
-  const detail = error.response?.data?.detail;
-
-  if (typeof detail === "string") {
-    return detail;
-  }
-
-  if (detail && typeof detail === "object") {
-    return detail.message || detail.detail || detail.error || null;
-  }
-
-  return null;
-};
-
 const persistActiveEventId = (event) => {
   if (typeof window === "undefined") {
     return;
@@ -112,18 +98,6 @@ const persistActiveEventId = (event) => {
   } catch (persistError) {
     console.warn("Failed to persist active event selection:", persistError);
   }
-};
-
-const isMissingActiveEventError = (error) => {
-  if (error.response?.status !== 404) {
-    return false;
-  }
-
-  const detail = String(readApiErrorDetail(error) || "").toLowerCase();
-  return (
-    detail.includes("active event not set") ||
-    detail.includes("active event not found")
-  );
 };
 
 export const getEvents = async () => {
@@ -227,23 +201,5 @@ export const selectActiveEvent = async (eventId) => {
       data: error.response?.data,
     });
     throw buildApiError(error, "Failed to select active event");
-  }
-};
-
-export const getActiveEvent = async () => {
-  try {
-    const response = await axiosInstance.get("/events/active");
-    return unwrapEvent(response.data);
-  } catch (error) {
-    if (isMissingActiveEventError(error)) {
-      return null;
-    }
-
-    console.error("Get Active Event API Error:", {
-      url: error.config?.url,
-      status: error.response?.status,
-      data: error.response?.data,
-    });
-    throw buildApiError(error, "Failed to load active event");
   }
 };
