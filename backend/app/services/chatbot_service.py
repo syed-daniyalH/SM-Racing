@@ -1,0 +1,2816 @@
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from datetime import date, datetime, time
+from typing import Any, Iterable
+
+from fastapi import HTTPException, status
+from sqlalchemy import and_, or_, select, text
+from sqlalchemy.orm import Load, Session
+
+from app.core.db_schema import SM2RACING_SCHEMA
+from app.models.driver import Driver
+from app.models.event import Event
+from app.models.run_group import RunGroup
+from app.models.structured_notes import (
+    Alignment,
+    Pressure,
+    Seance,
+    TireHistory,
+    TireInventory,
+    TireTemperature,
+    Suspension,
+)
+from app.models.submission import Submission
+from app.models.vehicle import Vehicle
+from app.schemas.chatbot import (
+    ChatbotCard,
+    ChatbotContextResponse,
+    ChatbotDirectoryChoice,
+    ChatbotEventChoice,
+    ChatbotField,
+    ChatbotQuery,
+    ChatbotRecordReference,
+    ChatbotResponse,
+    ChatbotSection,
+    ChatbotSessionChoice,
+)
+
+
+NO_DATA_MESSAGE = "No matching data was found in the SM2 Racing database."
+SOURCE_LABEL = "SM2 Racing Database"
+logger = logging.getLogger(__name__)
+DEFAULT_FOLLOW_UPS = [
+    "Show all events",
+    "Show latest sessions",
+    "Show sessions for this event",
+    "Show sessions for driver Alex",
+    "Show setup for latest session",
+    "Show tire pressures",
+    "Show tire pressures for Session 2",
+    "Show suspension data",
+    "Show alignment data",
+    "Show alignment for Car 12",
+    "Show latest submissions",
+    "Show driver and vehicle data",
+    "Compare sessions",
+]
+
+UNSUPPORTED_MESSAGE = (
+    "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
+    "alignment, submissions, drivers, and vehicles. Please ask one of those questions."
+)
+PLEASE_SELECT_EVENT_MESSAGE = "Please select an event or include the event name so I can show its sessions."
+NO_EVENTS_MESSAGE = "No events were found in the SM2 Racing database."
+NO_DRIVER_MATCH_MESSAGE = "No driver matching '{term}' was found in the database."
+NO_VEHICLE_MATCH_MESSAGE = "No vehicle matching Car {term} was found in the database."
+MULTIPLE_DRIVER_MATCH_MESSAGE = "I found multiple drivers matching '{term}'. Please choose the correct driver."
+MULTIPLE_VEHICLE_MATCH_MESSAGE = "I found multiple vehicles matching Car {term}. Please choose the correct vehicle."
+MULTIPLE_SESSION_MATCH_MESSAGE = "I found multiple Session {number} records. Please select an event or provide more details."
+
+
+@dataclass(slots=True)
+class SessionBundle:
+    session: Seance
+    driver: Driver | None
+    vehicle: Vehicle | None
+
+
+def _table(name: str) -> str:
+    return f"{SM2RACING_SCHEMA}.{name}"
+
+
+def _text(value: object | None, fallback: str = "Not available") -> str:
+    if value is None:
+        return fallback
+
+    text = str(value).strip()
+    return text or fallback
+
+
+def _enum_text(value: object | None, fallback: str = "Not available") -> str:
+    if value is None:
+        return fallback
+
+    raw = getattr(value, "value", value)
+    return _text(raw, fallback)
+
+
+def _humanize_enum(value: object | None) -> str:
+    text = _enum_text(value)
+    if text == "Not available":
+        return text
+
+    return text.replace("_", " ").title()
+
+
+def _date_text(value: date | datetime | None) -> str:
+    if value is None:
+        return "Not available"
+
+    current = value.date() if isinstance(value, datetime) else value
+    return current.strftime("%b %d, %Y").replace(" 0", " ")
+
+
+def _datetime_text(value: datetime | None) -> str:
+    if value is None:
+        return "Not available"
+
+    return value.strftime("%b %d, %Y %I:%M %p").replace(" 0", " ")
+
+
+def _time_text(value: time | None) -> str:
+    if value is None:
+        return "Not available"
+
+    return value.strftime("%I:%M %p").lstrip("0")
+
+
+def _duration_text(minutes: int | None) -> str:
+    if minutes is None:
+        return "Not available"
+
+    total_minutes = int(minutes)
+    hours, remainder = divmod(total_minutes, 60)
+    if hours and remainder:
+        return f"{hours}h {remainder}m"
+    if hours:
+        return f"{hours}h"
+    return f"{remainder}m"
+
+
+def _decimal_text(value: object | None, digits: int = 2) -> str:
+    if value is None:
+        return "Not available"
+
+    try:
+        text = f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return _text(value)
+
+    return text.rstrip("0").rstrip(".")
+
+
+def _joined_text(values: Iterable[str | None]) -> str:
+    cleaned = [str(value).strip() for value in values if str(value).strip()]
+    return ", ".join(cleaned) if cleaned else "Not available"
+
+
+def _tone_for_active(is_active: bool | None) -> str:
+    return "success" if is_active is not False else "neutral"
+
+
+def _tone_for_status(status_value: object | None) -> str:
+    if status_value is None:
+        return "neutral"
+
+    text = _enum_text(status_value, "").upper()
+    if text in {"ACTIVE", "READY", "OPEN", "CURRENT"}:
+        return "success"
+    if text in {"ARCHIVED", "INACTIVE", "DISCARDED", "CLOSED"}:
+        return "neutral"
+    if text in {"WARNING", "PENDING"}:
+        return "warning"
+    return "accent"
+
+
+def _field(label: str, value: object | None) -> ChatbotField:
+    return ChatbotField(label=label, value=_text(value))
+
+
+def _session_status_value(session: Seance) -> object | None:
+    # The live database currently lacks the status column, so only read it if it was loaded.
+    return session.__dict__.get("status")
+
+
+def _record_reference(
+    kind: str,
+    value: object,
+    label: str,
+    *,
+    details: str | None = None,
+) -> ChatbotRecordReference:
+    return ChatbotRecordReference(kind=kind, value=str(value), label=label, details=details)
+
+
+def _driver_choice(driver: Driver) -> ChatbotDirectoryChoice:
+    return ChatbotDirectoryChoice(
+        value=driver.driver_id,
+        label=_driver_name(driver),
+        sublabel=_joined_text([driver.team_name, driver.license_number]),
+        tone=_tone_for_active(driver.is_active),
+    )
+
+
+def _vehicle_choice(vehicle: Vehicle) -> ChatbotDirectoryChoice:
+    return ChatbotDirectoryChoice(
+        value=vehicle.vehicle_id,
+        label=_vehicle_name(vehicle),
+        sublabel=_joined_text([vehicle.vehicle_class, vehicle.driver_id]),
+        tone=_tone_for_active(vehicle.is_active),
+    )
+
+
+def _load_driver_rows(
+    db: Session,
+    *,
+    limit: int = 8,
+    driver_id: str | None = None,
+    active_only: bool | None = None,
+) -> list[Driver]:
+    stmt = select(Driver)
+    if driver_id:
+        stmt = stmt.where(Driver.driver_id == driver_id)
+
+    if active_only is True:
+        stmt = stmt.where(Driver.is_active.is_(True))
+    elif active_only is False:
+        stmt = stmt.where(Driver.is_active.is_(False))
+
+    stmt = stmt.order_by(
+        Driver.is_active.desc(),
+        Driver.last_name.asc(),
+        Driver.first_name.asc(),
+        Driver.driver_name.asc(),
+    )
+    if limit:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
+def _load_vehicle_rows(
+    db: Session,
+    *,
+    limit: int = 8,
+    vehicle_id: str | None = None,
+    active_only: bool | None = None,
+) -> list[Vehicle]:
+    stmt = select(Vehicle)
+    if vehicle_id:
+        stmt = stmt.where(Vehicle.vehicle_id == vehicle_id)
+
+    if active_only is True:
+        stmt = stmt.where(Vehicle.is_active.is_(True))
+    elif active_only is False:
+        stmt = stmt.where(Vehicle.is_active.is_(False))
+
+    stmt = stmt.order_by(
+        Vehicle.is_active.desc(),
+        Vehicle.make.asc(),
+        Vehicle.model.asc(),
+        Vehicle.vehicle_id.asc(),
+    )
+    if limit:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
+def _load_submission_input_rows(
+    db: Session,
+    *,
+    session_id: str,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                submission_id,
+                id_seance,
+                submission_type,
+                source,
+                raw_text,
+                raw_payload_json,
+                confidence,
+                created_by,
+                created_at,
+                validation_status,
+                validation_message
+            FROM {_table("submission_inputs")}
+            WHERE id_seance = :session_id
+            ORDER BY created_at DESC, submission_id DESC
+            LIMIT :limit
+            """
+        ),
+        {"session_id": session_id, "limit": limit},
+    ).mappings()
+    return [dict(row) for row in rows]
+
+
+def _session_event_id(session: Seance, event_rows: list[tuple[Event, RunGroup | None]]) -> str | None:
+    for event, _ in event_rows:
+        if event.start_date.date() <= session.session_date <= event.end_date.date():
+            return str(event.id)
+    return None
+
+
+def _session_load_options() -> tuple[Load, ...]:
+    return (
+        Load(Seance).load_only(
+            Seance.id_seance,
+            Seance.session_date,
+            Seance.session_time,
+            Seance.track,
+            Seance.driver_id,
+            Seance.vehicle_id,
+            Seance.session_type,
+            Seance.session_number,
+            Seance.duration_min,
+            Seance.tire_set,
+            Seance.notes,
+            Seance.created_by,
+            Seance.created_at,
+        ),
+    )
+
+
+def _card(
+    title: str,
+    *,
+    subtitle: str | None = None,
+    badge: str | None = None,
+    badge_tone: str = "neutral",
+    icon_key: str | None = None,
+    fields: list[ChatbotField] | None = None,
+) -> ChatbotCard:
+    return ChatbotCard(
+        title=title,
+        subtitle=subtitle,
+        badge=badge,
+        badge_tone=badge_tone,
+        icon_key=icon_key,
+        fields=fields or [],
+    )
+
+
+def _section(
+    title: str,
+    *,
+    subtitle: str | None = None,
+    variant: str = "fields",
+    icon_key: str | None = None,
+    fields: list[ChatbotField] | None = None,
+    cards: list[ChatbotCard] | None = None,
+    table_headers: list[str] | None = None,
+    table_rows: list[list[str]] | None = None,
+) -> ChatbotSection:
+    return ChatbotSection(
+        title=title,
+        subtitle=subtitle,
+        variant=variant,
+        icon_key=icon_key,
+        fields=fields or [],
+        cards=cards or [],
+        table_headers=table_headers or [],
+        table_rows=table_rows or [],
+    )
+
+
+def _driver_name(driver: Driver | None, fallback: str | None = None) -> str:
+    if driver is None:
+        return _text(fallback)
+
+    candidate = _text(driver.driver_name, "")
+    if candidate != "Not available":
+        return candidate
+
+    combined = " ".join(
+        part.strip()
+        for part in [driver.first_name, driver.last_name]
+        if part and part.strip()
+    ).strip()
+    return combined or _text(driver.driver_id)
+
+
+def _vehicle_name(vehicle: Vehicle | None, fallback: str | None = None) -> str:
+    if vehicle is None:
+        return _text(fallback)
+
+    candidate = " ".join(
+        part.strip()
+        for part in [vehicle.make, vehicle.model]
+        if part and part.strip()
+    ).strip()
+    return candidate or _text(vehicle.vehicle_id)
+
+
+def _response_data(
+    *,
+    sections: list[ChatbotSection] | None = None,
+    records_used: list[ChatbotRecordReference] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "records_used_count": len(records_used or []),
+        "sections": [section.model_dump(mode="json") for section in (sections or [])],
+    }
+    if records_used is not None:
+        data["records_used"] = [record.model_dump(mode="json") for record in records_used]
+
+    for key, value in extra.items():
+        if value is not None:
+            data[key] = value
+
+    return data
+
+
+def _query_tokens(query: str) -> list[str]:
+    stopwords = {
+        "a",
+        "all",
+        "and",
+        "car",
+        "data",
+        "driver",
+        "events",
+        "for",
+        "latest",
+        "list",
+        "my",
+        "please",
+        "recent",
+        "session",
+        "sessions",
+        "show",
+        "the",
+        "this",
+        "vehicle",
+    }
+    return [token for token in re.findall(r"[A-Za-z0-9]+", query.lower()) if token not in stopwords]
+
+
+def _query_phrase_matches(haystack: str, query: str) -> bool:
+    normalized_haystack = re.sub(r"\s+", " ", haystack.lower()).strip()
+    normalized_query = re.sub(r"\s+", " ", query.lower()).strip()
+    if not normalized_query:
+        return False
+
+    if normalized_query in normalized_haystack:
+        return True
+
+    tokens = _query_tokens(query)
+    if not tokens:
+        return normalized_query in normalized_haystack
+
+    return all(token in normalized_haystack for token in tokens)
+
+
+def _event_match_text(event: Event, run_group: RunGroup | None) -> str:
+    return " ".join(
+        part
+        for part in [
+            event.name,
+            event.track,
+            event.notes,
+            _enum_text(run_group.normalized) if run_group else None,
+            run_group.raw_text if run_group else None,
+        ]
+        if part
+    )
+
+
+def _driver_match_text(driver: Driver) -> str:
+    return " ".join(
+        part
+        for part in [
+            driver.driver_id,
+            driver.driver_name,
+            driver.first_name,
+            driver.last_name,
+            driver.license_number,
+            driver.team_name,
+            _joined_text(driver.aliases),
+        ]
+        if part
+    )
+
+
+def _vehicle_match_text(vehicle: Vehicle) -> str:
+    return " ".join(
+        part
+        for part in [
+            vehicle.vehicle_id,
+            vehicle.make,
+            vehicle.model,
+            vehicle.registration_number,
+            vehicle.vehicle_class,
+            vehicle.driver_id,
+            vehicle.notes,
+        ]
+        if part
+    )
+
+
+def _load_event_rows(db: Session, *, limit: int | None = None) -> list[tuple[Event, RunGroup | None]]:
+    stmt = (
+        select(Event, RunGroup)
+        .join(RunGroup, RunGroup.event_id == Event.id, isouter=True)
+        .order_by(Event.start_date.desc(), Event.created_at.desc())
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).all())
+
+
+def _find_event_matches(
+    db: Session,
+    search_text: str,
+    *,
+    limit: int = 5,
+) -> list[tuple[Event, RunGroup | None]]:
+    if not search_text.strip():
+        return []
+
+    rows = _load_event_rows(db, limit=None)
+    matches = [row for row in rows if _query_phrase_matches(_event_match_text(*row), search_text)]
+    return matches[:limit]
+
+
+def _find_driver_matches(
+    db: Session,
+    search_text: str,
+    *,
+    limit: int = 5,
+) -> list[Driver]:
+    if not search_text.strip():
+        return []
+
+    rows = _load_driver_rows(db, limit=50)
+    matches = [driver for driver in rows if _query_phrase_matches(_driver_match_text(driver), search_text)]
+    return matches[:limit]
+
+
+def _find_vehicle_matches(
+    db: Session,
+    search_text: str,
+    *,
+    limit: int = 5,
+) -> list[Vehicle]:
+    if not search_text.strip():
+        return []
+
+    rows = _load_vehicle_rows(db, limit=50)
+    matches = [vehicle for vehicle in rows if _query_phrase_matches(_vehicle_match_text(vehicle), search_text)]
+    return matches[:limit]
+
+
+def _extract_session_number(query: str) -> int | None:
+    match = re.search(r"\bsession(?:\s+number)?\s*#?\s*(\d+)\b", query, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    match = re.search(r"\b(?:session|seance)\s*(\d+)\b", query, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    return None
+
+
+def _extract_driver_query(query: str) -> str | None:
+    patterns = [
+        r"(?:for\s+driver|driver\s+sessions?|driver)\s+(.+)$",
+        r"(?:show\s+sessions?\s+for\s+driver)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            value = re.sub(r"[\s.,;:]+$", "", value)
+            if value:
+                return value
+    return None
+
+
+def _extract_event_query(query: str) -> str | None:
+    patterns = [
+        r"(?:for\s+event|event)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            value = re.sub(r"[\s.,;:]+$", "", value)
+            if value and value.lower() not in {"this event", "the event"}:
+                return value
+    return None
+
+
+def _extract_car_number(query: str) -> str | None:
+    patterns = [
+        r"\bcar\s*#?\s*([A-Za-z0-9-]+)\b",
+        r"\bvehicle\s*#?\s*([A-Za-z0-9-]+)\b",
+        r"\bcar\s+([A-Za-z0-9-]+)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _session_event_match(session: Seance, event_rows: list[tuple[Event, RunGroup | None]]) -> tuple[Event | None, RunGroup | None]:
+    for event, run_group in event_rows:
+        if event.start_date.date() <= session.session_date <= event.end_date.date():
+            return event, run_group
+    return None, None
+
+
+def _build_candidate_table(
+    *,
+    title: str,
+    subtitle: str,
+    headers: list[str],
+    rows: list[list[str]],
+    icon_key: str,
+) -> ChatbotSection:
+    return _section(
+        title,
+        subtitle=subtitle,
+        variant="table",
+        icon_key=icon_key,
+        table_headers=headers,
+        table_rows=rows,
+    )
+
+
+def _selection_response(
+    *,
+    title: str,
+    message: str,
+    intent: str,
+    section: ChatbotSection,
+    records_used: list[ChatbotRecordReference] | None = None,
+    follow_up: list[str] | None = None,
+) -> ChatbotResponse:
+    records_used = records_used or []
+    return ChatbotResponse(
+        kind="message",
+        title=title,
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=bool(records_used or section.table_rows or section.cards or section.fields),
+        intent=intent,
+        status="unsupported",
+        data=_response_data(sections=[section], records_used=records_used, message=message),
+        records_used=records_used,
+        sections=[section],
+        follow_up=follow_up or DEFAULT_FOLLOW_UPS,
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _not_found_response(
+    title: str,
+    message: str,
+    *,
+    intent: str,
+    follow_up: list[str] | None = None,
+    data: dict[str, Any] | list[Any] | None = None,
+) -> ChatbotResponse:
+    return ChatbotResponse(
+        kind="empty",
+        title=title,
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=False,
+        no_data_message=message,
+        intent=intent,
+        status="not_found",
+        data=data or {"message": message},
+        follow_up=follow_up or DEFAULT_FOLLOW_UPS,
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _unsupported_response(
+    title: str,
+    message: str,
+    *,
+    intent: str,
+    sections: list[ChatbotSection] | None = None,
+    records_used: list[ChatbotRecordReference] | None = None,
+    follow_up: list[str] | None = None,
+    data: dict[str, Any] | list[Any] | None = None,
+) -> ChatbotResponse:
+    return ChatbotResponse(
+        kind="message",
+        title=title,
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=bool(sections or records_used),
+        intent=intent,
+        status="unsupported",
+        data=data or _response_data(sections=sections, records_used=records_used, message=message),
+        sections=sections or [],
+        records_used=records_used or [],
+        follow_up=follow_up or DEFAULT_FOLLOW_UPS,
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _session_heading(session: Seance) -> str:
+    return f"Session {session.session_number}"
+
+
+def _session_choice(
+    session: Seance,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+    *,
+    event_id: str | None = None,
+) -> ChatbotSessionChoice:
+    return ChatbotSessionChoice(
+        value=session.id_seance,
+        label=_session_heading(session),
+        sublabel=(
+            f"{session.track} | {_driver_name(driver, session.driver_id)} | "
+            f"{_vehicle_name(vehicle, session.vehicle_id)} | {_date_text(session.session_date)} "
+            f"{_time_text(session.session_time)}"
+        ),
+        session_date=session.session_date,
+        session_time=session.session_time,
+        track=session.track,
+        event_id=event_id,
+        driver_id=session.driver_id,
+        vehicle_id=session.vehicle_id,
+        tone=_tone_for_status(_session_status_value(session)),
+    )
+
+
+def _event_choice(event: Event, run_group: RunGroup | None) -> ChatbotEventChoice:
+    sublabel = f"{event.track} | {_date_text(event.start_date)} - {_date_text(event.end_date)}"
+    if run_group is not None:
+        sublabel = f"{sublabel} | {_enum_text(run_group.normalized)}"
+
+    return ChatbotEventChoice(
+        value=str(event.id),
+        label=event.name,
+        sublabel=sublabel,
+        start_date=event.start_date.date(),
+        end_date=event.end_date.date(),
+        tone=_tone_for_active(event.is_active),
+    )
+
+
+def _session_stmt(
+    *,
+    event: Event | None = None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+) -> object:
+    stmt = (
+        select(Seance, Driver, Vehicle)
+        .options(*_session_load_options())
+        .join(Driver, Driver.driver_id == Seance.driver_id, isouter=True)
+        .join(Vehicle, Vehicle.vehicle_id == Seance.vehicle_id, isouter=True)
+    )
+
+    if event is not None:
+        stmt = stmt.where(
+            and_(
+                Seance.session_date >= event.start_date.date(),
+                Seance.session_date <= event.end_date.date(),
+            )
+        )
+
+    if driver_id:
+        stmt = stmt.where(Seance.driver_id == driver_id)
+
+    if vehicle_id:
+        stmt = stmt.where(Seance.vehicle_id == vehicle_id)
+
+    return stmt.order_by(
+        Seance.session_date.desc(),
+        Seance.session_time.desc().nullslast(),
+        Seance.created_at.desc(),
+    )
+
+
+def _load_session_rows(
+    db: Session,
+    *,
+    event: Event | None = None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+    limit: int | None = 10,
+) -> list[tuple[Seance, Driver | None, Vehicle | None]]:
+    stmt = _session_stmt(event=event, driver_id=driver_id, vehicle_id=vehicle_id)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).all())
+
+
+def _load_session_bundle(db: Session, session_id: str) -> SessionBundle | None:
+    row = db.execute(
+        select(Seance, Driver, Vehicle)
+        .options(*_session_load_options())
+        .join(Driver, Driver.driver_id == Seance.driver_id, isouter=True)
+        .join(Vehicle, Vehicle.vehicle_id == Seance.vehicle_id, isouter=True)
+        .where(Seance.id_seance == session_id)
+    ).first()
+
+    if row is None:
+        return None
+
+    session, driver, vehicle = row
+    return SessionBundle(session=session, driver=driver, vehicle=vehicle)
+
+
+def _session_in_event_window(session: Seance, event: Event) -> bool:
+    return event.start_date.date() <= session.session_date <= event.end_date.date()
+
+
+def _select_anchor_session(
+    db: Session,
+    *,
+    event: Event | None,
+    session_id: str | None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+) -> SessionBundle | None:
+    if session_id:
+        bundle = _load_session_bundle(db, session_id)
+        if bundle is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            return None
+        if driver_id and bundle.session.driver_id != driver_id:
+            return None
+        if vehicle_id and bundle.session.vehicle_id != vehicle_id:
+            return None
+        return bundle
+
+    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=1)
+    if not rows:
+        return None
+
+    session, driver, vehicle = rows[0]
+    return SessionBundle(session=session, driver=driver, vehicle=vehicle)
+
+
+def _bundle_from_row(row: tuple[Seance, Driver | None, Vehicle | None]) -> SessionBundle:
+    session, driver, vehicle = row
+    return SessionBundle(session=session, driver=driver, vehicle=vehicle)
+
+
+def _load_session_rows_by_number(
+    db: Session,
+    *,
+    session_number: int,
+    event: Event | None = None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+) -> list[tuple[Seance, Driver | None, Vehicle | None]]:
+    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    return [row for row in rows if row[0].session_number == session_number]
+
+
+def _latest_bundle_with_record(
+    db: Session,
+    *,
+    model: type[Any],
+    event: Event | None = None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+) -> SessionBundle | None:
+    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    for session, driver, vehicle in rows:
+        if db.scalar(select(model).where(model.id_seance == session.id_seance)) is not None:
+            return SessionBundle(session=session, driver=driver, vehicle=vehicle)
+    return None
+
+
+def _event_cards(rows: list[tuple[Event, RunGroup | None]]) -> list[ChatbotCard]:
+    cards: list[ChatbotCard] = []
+    for event, run_group in rows:
+        cards.append(
+            _card(
+                event.name,
+                subtitle=f"{event.track} | {_date_text(event.start_date)} - {_date_text(event.end_date)}",
+                badge="Active" if event.is_active else "Archived",
+                badge_tone=_tone_for_active(event.is_active),
+                icon_key="event",
+                fields=[
+                    _field("Track", event.track),
+                    _field("Start", _date_text(event.start_date)),
+                    _field("End", _date_text(event.end_date)),
+                    _field("Run group", run_group.normalized if run_group else None),
+                    _field("Notes", event.notes or "No notes"),
+                ],
+            )
+        )
+    return cards
+
+
+def _session_cards(
+    rows: list[tuple[Seance, Driver | None, Vehicle | None]],
+    *,
+    event_rows: list[tuple[Event, RunGroup | None]] | None = None,
+    include_event: bool = False,
+    include_run_group: bool = False,
+    include_created: bool = False,
+) -> list[ChatbotCard]:
+    cards: list[ChatbotCard] = []
+    for session, driver, vehicle in rows:
+        event: Event | None = None
+        run_group: RunGroup | None = None
+        if event_rows is not None:
+            event, run_group = _session_event_match(session, event_rows)
+
+        fields = [
+            _field("Session ID", session.id_seance),
+            _field("Driver", _driver_name(driver, session.driver_id)),
+            _field("Vehicle", _vehicle_name(vehicle, session.vehicle_id)),
+            _field("Type", session.session_type or "Not available"),
+            _field("Duration", _duration_text(session.duration_min)),
+            _field("Tire set", session.tire_set or "Not available"),
+            _field("Created by", session.created_by),
+        ]
+        if include_event:
+            fields.insert(0, _field("Event", event.name if event is not None else "Not available"))
+        if include_run_group:
+            fields.insert(
+                1 if include_event else 0,
+                _field("Run group", _enum_text(run_group.normalized) if run_group is not None else "Not available"),
+            )
+        if include_created:
+            fields.append(_field("Created", _datetime_text(session.created_at)))
+        fields.append(_field("Status", _humanize_enum(_session_status_value(session))))
+
+        cards.append(
+            _card(
+                _session_heading(session),
+                subtitle=f"{session.track} | {_date_text(session.session_date)} {_time_text(session.session_time)}",
+                badge=_humanize_enum(_session_status_value(session)),
+                badge_tone=_tone_for_status(_session_status_value(session)),
+                icon_key="session",
+                fields=fields,
+            )
+        )
+    return cards
+
+
+def _pressure_section(pressure: Pressure | None) -> ChatbotSection:
+    if pressure is None:
+        return _section(
+            "Pressures",
+            subtitle="No pressure record was stored for this session.",
+            variant="fields",
+            icon_key="pressure",
+            fields=[_field("Pressures", "No pressure record was stored for this session.")],
+        )
+
+    cards = [
+        _card(
+            "Front Left",
+            subtitle="FL",
+            icon_key="pressure",
+            fields=[_field("Cold", _decimal_text(pressure.cold_fl)), _field("Hot", _decimal_text(pressure.hot_fl))],
+        ),
+        _card(
+            "Front Right",
+            subtitle="FR",
+            icon_key="pressure",
+            fields=[_field("Cold", _decimal_text(pressure.cold_fr)), _field("Hot", _decimal_text(pressure.hot_fr))],
+        ),
+        _card(
+            "Rear Left",
+            subtitle="RL",
+            icon_key="pressure",
+            fields=[_field("Cold", _decimal_text(pressure.cold_rl)), _field("Hot", _decimal_text(pressure.hot_rl))],
+        ),
+        _card(
+            "Rear Right",
+            subtitle="RR",
+            icon_key="pressure",
+            fields=[_field("Cold", _decimal_text(pressure.cold_rr)), _field("Hot", _decimal_text(pressure.hot_rr))],
+        ),
+    ]
+
+    return _section("Pressures", variant="cards", icon_key="pressure", cards=cards)
+
+
+def _suspension_section(suspension: Suspension | None) -> ChatbotSection:
+    if suspension is None:
+        return _section(
+            "Suspension",
+            subtitle="No suspension record was stored for this session.",
+            variant="fields",
+            icon_key="suspension",
+            fields=[_field("Suspension", "No suspension record was stored for this session.")],
+        )
+
+    return _section(
+        "Suspension",
+        variant="fields",
+        icon_key="suspension",
+        fields=[
+            _field("Rebound FL", _decimal_text(suspension.rebound_fl, 0)),
+            _field("Rebound FR", _decimal_text(suspension.rebound_fr, 0)),
+            _field("Rebound RL", _decimal_text(suspension.rebound_rl, 0)),
+            _field("Rebound RR", _decimal_text(suspension.rebound_rr, 0)),
+            _field("Bump FL", _decimal_text(suspension.bump_fl, 0)),
+            _field("Bump FR", _decimal_text(suspension.bump_fr, 0)),
+            _field("Bump RL", _decimal_text(suspension.bump_rl, 0)),
+            _field("Bump RR", _decimal_text(suspension.bump_rr, 0)),
+            _field("Sway bar F", suspension.sway_bar_f or "Not available"),
+            _field("Sway bar R", suspension.sway_bar_r or "Not available"),
+            _field("Wing angle", _decimal_text(suspension.wing_angle_deg)),
+        ],
+    )
+
+
+def _alignment_section(alignment: Alignment | None) -> ChatbotSection:
+    if alignment is None:
+        return _section(
+            "Alignment",
+            subtitle="No alignment record was stored for this session.",
+            variant="fields",
+            icon_key="alignment",
+            fields=[_field("Alignment", "No alignment record was stored for this session.")],
+        )
+
+    return _section(
+        "Alignment",
+        variant="fields",
+        icon_key="alignment",
+        fields=[
+            _field("Camber FL", _decimal_text(alignment.camber_fl)),
+            _field("Camber FR", _decimal_text(alignment.camber_fr)),
+            _field("Camber RL", _decimal_text(alignment.camber_rl)),
+            _field("Camber RR", _decimal_text(alignment.camber_rr)),
+            _field("Toe front", alignment.toe_front or "Not available"),
+            _field("Toe rear", alignment.toe_rear or "Not available"),
+            _field("Caster L", _decimal_text(alignment.caster_l)),
+            _field("Caster R", _decimal_text(alignment.caster_r)),
+            _field("Ride height F", _decimal_text(alignment.ride_height_f)),
+            _field("Ride height R", _decimal_text(alignment.ride_height_r)),
+            _field("Corner weight FL", _decimal_text(alignment.corner_weight_fl)),
+            _field("Corner weight FR", _decimal_text(alignment.corner_weight_fr)),
+            _field("Corner weight RL", _decimal_text(alignment.corner_weight_rl)),
+            _field("Corner weight RR", _decimal_text(alignment.corner_weight_rr)),
+            _field("Cross weight", _decimal_text(alignment.cross_weight_pct)),
+            _field("Rake", _decimal_text(alignment.rake_mm)),
+            _field("Wheelbase", _decimal_text(alignment.wheelbase_mm)),
+        ],
+    )
+
+
+def _temperature_section(temperature: TireTemperature | None) -> ChatbotSection:
+    if temperature is None:
+        return _section(
+            "Tire temperatures",
+            subtitle="No tire temperature record was stored for this session.",
+            variant="fields",
+            icon_key="temperature",
+            fields=[_field("Tire temperatures", "No tire temperature record was stored for this session.")],
+        )
+
+    cards = [
+        _card(
+            "Front Left",
+            subtitle="FL",
+            icon_key="temperature",
+            fields=[
+                _field("Inner", _decimal_text(temperature.fl_in)),
+                _field("Middle", _decimal_text(temperature.fl_mid)),
+                _field("Outer", _decimal_text(temperature.fl_out)),
+            ],
+        ),
+        _card(
+            "Front Right",
+            subtitle="FR",
+            icon_key="temperature",
+            fields=[
+                _field("Inner", _decimal_text(temperature.fr_in)),
+                _field("Middle", _decimal_text(temperature.fr_mid)),
+                _field("Outer", _decimal_text(temperature.fr_out)),
+            ],
+        ),
+        _card(
+            "Rear Left",
+            subtitle="RL",
+            icon_key="temperature",
+            fields=[
+                _field("Inner", _decimal_text(temperature.rl_in)),
+                _field("Middle", _decimal_text(temperature.rl_mid)),
+                _field("Outer", _decimal_text(temperature.rl_out)),
+            ],
+        ),
+        _card(
+            "Rear Right",
+            subtitle="RR",
+            icon_key="temperature",
+            fields=[
+                _field("Inner", _decimal_text(temperature.rr_in)),
+                _field("Middle", _decimal_text(temperature.rr_mid)),
+                _field("Outer", _decimal_text(temperature.rr_out)),
+            ],
+        ),
+    ]
+
+    return _section("Tire temperatures", variant="cards", icon_key="temperature", cards=cards)
+
+
+def _history_section(db: Session, session: Seance) -> ChatbotSection:
+    rows = list(
+        db.execute(
+            select(TireHistory, TireInventory)
+            .join(TireInventory, TireInventory.tire_id == TireHistory.tire_id, isouter=True)
+            .where(TireHistory.id_seance == session.id_seance)
+            .order_by(TireHistory.created_at.desc(), TireHistory.tire_id.asc())
+            .limit(8)
+        ).all()
+    )
+
+    if not rows:
+        return _section(
+            "Tire history",
+            subtitle="No tire history rows were stored for this session.",
+            variant="fields",
+            icon_key="history",
+            fields=[_field("Tire history", "No tire history rows were stored for this session.")],
+        )
+
+    cards: list[ChatbotCard] = []
+    for history, inventory in rows:
+        subtitle = _text(
+            inventory.manufacturer if inventory else None,
+            fallback=_text(history.track, "Tire history"),
+        )
+        cards.append(
+            _card(
+                history.tire_id,
+                subtitle=subtitle,
+                icon_key="history",
+                fields=[
+                    _field("Usage date", _date_text(history.usage_date)),
+                    _field("Track", history.track or "Not available"),
+                    _field("Duration", _duration_text(history.duration_min)),
+                    _field("Heat cycles", _decimal_text(inventory.heat_cycles, 0) if inventory else "Not available"),
+                    _field("Manufacturer", inventory.manufacturer if inventory else "Not available"),
+                    _field("Model", inventory.model if inventory and inventory.model else "Not available"),
+                    _field("Status", _humanize_enum(inventory.status) if inventory else "Not available"),
+                ],
+            )
+        )
+
+    return _section("Tire history", variant="cards", icon_key="history", cards=cards)
+
+
+def _submission_metadata_section(db: Session, session: Seance) -> tuple[ChatbotSection, list[ChatbotRecordReference]]:
+    rows = _load_submission_input_rows(db, session_id=session.id_seance, limit=8)
+    if not rows:
+        return (
+            _section(
+                "Submission metadata",
+                subtitle="No submission metadata was stored for this session.",
+                variant="fields",
+                icon_key="default",
+                fields=[_field("Submission metadata", "No submission metadata was stored for this session.")],
+            ),
+            [],
+        )
+
+    cards: list[ChatbotCard] = []
+    references: list[ChatbotRecordReference] = []
+    for row in rows:
+        submission_id = row.get("submission_id")
+        submission_type = _text(row.get("submission_type"), "Submission input")
+        source = _text(row.get("source"))
+        validation_status = _text(row.get("validation_status"))
+        confidence = row.get("confidence")
+        cards.append(
+            _card(
+                f"Submission {submission_id}",
+                subtitle=f"{submission_type} | {source} | {validation_status}",
+                icon_key="default",
+                fields=[
+                    _field("Session", session.id_seance),
+                    _field("Submission type", submission_type),
+                    _field("Source", source),
+                    _field("Confidence", _decimal_text(confidence, 2) if confidence is not None else "Not available"),
+                    _field("Created by", row.get("created_by")),
+                    _field("Validation", validation_status),
+                    _field("Validation message", row.get("validation_message") or "Not available"),
+                ],
+            )
+        )
+        references.append(
+            _record_reference(
+                "submission_input",
+                submission_id,
+                submission_type,
+                details=f"{source} | {validation_status}",
+            )
+        )
+
+    return (
+        _section(
+            "Submission metadata",
+            subtitle="Structured submission inputs attached to this session.",
+            variant="cards",
+            icon_key="default",
+            cards=cards,
+        ),
+        references,
+    )
+
+
+def _session_metadata_section(
+    bundle: SessionBundle,
+    pressure: Pressure | None,
+    *,
+    event: Event | None = None,
+    run_group: RunGroup | None = None,
+) -> ChatbotSection:
+    session = bundle.session
+    fields = [
+        _field("Session", _session_heading(session)),
+        _field("Session ID", session.id_seance),
+        _field("Date", _date_text(session.session_date)),
+        _field("Time", _time_text(session.session_time)),
+        _field("Track", session.track),
+        _field("Driver", _driver_name(bundle.driver, session.driver_id)),
+        _field("Vehicle", _vehicle_name(bundle.vehicle, session.vehicle_id)),
+        _field("Type", session.session_type or "Not available"),
+        _field("Duration", _duration_text(session.duration_min)),
+        _field("Tire set", session.tire_set or "Not available"),
+        _field("Status", _humanize_enum(_session_status_value(session))),
+        _field("Pressure record", "Available" if pressure else "Not available"),
+    ]
+
+    if event is not None:
+        fields = [
+            _field("Event", event.name),
+            _field("Event track", event.track),
+            _field("Event dates", f"{_date_text(event.start_date)} - {_date_text(event.end_date)}"),
+            _field("Run group", _enum_text(run_group.normalized) if run_group else "Not available"),
+            *fields,
+        ]
+
+    return _section(
+        "Session metadata",
+        subtitle="Driver, vehicle, and session context for the selected setup record.",
+        variant="fields",
+        icon_key="session",
+        fields=fields,
+    )
+
+
+def _session_summary(bundle: SessionBundle, *, scope_note: str | None = None) -> str:
+    session = bundle.session
+    lines = [
+        f"Loaded {_session_heading(session)} from the SM2 Racing Database.",
+        f"{_driver_name(bundle.driver, session.driver_id)} in {_vehicle_name(bundle.vehicle, session.vehicle_id)} at {session.track}.",
+    ]
+    if scope_note:
+        lines.append(scope_note)
+    return "\n\n".join(lines)
+
+
+def _setup_response(
+    db: Session,
+    *,
+    bundle: SessionBundle,
+    event: Event | None = None,
+    pressure_focus_only: bool = False,
+    title: str = "Setup Sheet",
+    intent: str = "setup_latest_session",
+) -> ChatbotResponse:
+    session = bundle.session
+    run_group = db.scalar(select(RunGroup).where(RunGroup.event_id == event.id)) if event is not None else None
+    pressure = db.scalar(select(Pressure).where(Pressure.id_seance == session.id_seance))
+    suspension = db.scalar(select(Suspension).where(Suspension.id_seance == session.id_seance))
+    alignment = db.scalar(select(Alignment).where(Alignment.id_seance == session.id_seance))
+    temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == session.id_seance))
+    submission_section, submission_refs = _submission_metadata_section(db, session)
+
+    sections = [
+        _session_metadata_section(bundle, pressure, event=event, run_group=run_group),
+        _pressure_section(pressure),
+    ]
+    if not pressure_focus_only:
+        sections.extend(
+            [
+                _suspension_section(suspension),
+                _alignment_section(alignment),
+                _temperature_section(temperature),
+                _history_section(db, session),
+                submission_section,
+            ]
+        )
+
+    records_used = [
+        _record_reference("session", session.id_seance, _session_heading(session), details=session.track),
+        _record_reference("driver", bundle.driver.driver_id if bundle.driver else session.driver_id, _driver_name(bundle.driver, session.driver_id)),
+        _record_reference("vehicle", bundle.vehicle.vehicle_id if bundle.vehicle else session.vehicle_id, _vehicle_name(bundle.vehicle, session.vehicle_id)),
+    ]
+    if event is not None:
+        records_used.append(_record_reference("event", event.id, event.name, details=event.track))
+    records_used.extend(submission_refs)
+
+    summary = _session_summary(
+        bundle,
+        scope_note=(
+            "Review the pressure section below for the latest cold and hot readings."
+            if pressure_focus_only
+            else "Review the setup sections below for pressures, suspension, alignment, tire temperatures, and tire history."
+        ),
+    )
+
+    return ChatbotResponse(
+        kind="setup",
+        title=title,
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent=intent,
+        data=_response_data(sections=sections, records_used=records_used, session_id=session.id_seance),
+        sections=sections,
+        follow_up=["Compare sessions", "Show latest sessions", "Show driver and vehicle data"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _session_focus_response(
+    db: Session,
+    *,
+    bundle: SessionBundle,
+    detail_section: ChatbotSection,
+    title: str,
+    summary: str,
+    intent: str,
+    event: Event | None = None,
+    follow_up: list[str] | None = None,
+) -> ChatbotResponse:
+    session = bundle.session
+    pressure = db.scalar(select(Pressure).where(Pressure.id_seance == session.id_seance))
+    sections = [_session_metadata_section(bundle, pressure, event=event), detail_section]
+    records_used = [
+        _record_reference("session", session.id_seance, _session_heading(session), details=session.track),
+        _record_reference(
+            "driver",
+            bundle.driver.driver_id if bundle.driver else session.driver_id,
+            _driver_name(bundle.driver, session.driver_id),
+        ),
+        _record_reference(
+            "vehicle",
+            bundle.vehicle.vehicle_id if bundle.vehicle else session.vehicle_id,
+            _vehicle_name(bundle.vehicle, session.vehicle_id),
+        ),
+    ]
+    if event is not None:
+        records_used.append(_record_reference("event", event.id, event.name, details=event.track))
+
+    return ChatbotResponse(
+        kind="setup",
+        title=title,
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent=intent,
+        data=_response_data(sections=sections, records_used=records_used, session_id=session.id_seance),
+        sections=sections,
+        follow_up=follow_up or ["Show setup for latest session", "Show latest sessions", "Show driver and vehicle data"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _sessions_response(
+    rows: list[tuple[Seance, Driver | None, Vehicle | None]],
+    *,
+    scope_note: str | None = None,
+    title: str = "Latest Sessions",
+    intent: str = "latest_sessions",
+    event_rows: list[tuple[Event, RunGroup | None]] | None = None,
+    follow_up: list[str] | None = None,
+) -> ChatbotResponse:
+    summary_lines = [
+        f"Found {len(rows)} session(s) in the SM2 Racing Database.",
+        "Showing the most recent records first.",
+    ]
+    if scope_note:
+        summary_lines.append(scope_note)
+
+    records_used: list[ChatbotRecordReference] = []
+    for session, driver, vehicle in rows:
+        event, run_group = _session_event_match(session, event_rows or [])
+        details_parts = [
+            _driver_name(driver, session.driver_id),
+            _vehicle_name(vehicle, session.vehicle_id),
+        ]
+        if event is not None:
+            details_parts.insert(0, event.name)
+        if run_group is not None:
+            details_parts.append(_enum_text(run_group.normalized))
+        records_used.append(
+            _record_reference(
+                "session",
+                session.id_seance,
+                _session_heading(session),
+                details=" | ".join(details_parts),
+            )
+        )
+
+    sections = [
+        _section(
+            "Latest sessions",
+            subtitle="Compact session cards with event, driver, vehicle, run group, and status details.",
+            variant="cards",
+            icon_key="session",
+            cards=_session_cards(
+                rows,
+                event_rows=event_rows,
+                include_event=event_rows is not None,
+                include_run_group=event_rows is not None,
+                include_created=True,
+            ),
+        )
+    ]
+
+    return ChatbotResponse(
+        kind="sessions",
+        title=title,
+        summary="\n\n".join(summary_lines),
+        answer="\n\n".join(summary_lines),
+        source_label=SOURCE_LABEL,
+        data_found=bool(rows),
+        records_used=records_used,
+        intent=intent,
+        data=_response_data(sections=sections, records_used=records_used),
+        sections=sections,
+        follow_up=follow_up
+        or ["Show setup for latest session", "Show tire pressures", "Compare sessions", "Show driver and vehicle data"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _events_response(rows: list[tuple[Event, RunGroup | None]]) -> ChatbotResponse:
+    records_used = [
+        _record_reference(
+            "event",
+            event.id,
+            event.name,
+            details=f"{event.track} | {_date_text(event.start_date)} - {_date_text(event.end_date)}",
+        )
+        for event, _ in rows
+    ]
+
+    sections = [
+        _section(
+            "Events",
+            subtitle="Compact event cards with dates, tracks, and run group data.",
+            variant="cards",
+            icon_key="event",
+            cards=_event_cards(rows),
+        )
+    ]
+
+    return ChatbotResponse(
+        kind="events",
+        title="Events",
+        summary=f"Found {len(rows)} event(s) in the SM2 Racing Database.",
+        answer=f"Found {len(rows)} event(s) in the SM2 Racing Database.",
+        source_label=SOURCE_LABEL,
+        data_found=bool(rows),
+        records_used=records_used,
+        intent="list_events",
+        data=_response_data(sections=sections, records_used=records_used),
+        sections=sections,
+        follow_up=["Show latest sessions", "Show sessions for this event", "Show driver and vehicle data"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _fleet_response(
+    db: Session,
+    *,
+    session_bundle: SessionBundle | None,
+    driver_id: str | None = None,
+    vehicle_id: str | None = None,
+) -> ChatbotResponse:
+    driver_rows = _load_driver_rows(db, limit=8, driver_id=driver_id)
+    vehicle_rows = _load_vehicle_rows(db, limit=8, vehicle_id=vehicle_id)
+
+    if not driver_rows and not vehicle_rows and session_bundle is None:
+        return _not_found_response("Driver and Vehicle Data", NO_DATA_MESSAGE, intent="driver_vehicle_data")
+
+    driver_map = {driver.driver_id: driver for driver in driver_rows}
+    if session_bundle is not None and session_bundle.driver is not None:
+        driver_map[session_bundle.driver.driver_id] = session_bundle.driver
+
+    sections: list[ChatbotSection] = []
+    if session_bundle is not None:
+        sections.append(
+            _section(
+                "Session pairing",
+                subtitle="The selected session driver and vehicle pairing.",
+                variant="fields",
+                icon_key="session",
+                fields=[
+                    _field("Session", _session_heading(session_bundle.session)),
+                    _field("Track", session_bundle.session.track),
+                    _field("Date", _date_text(session_bundle.session.session_date)),
+                    _field("Time", _time_text(session_bundle.session.session_time)),
+                    _field("Driver", _driver_name(session_bundle.driver, session_bundle.session.driver_id)),
+                    _field("Vehicle", _vehicle_name(session_bundle.vehicle, session_bundle.session.vehicle_id)),
+                    _field("Status", _humanize_enum(_session_status_value(session_bundle.session))),
+                ],
+            )
+        )
+
+    sections.append(
+        _section(
+            "Drivers",
+            subtitle="Driver directory cards with status and vehicle links.",
+            variant="cards",
+            icon_key="driver",
+            cards=[
+                _card(
+                    _driver_name(driver),
+                    subtitle=_text(driver.driver_id),
+                    badge="Active" if driver.is_active else "Inactive",
+                    badge_tone=_tone_for_active(driver.is_active),
+                    icon_key="driver",
+                    fields=[
+                        _field("Team", driver.team_name or "Not available"),
+                        _field("Aliases", _joined_text(driver.aliases)),
+                        _field("License", driver.license_number or "Not available"),
+                        _field(
+                            "Vehicles",
+                            _joined_text(
+                                [
+                                    _vehicle_name(vehicle, vehicle.vehicle_id)
+                                    for vehicle in getattr(driver, "vehicles", [])
+                                ]
+                            ),
+                        ),
+                        _field("Created", _datetime_text(driver.created_at)),
+                    ],
+                )
+                for driver in driver_rows
+            ],
+        )
+    )
+
+    sections.append(
+        _section(
+            "Vehicles",
+            subtitle="Vehicle directory cards with status and driver links.",
+            variant="cards",
+            icon_key="vehicle",
+            cards=[
+                _card(
+                    _vehicle_name(vehicle),
+                    subtitle=_text(vehicle.vehicle_id),
+                    badge="Active" if vehicle.is_active else "Inactive",
+                    badge_tone=_tone_for_active(vehicle.is_active),
+                    icon_key="vehicle",
+                    fields=[
+                        _field("Driver", _driver_name(driver_map.get(vehicle.driver_id), vehicle.driver_id)),
+                        _field("Class", vehicle.vehicle_class or "Not available"),
+                        _field("Year", _decimal_text(vehicle.year, 0) if vehicle.year else "Not available"),
+                        _field("Registration", vehicle.registration_number or "Not available"),
+                        _field("VIN", vehicle.vin or "Not available"),
+                    ],
+                )
+                for vehicle in vehicle_rows
+            ],
+        )
+    )
+
+    records_used = [
+        _record_reference(
+            "driver",
+            driver.driver_id,
+            _driver_name(driver),
+            details=driver.team_name or driver.license_number,
+        )
+        for driver in driver_rows
+    ]
+    records_used.extend(
+        _record_reference(
+            "vehicle",
+            vehicle.vehicle_id,
+            _vehicle_name(vehicle),
+            details=vehicle.vehicle_class or vehicle.driver_id,
+        )
+        for vehicle in vehicle_rows
+    )
+    if session_bundle is not None:
+        records_used.append(
+            _record_reference(
+                "session",
+                session_bundle.session.id_seance,
+                _session_heading(session_bundle.session),
+                details=f"{_driver_name(session_bundle.driver, session_bundle.session.driver_id)} | {_vehicle_name(session_bundle.vehicle, session_bundle.session.vehicle_id)}",
+            )
+        )
+
+    summary_parts = [
+        f"Loaded {len(driver_rows)} driver(s) and {len(vehicle_rows)} vehicle(s).",
+        "Showing the current roster cards below.",
+    ]
+    if session_bundle is not None:
+        summary_parts.append(f"Session pairing anchored to {_session_heading(session_bundle.session)}.")
+
+    logger.info(
+        "Admin chatbot fleet response built: drivers=%s vehicles=%s session=%s",
+        len(driver_rows),
+        len(vehicle_rows),
+        session_bundle is not None,
+    )
+
+    return ChatbotResponse(
+        kind="fleet",
+        title="Driver and Vehicle Data",
+        summary="\n\n".join(summary_parts),
+        answer="\n\n".join(summary_parts),
+        source_label=SOURCE_LABEL,
+        data_found=bool(driver_rows or vehicle_rows or session_bundle is not None),
+        records_used=records_used,
+        intent="driver_vehicle_data",
+        data=_response_data(sections=sections, records_used=records_used),
+        sections=sections,
+        follow_up=["Show latest sessions", "Show all events", "Show setup for latest session"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _submission_type_text(submission: Submission) -> str:
+    payload = submission.payload if isinstance(submission.payload, dict) else {}
+    analysis = submission.analysis_result if isinstance(submission.analysis_result, dict) else {}
+    for source in (analysis, payload):
+        for key in ("submission_type", "type", "category", "kind"):
+            value = source.get(key)
+            if value:
+                return _text(value)
+    return _text(submission.structured_ingest_status)
+
+
+def _submission_note_text(submission: Submission) -> str:
+    analysis = submission.analysis_result if isinstance(submission.analysis_result, dict) else {}
+    payload = submission.payload if isinstance(submission.payload, dict) else {}
+
+    for source in (analysis, payload):
+        for key in ("summary", "note", "notes", "message", "detail", "details", "description"):
+            value = source.get(key)
+            if value:
+                text = _text(value)
+                return text if len(text) <= 240 else f"{text[:237].rstrip()}..."
+
+    if submission.raw_text:
+        text = _text(submission.raw_text)
+        return text if len(text) <= 240 else f"{text[:237].rstrip()}..."
+
+    return "Not available"
+
+
+def _submissions_response(
+    db: Session,
+    *,
+    event: Event | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+    limit: int,
+) -> ChatbotResponse:
+    stmt = (
+        select(Submission, Event, RunGroup, Driver, Vehicle)
+        .join(Event, Event.id == Submission.event_id)
+        .join(RunGroup, RunGroup.id == Submission.run_group_id)
+        .join(Driver, Driver.id == Submission.driver_id, isouter=True)
+        .join(Vehicle, Vehicle.id == Submission.vehicle_id, isouter=True)
+    )
+
+    if event is not None:
+        stmt = stmt.where(Submission.event_id == event.id)
+
+    if driver_id:
+        stmt = stmt.where(Driver.driver_id == driver_id)
+
+    if vehicle_id:
+        stmt = stmt.where(Vehicle.vehicle_id == vehicle_id)
+
+    rows = list(
+        db.execute(
+            stmt.order_by(Submission.created_at.desc(), Submission.submission_ref.desc()).limit(limit)
+        ).all()
+    )
+
+    if not rows:
+        logger.info(
+            "Admin chatbot submissions lookup returned no rows (event_id=%s driver_id=%s vehicle_id=%s)",
+            event.id if event else None,
+            driver_id,
+            vehicle_id,
+        )
+        return _not_found_response(
+            "Submissions",
+            NO_DATA_MESSAGE,
+            intent="latest_submissions",
+        )
+
+    cards: list[ChatbotCard] = []
+    records_used: list[ChatbotRecordReference] = []
+    for submission, submission_event, run_group, driver, vehicle in rows:
+        submission_status = _text(submission.status.value if hasattr(submission.status, "value") else submission.status)
+        driver_label = _driver_name(driver, _text(submission.driver_id))
+        vehicle_label = _vehicle_name(vehicle, _text(submission.vehicle_id))
+        cards.append(
+            _card(
+                submission.submission_ref,
+                subtitle=f"{submission_event.name} | {submission_status}",
+                badge=submission_status,
+                badge_tone=_tone_for_status(submission.status),
+                icon_key="default",
+                fields=[
+                    _field("Submission ref", submission.submission_ref),
+                    _field("Submission type", _submission_type_text(submission)),
+                    _field("Event", submission_event.name),
+                    _field("Run group", _enum_text(run_group.normalized)),
+                    _field("Driver", driver_label),
+                    _field("Vehicle", vehicle_label),
+                    _field("Structured ingest", submission.structured_ingest_status),
+                    _field("Note", _submission_note_text(submission)),
+                    _field("Created", _datetime_text(submission.created_at)),
+                    _field("Error", submission.error_message or "Not available"),
+                ],
+            )
+        )
+        records_used.append(
+            _record_reference(
+                "submission",
+                submission.submission_ref,
+                submission.submission_ref,
+                details=f"{submission_event.name} | {driver_label} | {vehicle_label}",
+            )
+        )
+
+    summary = [
+        f"Found {len(rows)} submission(s) in the SM2 Racing Database.",
+        "Showing the most recent submissions first.",
+    ]
+
+    if event is not None:
+        summary.append(f"Scoped to event: {event.name}.")
+
+    logger.info(
+        "Admin chatbot submissions response built: count=%s event_id=%s driver_id=%s vehicle_id=%s",
+        len(rows),
+        event.id if event is not None else None,
+        driver_id,
+        vehicle_id,
+    )
+
+    return ChatbotResponse(
+        kind="submissions",
+        title="Submissions",
+        summary="\n\n".join(summary),
+        answer="\n\n".join(summary),
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent="latest_submissions",
+        data=_response_data(sections=[
+            _section(
+                "Submissions",
+                subtitle="Submission records with event, run group, driver, and vehicle context.",
+                variant="cards",
+                icon_key="default",
+                cards=cards,
+            )
+        ], records_used=records_used),
+        sections=[
+            _section(
+                "Submissions",
+                subtitle="Submission records with event, run group, driver, and vehicle context.",
+                variant="cards",
+                icon_key="default",
+                cards=cards,
+            )
+        ],
+        follow_up=["Show latest sessions", "Show setup for latest session", "Show all events"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _metric_average(values: Iterable[object | None]) -> str:
+    numbers = [float(value) for value in values if value is not None]
+    if not numbers:
+        return "Not available"
+    return _decimal_text(sum(numbers) / len(numbers))
+
+
+def _compare_rows(
+    left: SessionBundle,
+    right: SessionBundle,
+    *,
+    left_pressure: Pressure | None,
+    right_pressure: Pressure | None,
+    left_temperature: TireTemperature | None,
+    right_temperature: TireTemperature | None,
+    left_alignment: Alignment | None,
+    right_alignment: Alignment | None,
+) -> tuple[list[str], list[list[str]], list[str]]:
+    left_cold = (
+        [left_pressure.cold_fl, left_pressure.cold_fr, left_pressure.cold_rl, left_pressure.cold_rr]
+        if left_pressure
+        else []
+    )
+    right_cold = (
+        [right_pressure.cold_fl, right_pressure.cold_fr, right_pressure.cold_rl, right_pressure.cold_rr]
+        if right_pressure
+        else []
+    )
+    left_hot = (
+        [left_pressure.hot_fl, left_pressure.hot_fr, left_pressure.hot_rl, left_pressure.hot_rr]
+        if left_pressure
+        else []
+    )
+    right_hot = (
+        [right_pressure.hot_fl, right_pressure.hot_fr, right_pressure.hot_rl, right_pressure.hot_rr]
+        if right_pressure
+        else []
+    )
+
+    def temp_values(temperature: TireTemperature | None) -> list[object | None]:
+        if temperature is None:
+            return []
+        return [
+            temperature.fl_in,
+            temperature.fl_mid,
+            temperature.fl_out,
+            temperature.fr_in,
+            temperature.fr_mid,
+            temperature.fr_out,
+            temperature.rl_in,
+            temperature.rl_mid,
+            temperature.rl_out,
+            temperature.rr_in,
+            temperature.rr_mid,
+            temperature.rr_out,
+        ]
+
+    def ride_height_values(alignment: Alignment | None) -> list[object | None]:
+        if alignment is None:
+            return []
+        return [alignment.ride_height_f, alignment.ride_height_r]
+
+    rows = [
+        [
+            "Session",
+            _session_heading(left.session),
+            _session_heading(right.session),
+            "Selected comparison",
+        ],
+        [
+            "Date",
+            f"{_date_text(left.session.session_date)} {_time_text(left.session.session_time)}",
+            f"{_date_text(right.session.session_date)} {_time_text(right.session.session_time)}",
+            "Session window",
+        ],
+        [
+            "Driver",
+            _driver_name(left.driver, left.session.driver_id),
+            _driver_name(right.driver, right.session.driver_id),
+            "Driver pairing",
+        ],
+        [
+            "Vehicle",
+            _vehicle_name(left.vehicle, left.session.vehicle_id),
+            _vehicle_name(right.vehicle, right.session.vehicle_id),
+            "Vehicle pairing",
+        ],
+        [
+            "Duration",
+            _duration_text(left.session.duration_min),
+            _duration_text(right.session.duration_min),
+            "Session length",
+        ],
+        [
+            "Cold pressure avg",
+            _metric_average(left_cold),
+            _metric_average(right_cold),
+            "Average cold pressure",
+        ],
+        [
+            "Hot pressure avg",
+            _metric_average(left_hot),
+            _metric_average(right_hot),
+            "Average hot pressure",
+        ],
+        [
+            "Tire temperature avg",
+            _metric_average(temp_values(left_temperature)),
+            _metric_average(temp_values(right_temperature)),
+            "Overall tire temperature",
+        ],
+        [
+            "Ride height avg",
+            _metric_average(ride_height_values(left_alignment)),
+            _metric_average(ride_height_values(right_alignment)),
+            "Average ride height",
+        ],
+        ["Track", left.session.track, right.session.track, "Track selection"],
+    ]
+
+    highlights = [
+        f"Session {right.session.session_number} is being compared against Session {left.session.session_number}.",
+    ]
+
+    if left.session.duration_min is not None and right.session.duration_min is not None:
+        diff = right.session.duration_min - left.session.duration_min
+        if diff:
+            direction = "longer" if diff > 0 else "shorter"
+            highlights.append(
+                f"Session {right.session.session_number} was {_decimal_text(abs(diff), 0)} minute(s) {direction}."
+            )
+
+    return ["Metric", "Session A", "Session B", "Context"], rows, highlights
+
+
+def _compare_response(
+    db: Session,
+    *,
+    event: Event | None,
+    session_id: str | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+) -> ChatbotResponse | None:
+    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    if len(rows) < 2:
+        return None
+
+    if session_id:
+        anchor_index = next(
+            (index for index, (session, _, _) in enumerate(rows) if session.id_seance == session_id),
+            None,
+        )
+        if anchor_index is None:
+            bundle = _load_session_bundle(db, session_id)
+            if bundle is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            if event is not None and not _session_in_event_window(bundle.session, event):
+                return None
+            if driver_id and bundle.session.driver_id != driver_id:
+                return None
+            if vehicle_id and bundle.session.vehicle_id != vehicle_id:
+                return None
+            return None
+        if anchor_index + 1 >= len(rows):
+            return None
+        left_row = rows[anchor_index]
+        right_row = rows[anchor_index + 1]
+    else:
+        left_row = rows[0]
+        right_row = rows[1]
+
+    left = SessionBundle(*left_row)
+    right = SessionBundle(*right_row)
+
+    left_pressure = db.scalar(select(Pressure).where(Pressure.id_seance == left.session.id_seance))
+    right_pressure = db.scalar(select(Pressure).where(Pressure.id_seance == right.session.id_seance))
+    left_temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == left.session.id_seance))
+    right_temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == right.session.id_seance))
+    left_alignment = db.scalar(select(Alignment).where(Alignment.id_seance == left.session.id_seance))
+    right_alignment = db.scalar(select(Alignment).where(Alignment.id_seance == right.session.id_seance))
+
+    headers, table_rows, highlights = _compare_rows(
+        left,
+        right,
+        left_pressure=left_pressure,
+        right_pressure=right_pressure,
+        left_temperature=left_temperature,
+        right_temperature=right_temperature,
+        left_alignment=left_alignment,
+        right_alignment=right_alignment,
+    )
+
+    summary_parts = [
+        f"Compared {_session_heading(left.session)} and {_session_heading(right.session)}.",
+        "Review the side-by-side cards and comparison table below.",
+        "\n".join(f"- {highlight}" for highlight in highlights),
+    ]
+
+    sections = [
+        _section(
+            "Session A",
+            subtitle="The anchor session in the comparison.",
+            variant="cards",
+            icon_key="session",
+            cards=_session_cards([left_row]),
+        ),
+        _section(
+            "Session B",
+            subtitle="The comparison session in the comparison.",
+            variant="cards",
+            icon_key="session",
+            cards=_session_cards([right_row]),
+        ),
+        _section(
+            "Comparison",
+            subtitle="Metric table with the main setup deltas.",
+            variant="table",
+            icon_key="compare",
+            table_headers=headers,
+            table_rows=table_rows,
+        ),
+    ]
+
+    return ChatbotResponse(
+        kind="compare",
+        title="Session Comparison",
+        summary="\n\n".join(summary_parts),
+        answer="\n\n".join(summary_parts),
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        intent="compare",
+        data=_response_data(sections=sections, records_used=[]),
+        sections=sections,
+        follow_up=["Show setup for latest session", "Show latest sessions", "Show tire pressures"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
+    text = query.lower().strip()
+
+    if any(keyword in text for keyword in ["compare", "versus", "vs", "difference"]) and "session" in text:
+        return "compare"
+
+    if any(keyword in text for keyword in ["show all events", "list events", "show events", "all events"]):
+        return "list_events"
+
+    if any(keyword in text for keyword in ["show latest sessions", "latest sessions", "recent sessions", "show recent sessions"]):
+        return "latest_sessions"
+
+    if any(keyword in text for keyword in ["show latest submissions", "recent submissions", "show submissions", "latest notes"]):
+        return "latest_submissions"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "show driver and vehicle data",
+            "show drivers and vehicles",
+            "driver vehicle mapping",
+            "cars and drivers",
+        ]
+    ):
+        return "driver_vehicle_data"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "show setup for latest session",
+            "latest setup",
+            "show full setup for latest session",
+            "setup sheet for latest session",
+        ]
+    ):
+        return "setup_latest_session"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "show tire pressures for session",
+            "pressure for session",
+            "tire pressure session",
+            "show tire pressures",
+            "show pressures",
+            "pressure data",
+        ]
+    ):
+        return "tire_pressures_by_session"
+
+    if any(
+        keyword in text
+        for keyword in ["show suspension data", "show suspension", "suspension setup", "damper data", "bump rebound"]
+    ):
+        return "suspension_data"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "show alignment for car",
+            "alignment for car",
+            "show toe/camber for car",
+            "alignment data",
+            "show alignment",
+        ]
+    ):
+        return "alignment_by_car"
+
+    if "session" in text and "driver" in text and "vehicle" not in text:
+        return "sessions_by_driver"
+
+    if (
+        "session" in text
+        and (
+            "event" in text
+            or (query_in is not None and query_in.event_id is not None)
+            or "this event" in text
+        )
+    ):
+        return "sessions_by_event"
+
+    if "event" in text and any(keyword in text for keyword in ["list", "show", "all", "latest"]):
+        return "list_events"
+
+    if "session" in text:
+        return "latest_sessions"
+
+    if "driver" in text and "vehicle" in text:
+        return "driver_vehicle_data"
+
+    return "unsupported"
+
+
+def build_chatbot_context(db: Session, *, limit: int = 10) -> ChatbotContextResponse:
+    event_rows = list(
+        db.execute(
+            select(Event, RunGroup)
+            .join(RunGroup, RunGroup.event_id == Event.id, isouter=True)
+            .order_by(Event.start_date.desc(), Event.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    session_rows = _load_session_rows(db, limit=limit)
+    driver_rows = _load_driver_rows(db, limit=limit)
+    vehicle_rows = _load_vehicle_rows(db, limit=limit)
+
+    events = [_event_choice(event, run_group) for event, run_group in event_rows]
+    sessions = [
+        _session_choice(
+            session,
+            driver,
+            vehicle,
+            event_id=_session_event_id(session, event_rows),
+        )
+        for session, driver, vehicle in session_rows
+    ]
+    drivers = [_driver_choice(driver) for driver in driver_rows]
+    vehicles = [_vehicle_choice(vehicle) for vehicle in vehicle_rows]
+
+    default_driver_id = session_rows[0][1].driver_id if session_rows and session_rows[0][1] is not None else (drivers[0].value if drivers else None)
+    default_vehicle_id = session_rows[0][2].vehicle_id if session_rows and session_rows[0][2] is not None else (vehicles[0].value if vehicles else None)
+
+    context = ChatbotContextResponse(
+        events=events,
+        sessions=sessions,
+        drivers=drivers,
+        vehicles=vehicles,
+        default_event_id=events[0].value if events else None,
+        default_session_id=sessions[0].value if sessions else None,
+        default_driver_id=default_driver_id,
+        default_vehicle_id=default_vehicle_id,
+        has_event_data=bool(events),
+        has_session_data=bool(sessions),
+        has_driver_data=bool(drivers),
+        has_vehicle_data=bool(vehicles),
+        source_label=SOURCE_LABEL,
+    )
+    logger.info(
+        "Admin chatbot context built: events=%s sessions=%s drivers=%s vehicles=%s",
+        len(events),
+        len(sessions),
+        len(drivers),
+        len(vehicles),
+    )
+    return context
+
+
+def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotResponse:
+    query = query_in.message.strip()
+    logger.info("Admin chatbot raw message received: %s", query)
+    intent = _intent_from_query(query, query_in)
+    logger.info("Admin chatbot intent detected: intent=%s query=%s", intent, query)
+
+    event_rows = _load_event_rows(db, limit=None)
+    event = db.get(Event, query_in.event_id) if query_in.event_id else None
+    if query_in.event_id and event is None:
+        logger.warning("Admin chatbot missing data: event not found for event_id=%s", query_in.event_id)
+        return _not_found_response(
+            "Events",
+            "No event matching the selected event was found in the database.",
+            intent=intent,
+        )
+
+    session_bundle = _load_session_bundle(db, query_in.session_id) if query_in.session_id else None
+    if query_in.session_id and session_bundle is None:
+        logger.warning("Admin chatbot missing data: session not found for session_id=%s", query_in.session_id)
+        return _not_found_response(
+            "Sessions",
+            "No session matching the selected session was found in the database.",
+            intent=intent,
+        )
+
+    selected_driver_rows = _load_driver_rows(db, limit=1, driver_id=query_in.driver_id) if query_in.driver_id else []
+    selected_driver = selected_driver_rows[0] if selected_driver_rows else None
+    if query_in.driver_id and selected_driver is None:
+        logger.warning("Admin chatbot missing data: driver not found for driver_id=%s", query_in.driver_id)
+        return _not_found_response(
+            "Drivers",
+            "No driver matching the selected driver was found in the database.",
+            intent=intent,
+        )
+
+    selected_vehicle_rows = _load_vehicle_rows(db, limit=1, vehicle_id=query_in.vehicle_id) if query_in.vehicle_id else []
+    selected_vehicle = selected_vehicle_rows[0] if selected_vehicle_rows else None
+    if query_in.vehicle_id and selected_vehicle is None:
+        logger.warning("Admin chatbot missing data: vehicle not found for vehicle_id=%s", query_in.vehicle_id)
+        return _not_found_response(
+            "Vehicles",
+            "No vehicle matching the selected vehicle was found in the database.",
+            intent=intent,
+        )
+
+    driver_query = _extract_driver_query(query)
+    event_query = _extract_event_query(query)
+    car_number = (query_in.car_number or _extract_car_number(query) or "").strip() or None
+    session_number = _extract_session_number(query)
+    logger.info(
+        "Admin chatbot extracted filters: event_id=%s session_id=%s driver_id=%s vehicle_id=%s driver_query=%s event_query=%s car_number=%s session_number=%s limit=%s",
+        query_in.event_id,
+        query_in.session_id,
+        query_in.driver_id,
+        query_in.vehicle_id,
+        driver_query,
+        event_query,
+        car_number,
+        session_number,
+        query_in.limit,
+    )
+
+    if intent == "unsupported":
+        logger.info("Admin chatbot unsupported query: %s", query)
+        return _unsupported_response("AI Race Assistant", UNSUPPORTED_MESSAGE, intent="unsupported")
+
+    if intent == "list_events":
+        rows = event_rows
+        if not rows:
+            logger.info("Admin chatbot missing data: intent=list_events")
+            return _not_found_response("Events", NO_EVENTS_MESSAGE, intent="list_events")
+        logger.info("Admin chatbot records found: intent=list_events count=%s", len(rows))
+        return _events_response(rows)
+
+    if intent == "latest_sessions":
+        rows = _load_session_rows(
+            db,
+            event=event,
+            driver_id=query_in.driver_id,
+            vehicle_id=query_in.vehicle_id,
+            limit=query_in.limit,
+        )
+        if not rows:
+            logger.info(
+                "Admin chatbot missing data: intent=latest_sessions event_id=%s driver_id=%s vehicle_id=%s",
+                query_in.event_id,
+                query_in.driver_id,
+                query_in.vehicle_id,
+            )
+            return _not_found_response("Latest Sessions", NO_DATA_MESSAGE, intent="latest_sessions")
+
+        scope_notes: list[str] = []
+        if event is not None:
+            scope_notes.append(f"Scoped to event {event.name}.")
+        if selected_driver is not None:
+            scope_notes.append(f"Scoped to driver {selected_driver.driver_name}.")
+        if selected_vehicle is not None:
+            scope_notes.append(f"Scoped to vehicle {selected_vehicle.vehicle_id}.")
+
+        logger.info("Admin chatbot records found: intent=latest_sessions count=%s", len(rows))
+        return _sessions_response(
+            rows,
+            scope_note=" ".join(scope_notes) if scope_notes else None,
+            event_rows=event_rows,
+            intent="latest_sessions",
+            follow_up=[
+                "Show sessions for this event",
+                "Show sessions for driver Alex",
+                "Show setup for latest session",
+                "Show tire pressures",
+            ],
+        )
+
+    if intent == "sessions_by_event":
+        resolved_event = event
+        if resolved_event is None and event_query:
+            matches = _find_event_matches(db, event_query)
+            if not matches:
+                logger.info("Admin chatbot missing data: intent=sessions_by_event event_query=%s", event_query)
+                return _not_found_response(
+                    "Sessions",
+                    f"No event matching '{event_query}' was found in the database.",
+                    intent="sessions_by_event",
+                )
+            if len(matches) > 1:
+                records_used = [
+                    _record_reference("event", row_event.id, row_event.name, details=row_event.track)
+                    for row_event, _ in matches
+                ]
+                section = _build_candidate_table(
+                    title="Matching events",
+                    subtitle="Choose the event you want to inspect.",
+                    headers=["Event", "Track", "Dates", "Status"],
+                    rows=[
+                        [
+                            row_event.name,
+                            row_event.track,
+                            f"{_date_text(row_event.start_date)} - {_date_text(row_event.end_date)}",
+                            _humanize_enum("Active" if row_event.is_active else "Archived"),
+                        ]
+                        for row_event, _ in matches
+                    ],
+                    icon_key="event",
+                )
+                return _selection_response(
+                    title="Choose an event",
+                    message=f"I found multiple events matching '{event_query}'. Please choose the correct event.",
+                    intent="sessions_by_event",
+                    section=section,
+                    records_used=records_used,
+                )
+            resolved_event = matches[0][0]
+
+        if resolved_event is None:
+            logger.info("Admin chatbot missing data: intent=sessions_by_event no event selected")
+            return _unsupported_response(
+                "Sessions",
+                PLEASE_SELECT_EVENT_MESSAGE,
+                intent="sessions_by_event",
+                follow_up=["Show all events", "Show latest sessions"],
+            )
+
+        rows = _load_session_rows(
+            db,
+            event=resolved_event,
+            driver_id=query_in.driver_id,
+            vehicle_id=query_in.vehicle_id,
+            limit=query_in.limit,
+        )
+        if not rows:
+            logger.info("Admin chatbot missing data: intent=sessions_by_event event_id=%s", resolved_event.id)
+            return _not_found_response(
+                "Sessions",
+                f"No sessions were found for event {resolved_event.name}.",
+                intent="sessions_by_event",
+            )
+
+        scope_notes = [f"Scoped to event {resolved_event.name}."]
+        if selected_driver is not None:
+            scope_notes.append(f"Scoped to driver {selected_driver.driver_name}.")
+        if selected_vehicle is not None:
+            scope_notes.append(f"Scoped to vehicle {selected_vehicle.vehicle_id}.")
+
+        logger.info("Admin chatbot records found: intent=sessions_by_event count=%s", len(rows))
+        return _sessions_response(
+            rows,
+            scope_note=" ".join(scope_notes),
+            title=f"Sessions for {resolved_event.name}",
+            intent="sessions_by_event",
+            event_rows=event_rows,
+            follow_up=["Show setup for latest session", "Show tire pressures", "Show driver and vehicle data"],
+        )
+
+    if intent == "sessions_by_driver":
+        resolved_driver = selected_driver
+        if resolved_driver is None:
+            if not driver_query:
+                return _unsupported_response(
+                    "Sessions",
+                    "Please include a driver name so I can show that driver's sessions.",
+                    intent="sessions_by_driver",
+                    follow_up=["Show driver and vehicle data", "Show latest sessions"],
+                )
+
+            matches = _find_driver_matches(db, driver_query)
+            if not matches:
+                logger.info("Admin chatbot missing data: intent=sessions_by_driver driver_query=%s", driver_query)
+                return _not_found_response(
+                    "Drivers",
+                    NO_DRIVER_MATCH_MESSAGE.format(term=driver_query),
+                    intent="sessions_by_driver",
+                )
+            if len(matches) > 1:
+                records_used = [
+                    _record_reference("driver", driver.driver_id, _driver_name(driver), details=driver.team_name)
+                    for driver in matches
+                ]
+                section = _build_candidate_table(
+                    title="Matching drivers",
+                    subtitle="Choose the driver you want to inspect.",
+                    headers=["Driver", "Code", "Team", "Status"],
+                    rows=[
+                        [
+                            _driver_name(driver),
+                            driver.driver_id,
+                            driver.team_name or "Not available",
+                            "Active" if driver.is_active else "Inactive",
+                        ]
+                        for driver in matches
+                    ],
+                    icon_key="driver",
+                )
+                return _selection_response(
+                    title="Choose a driver",
+                    message=MULTIPLE_DRIVER_MATCH_MESSAGE.format(term=driver_query),
+                    intent="sessions_by_driver",
+                    section=section,
+                    records_used=records_used,
+                )
+            resolved_driver = matches[0]
+
+        rows = _load_session_rows(
+            db,
+            event=event,
+            driver_id=resolved_driver.driver_id,
+            vehicle_id=query_in.vehicle_id,
+            limit=query_in.limit,
+        )
+        if not rows:
+            logger.info(
+                "Admin chatbot missing data: intent=sessions_by_driver driver_id=%s event_id=%s vehicle_id=%s",
+                resolved_driver.driver_id,
+                query_in.event_id,
+                query_in.vehicle_id,
+            )
+            return _not_found_response(
+                "Sessions",
+                f"No sessions were found for driver {resolved_driver.driver_name}.",
+                intent="sessions_by_driver",
+            )
+
+        scope_notes = [f"Scoped to driver {resolved_driver.driver_name}."]
+        if event is not None:
+            scope_notes.append(f"Scoped to event {event.name}.")
+        if selected_vehicle is not None:
+            scope_notes.append(f"Scoped to vehicle {selected_vehicle.vehicle_id}.")
+
+        logger.info("Admin chatbot records found: intent=sessions_by_driver count=%s", len(rows))
+        return _sessions_response(
+            rows,
+            scope_note=" ".join(scope_notes),
+            title=f"Sessions for {resolved_driver.driver_name}",
+            intent="sessions_by_driver",
+            event_rows=event_rows,
+            follow_up=["Show driver and vehicle data", "Show setup for latest session", "Show latest sessions"],
+        )
+
+    if intent == "setup_latest_session":
+        bundle = _select_anchor_session(
+            db,
+            event=event,
+            session_id=query_in.session_id,
+            driver_id=query_in.driver_id,
+            vehicle_id=query_in.vehicle_id,
+        )
+        if bundle is None:
+            logger.info(
+                "Admin chatbot missing data: intent=setup_latest_session event_id=%s session_id=%s driver_id=%s vehicle_id=%s",
+                query_in.event_id,
+                query_in.session_id,
+                query_in.driver_id,
+                query_in.vehicle_id,
+            )
+            return _not_found_response(
+                "Setup Sheet",
+                NO_DATA_MESSAGE,
+                intent="setup_latest_session",
+            )
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        logger.info("Admin chatbot records found: intent=setup_latest_session session=%s", bundle.session.id_seance)
+        return _setup_response(
+            db,
+            bundle=bundle,
+            event=event or resolved_event,
+            title="Setup Sheet",
+            intent="setup_latest_session",
+        )
+
+    if intent == "tire_pressures_by_session":
+        bundle: SessionBundle | None = None
+        if query_in.session_id:
+            bundle = session_bundle
+        elif session_number is not None:
+            rows = _load_session_rows_by_number(
+                db,
+                session_number=session_number,
+                event=event,
+                driver_id=query_in.driver_id,
+                vehicle_id=query_in.vehicle_id,
+            )
+            if not rows:
+                return _not_found_response("Tire Pressures", NO_DATA_MESSAGE, intent="tire_pressures_by_session")
+            if len(rows) > 1 and event is None:
+                records_used = [
+                    _record_reference(
+                        "session",
+                        row_session.id_seance,
+                        _session_heading(row_session),
+                        details=f"{row_session.track} | {_date_text(row_session.session_date)}",
+                    )
+                    for row_session, _, _ in rows
+                ]
+                section = _build_candidate_table(
+                    title="Matching sessions",
+                    subtitle="Multiple session records match that number. Please choose one.",
+                    headers=["Session", "Event", "Date", "Driver", "Vehicle"],
+                    rows=[
+                        [
+                            _session_heading(row_session),
+                            (_session_event_match(row_session, event_rows)[0].name if _session_event_match(row_session, event_rows)[0] else "Not available"),
+                            _date_text(row_session.session_date),
+                            _driver_name(row_driver, row_session.driver_id),
+                            _vehicle_name(row_vehicle, row_session.vehicle_id),
+                        ]
+                        for row_session, row_driver, row_vehicle in rows
+                    ],
+                    icon_key="session",
+                )
+                return _selection_response(
+                    title="Choose a session",
+                    message=MULTIPLE_SESSION_MATCH_MESSAGE.format(number=session_number),
+                    intent="tire_pressures_by_session",
+                    section=section,
+                    records_used=records_used,
+                )
+            bundle = _bundle_from_row(rows[0])
+        else:
+            bundle = _latest_bundle_with_record(
+                db,
+                model=Pressure,
+                event=event,
+                driver_id=query_in.driver_id,
+                vehicle_id=query_in.vehicle_id,
+            )
+
+        if bundle is None:
+            logger.info(
+                "Admin chatbot missing data: intent=tire_pressures_by_session event_id=%s session_number=%s",
+                query_in.event_id,
+                session_number,
+            )
+            return _not_found_response("Tire Pressures", NO_DATA_MESSAGE, intent="tire_pressures_by_session")
+
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            return _not_found_response("Tire Pressures", NO_DATA_MESSAGE, intent="tire_pressures_by_session")
+
+        pressure = db.scalar(select(Pressure).where(Pressure.id_seance == bundle.session.id_seance))
+        if pressure is None:
+            return _not_found_response("Tire Pressures", NO_DATA_MESSAGE, intent="tire_pressures_by_session")
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        summary = _session_summary(
+            bundle,
+            scope_note="Review the pressure section below for the latest cold and hot readings.",
+        )
+        logger.info("Admin chatbot records found: intent=tire_pressures_by_session session=%s", bundle.session.id_seance)
+        return _session_focus_response(
+            db,
+            bundle=bundle,
+            detail_section=_pressure_section(pressure),
+            title="Tire Pressures",
+            summary=summary,
+            intent="tire_pressures_by_session",
+            event=event or resolved_event,
+            follow_up=["Show suspension data", "Show alignment data", "Show setup for latest session"],
+        )
+
+    if intent == "suspension_data":
+        bundle: SessionBundle | None = None
+        if query_in.session_id:
+            bundle = session_bundle
+        elif session_number is not None:
+            rows = _load_session_rows_by_number(
+                db,
+                session_number=session_number,
+                event=event,
+                driver_id=query_in.driver_id,
+                vehicle_id=query_in.vehicle_id,
+            )
+            if rows:
+                bundle = _bundle_from_row(rows[0])
+        else:
+            bundle = _latest_bundle_with_record(
+                db,
+                model=Suspension,
+                event=event,
+                driver_id=query_in.driver_id,
+                vehicle_id=query_in.vehicle_id,
+            )
+
+        if bundle is None:
+            logger.info("Admin chatbot missing data: intent=suspension_data")
+            return _not_found_response("Suspension Data", NO_DATA_MESSAGE, intent="suspension_data")
+
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            return _not_found_response("Suspension Data", NO_DATA_MESSAGE, intent="suspension_data")
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        suspension = db.scalar(select(Suspension).where(Suspension.id_seance == bundle.session.id_seance))
+        if suspension is None:
+            return _not_found_response("Suspension Data", NO_DATA_MESSAGE, intent="suspension_data")
+
+        summary = _session_summary(
+            bundle,
+            scope_note="Review the suspension section below for the latest damper and chassis settings.",
+        )
+        logger.info("Admin chatbot records found: intent=suspension_data session=%s", bundle.session.id_seance)
+        return _session_focus_response(
+            db,
+            bundle=bundle,
+            detail_section=_suspension_section(suspension),
+            title="Suspension Data",
+            summary=summary,
+            intent="suspension_data",
+            event=event or resolved_event,
+            follow_up=["Show tire pressures", "Show alignment data", "Show setup for latest session"],
+        )
+
+    if intent == "alignment_by_car":
+        resolved_vehicle = selected_vehicle
+        if resolved_vehicle is None:
+            if car_number is None:
+                bundle = _latest_bundle_with_record(
+                    db,
+                    model=Alignment,
+                    event=event,
+                    driver_id=query_in.driver_id,
+                    vehicle_id=query_in.vehicle_id,
+                )
+                if bundle is None:
+                    return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+                resolved_event, _ = _session_event_match(bundle.session, event_rows)
+                alignment = db.scalar(select(Alignment).where(Alignment.id_seance == bundle.session.id_seance))
+                if alignment is None:
+                    return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+                summary = _session_summary(
+                    bundle,
+                    scope_note="Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+                )
+                logger.info("Admin chatbot records found: intent=alignment_by_car session=%s", bundle.session.id_seance)
+                return _session_focus_response(
+                    db,
+                    bundle=bundle,
+                    detail_section=_alignment_section(alignment),
+                    title="Alignment Data",
+                    summary=summary,
+                    intent="alignment_by_car",
+                    event=event or resolved_event,
+                    follow_up=["Show tire pressures", "Show suspension data", "Show setup for latest session"],
+                )
+
+            matches = _find_vehicle_matches(db, car_number)
+            if not matches:
+                logger.info("Admin chatbot missing data: intent=alignment_by_car car_number=%s", car_number)
+                return _not_found_response(
+                    "Vehicles",
+                    NO_VEHICLE_MATCH_MESSAGE.format(term=car_number),
+                    intent="alignment_by_car",
+                )
+            if len(matches) > 1:
+                records_used = [
+                    _record_reference(
+                        "vehicle",
+                        vehicle.vehicle_id,
+                        _vehicle_name(vehicle),
+                        details=vehicle.registration_number or vehicle.vehicle_class,
+                    )
+                    for vehicle in matches
+                ]
+                driver_lookup = {driver.driver_id: driver for driver in _load_driver_rows(db, limit=25)}
+                section = _build_candidate_table(
+                    title="Matching vehicles",
+                    subtitle="Choose the vehicle you want to inspect.",
+                    headers=["Vehicle", "Car", "Driver", "Status"],
+                    rows=[
+                        [
+                            _vehicle_name(vehicle),
+                            vehicle.vehicle_id,
+                            _driver_name(driver_lookup.get(vehicle.driver_id), vehicle.driver_id)
+                            if vehicle.driver_id
+                            else "Not available",
+                            "Active" if vehicle.is_active else "Inactive",
+                        ]
+                        for vehicle in matches
+                    ],
+                    icon_key="vehicle",
+                )
+                return _selection_response(
+                    title="Choose a vehicle",
+                    message=MULTIPLE_VEHICLE_MATCH_MESSAGE.format(term=car_number),
+                    intent="alignment_by_car",
+                    section=section,
+                    records_used=records_used,
+                )
+            resolved_vehicle = matches[0]
+
+        bundle = _latest_bundle_with_record(
+            db,
+            model=Alignment,
+            event=event,
+            vehicle_id=resolved_vehicle.vehicle_id,
+            driver_id=query_in.driver_id,
+        )
+        if bundle is None:
+            logger.info(
+                "Admin chatbot missing data: intent=alignment_by_car vehicle_id=%s",
+                resolved_vehicle.vehicle_id,
+            )
+            return _not_found_response(
+                "Alignment Data",
+                NO_DATA_MESSAGE,
+                intent="alignment_by_car",
+            )
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        alignment = db.scalar(select(Alignment).where(Alignment.id_seance == bundle.session.id_seance))
+        if alignment is None:
+            return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+
+        summary = _session_summary(
+            bundle,
+            scope_note="Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+        )
+        logger.info("Admin chatbot records found: intent=alignment_by_car session=%s", bundle.session.id_seance)
+        return _session_focus_response(
+            db,
+            bundle=bundle,
+            detail_section=_alignment_section(alignment),
+            title="Alignment Data",
+            summary=summary,
+            intent="alignment_by_car",
+            event=event or resolved_event,
+            follow_up=["Show tire pressures", "Show suspension data", "Show setup for latest session"],
+        )
+
+    if intent == "latest_submissions":
+        response = _submissions_response(
+            db,
+            event=event,
+            driver_id=query_in.driver_id,
+            vehicle_id=query_in.vehicle_id,
+            limit=query_in.limit,
+        )
+        logger.info(
+            "Admin chatbot records found: intent=latest_submissions status=%s count=%s",
+            response.status,
+            len(response.records_used or []),
+        )
+        return response
+
+    if intent == "driver_vehicle_data":
+        session_bundle = session_bundle
+        if session_bundle is not None and event is not None and not _session_in_event_window(session_bundle.session, event):
+            session_bundle = None
+        response = _fleet_response(
+            db,
+            session_bundle=session_bundle,
+            driver_id=selected_driver.driver_id if selected_driver is not None else query_in.driver_id,
+            vehicle_id=selected_vehicle.vehicle_id if selected_vehicle is not None else query_in.vehicle_id,
+        )
+        logger.info(
+            "Admin chatbot records found: intent=driver_vehicle_data drivers=%s vehicles=%s session=%s",
+            len([record for record in response.records_used or [] if record.kind == "driver"]),
+            len([record for record in response.records_used or [] if record.kind == "vehicle"]),
+            session_bundle is not None,
+        )
+        return response
+
+    if intent == "compare":
+        response = _compare_response(
+            db,
+            event=event,
+            session_id=query_in.session_id,
+            driver_id=query_in.driver_id,
+            vehicle_id=query_in.vehicle_id,
+        )
+        if response is None:
+            logger.info(
+                "Admin chatbot missing data: intent=compare event_id=%s session_id=%s driver_id=%s vehicle_id=%s",
+                query_in.event_id,
+                query_in.session_id,
+                query_in.driver_id,
+                query_in.vehicle_id,
+            )
+            return _not_found_response(
+                "Session Comparison",
+                NO_DATA_MESSAGE,
+                intent="compare",
+            )
+        logger.info("Admin chatbot records found: intent=compare")
+        return response
+
+    logger.info("Admin chatbot unsupported query fallback: %s", query)
+    return _unsupported_response("AI Race Assistant", UNSUPPORTED_MESSAGE, intent="unsupported")
