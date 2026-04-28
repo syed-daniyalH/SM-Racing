@@ -79,6 +79,13 @@ def select_active_event(
     if not event.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Event is archived")
 
+    run_group = db.scalar(select(RunGroup).where(RunGroup.event_id == event.id))
+    if not run_group:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run group is not configured for this event",
+        )
+
     current_user.active_event_id = event.id
     db.commit()
     db.refresh(event)

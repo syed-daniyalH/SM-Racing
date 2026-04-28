@@ -12,7 +12,7 @@ settings = get_settings()
 
 
 def hash_password(password: str) -> str:
-    # PBKDF2 is fully supported in hosted environments and avoids bcrypt backend issues.
+    # Keep local and deployed environments on the same password format.
     return pbkdf2_sha256.hash(password)
 
 

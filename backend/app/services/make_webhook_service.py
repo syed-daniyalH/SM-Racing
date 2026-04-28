@@ -38,8 +38,7 @@ def build_make_payload(submission: Submission, submission_input_id: int | None =
 
     driver_code = submission.driver.driver_id if submission.driver is not None else None
     vehicle_code = submission.vehicle.vehicle_id if submission.vehicle is not None else None
-    raw_submission_payload = submission.payload if isinstance(submission.payload, dict) else {}
-    session_payload = get_session_payload(raw_submission_payload)
+    session_payload = get_session_payload(submission.payload)
     analysis_payload = merge_submission_analysis(
         submission.payload,
         submission.raw_text,
@@ -77,19 +76,6 @@ def build_make_payload(submission: Submission, submission_input_id: int | None =
         "correlation_id": correlation_id,
         "raw_text": submission.raw_text,
         "image": submission.image_url,
-        "rawInput": {
-            "rawText": submission.raw_text,
-            "imageUrl": submission.image_url,
-            "submissionPayload": raw_submission_payload,
-            "analysisResult": analysis_payload,
-            "correlationId": correlation_id,
-        },
-        "staging": {
-            "submissionInputId": submission_input_id,
-            "validationStatus": "PENDING",
-            "source": "pwa",
-            "correlationId": correlation_id,
-        },
         "data": session_payload,
         "analysis_result": analysis_payload,
         "event": {
@@ -129,6 +115,19 @@ def build_make_payload(submission: Submission, submission_input_id: int | None =
         "analysis": analysis_payload,
         "session": session_payload,
         "payload": session_payload,
+        "rawInput": {
+            "rawText": submission.raw_text,
+            "imageUrl": submission.image_url,
+            "submissionPayload": submission.payload if isinstance(submission.payload, dict) else {},
+            "analysisResult": analysis_payload,
+            "correlationId": correlation_id,
+        },
+        "staging": {
+            "submissionInputId": submission_input_id,
+            "validationStatus": "PENDING",
+            "source": "pwa",
+            "correlationId": correlation_id,
+        },
     }
 
 

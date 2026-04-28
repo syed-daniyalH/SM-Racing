@@ -42,6 +42,28 @@ All future backend work should follow the FastAPI and PostgreSQL architecture.
 Any new endpoints, services, or database structures should be designed with
 normalization, validation, security, and long-term maintainability in mind.
 
+## Source Of Truth
+
+In this workspace, the live local backend runtime currently sits in the sibling
+folder `..\backend`, while the Git-tracked backend lives in this repository at
+`backend\`.
+
+Until the project is migrated to a single repository root, treat:
+
+- `C:\Users\Tech\Desktop\Alex Racing\apps\backend` as the local runtime source
+- `C:\Users\Tech\Desktop\Alex Racing\apps\frontend\backend` as the pushable mirror
+
+Before committing backend changes from the live runtime folder, sync them into
+this tracked copy with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\backend\scripts\sync_runtime_backend.ps1
+```
+
+The sync is intentionally non-destructive. It copies new and changed files from
+the runtime backend without deleting repo-only files such as tests and
+developer tooling.
+
 ## Project Structure
 
 ```text
@@ -62,9 +84,10 @@ app/
 
 1. Copy `.env.example` to `.env`
 2. Set `DATABASE_URL` to your Neon connection string and `JWT_SECRET_KEY`
-3. Install dependencies with `pip install -r requirements.txt`
-4. Apply the PostgreSQL schema with `alembic upgrade head`
-5. Start the API with `uvicorn app.main:app --reload`
+3. Optionally set `MAKE_WEBHOOK_URL` to forward each saved submission to Make.com
+4. Install dependencies with `pip install -r requirements.txt`
+5. Apply the PostgreSQL schema with `alembic upgrade head`
+6. Start the API with `uvicorn app.main:app --reload`
 
 The API will be available at `http://127.0.0.1:8000`.
 
@@ -74,7 +97,7 @@ Use these values when creating the Render Web Service:
 
 - **Root directory:** `backend`
 - **Build command:** `pip install -r requirements.txt`
-- **Start command:** `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- **Start command:** `sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"`
 - **Python version:** `3.11.11`
 
 Set these environment variables on Render:
@@ -83,6 +106,7 @@ Set these environment variables on Render:
 - `JWT_SECRET_KEY` - a long random secret
 - `ENVIRONMENT` - `production`
 - `CORS_ORIGIN_REGEX` - `^https://.*\.vercel\.app$`
+- `MAKE_WEBHOOK_URL` - optional Make.com custom webhook endpoint for structured submission forwarding
 
 If you prefer to lock CORS to a single frontend URL, set `CORS_ORIGINS` instead of `CORS_ORIGIN_REGEX`.
 

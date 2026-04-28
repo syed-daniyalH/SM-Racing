@@ -2,14 +2,7 @@ from app.models.driver import Driver
 from app.models.event import Event
 from app.models.revoked_token import RevokedToken
 from app.models.run_group import RunGroup
+from app.models.track import Track
 from app.models.submission import Submission
-from app.models.structured_notes import Alignment
-from app.models.structured_notes import Pressure
-from app.models.structured_notes import Seance
-from app.models.structured_notes import Suspension
-from app.models.structured_notes import TireHistory
-from app.models.structured_notes import TireInventory
-from app.models.structured_notes import TireTemperature
-from app.models.structured_notes import Track
 from app.models.user import User
 from app.models.vehicle import Vehicle

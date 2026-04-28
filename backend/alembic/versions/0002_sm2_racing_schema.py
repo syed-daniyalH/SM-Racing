@@ -20,7 +20,7 @@ depends_on = None
 
 
 def _load_schema_sql() -> str:
-    schema_path = Path(__file__).resolve().parents[4] / "backend" / "alembic" / "sql" / "sm2_neon_schema.sql"
+    schema_path = Path(__file__).resolve().parents[1] / "sql" / "sm2_neon_schema.sql"
     lines: list[str] = []
     for line in schema_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip().lower()

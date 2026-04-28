@@ -18,8 +18,8 @@ class SubmissionCreate(ORMModel):
     run_group_id: UUID
     driver_id: str | None = Field(default=None, max_length=32)
     vehicle_id: str | None = Field(default=None, max_length=64)
-    raw_text: str | None = Field(default=None, max_length=1000)
-    image_url: str | None = Field(default=None, max_length=1000)
+    raw_text: str | None = None
+    image_url: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     analysis_result: dict[str, Any] | None = None
 
@@ -51,26 +51,3 @@ class SubmissionRead(TimestampedModel):
     run_group: RunGroupRead | None = None
     driver: DriverRead | None = None
     vehicle: VehicleRead | None = None
-
-
-class MakeSubmissionCallback(ORMModel):
-    submission_ref: str = Field(min_length=1, max_length=120)
-    correlation_id: str | None = Field(default=None, max_length=36)
-    structured_data: dict[str, Any] | None = None
-    data: dict[str, Any] | None = None
-    payload: dict[str, Any] | None = None
-    session: dict[str, Any] | None = None
-    raw_text: str | None = Field(default=None, max_length=1000)
-    image_url: str | None = Field(default=None, max_length=1000)
-    analysis_result: dict[str, Any] | None = None
-    submission_input_id: int | None = None
-    confidence: float | None = None
-    validation_message: str | None = Field(default=None, max_length=1000)
-    source: str | None = Field(default=None, max_length=120)
-    submission_type: str | None = Field(default=None, max_length=120)
-    ocr_text: str | None = Field(default=None, max_length=5000)
-    cleaned_ocr_text: str | None = Field(default=None, max_length=5000)
-    ocr_extracted_json: dict[str, Any] | None = None
-    ocr_confidence: float | None = None
-    parser_version: str | None = Field(default=None, max_length=120)
-    review_status: str | None = Field(default=None, max_length=120)

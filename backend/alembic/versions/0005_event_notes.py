@@ -1,4 +1,4 @@
-"""add notes to events
+"""Add persisted notes to events.
 
 Revision ID: 0005_event_notes
 Revises: 0004_sm2_susp_adj
@@ -6,6 +6,7 @@ Create Date: 2026-04-22 00:00:00.000000
 """
 
 from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -16,8 +17,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS notes TEXT")
+    op.add_column("events", sa.Column("notes", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE events DROP COLUMN IF EXISTS notes")
+    op.drop_column("events", "notes")

@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_roles
@@ -143,6 +143,7 @@ def _event_submission_end_to_utc(event: Event) -> datetime | None:
     if end_date is None:
         return None
 
+    # Admin events are date-based, so a midnight end date should stay open through that full day.
     if _is_midnight(end_date):
         return end_date + timedelta(days=1)
 
@@ -627,70 +628,15 @@ def update_submission(
     return loaded_submission
 
 
-@router.delete("/{submission_id}")
+@router.delete("/{submission_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_submission(
     submission_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
-) -> dict[str, str]:
+    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+) -> None:
     submission = db.get(Submission, submission_id)
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
-    try:
-        result = db.execute(
-            text(
-                """
-                SELECT submission_input_id, seance_id
-                FROM sm2racing.submission_inputs
-                WHERE raw_payload_jsonb ->> 'submission_ref' = :submission_ref
-                """
-            ),
-            {"submission_ref": submission.submission_ref},
-        )
-        linked_rows = result.mappings().all()
-        linked_submission_input_ids = [row["submission_input_id"] for row in linked_rows]
-        linked_seance_ids = {row["seance_id"] for row in linked_rows if row["seance_id"] is not None}
-
-        if linked_submission_input_ids:
-            db.execute(
-                text(
-                    """
-                    DELETE FROM sm2racing.submission_inputs
-                    WHERE submission_input_id = ANY(:submission_input_ids)
-                    """
-                ),
-                {"submission_input_ids": linked_submission_input_ids},
-            )
-
-        for seance_id in linked_seance_ids:
-            remaining_ref = db.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM sm2racing.submission_inputs
-                    WHERE seance_id = :seance_id
-                    LIMIT 1
-                    """
-                ),
-                {"seance_id": seance_id},
-            ).scalar()
-            if remaining_ref is None:
-                db.execute(
-                    text("DELETE FROM sm2racing.seances WHERE id_seance = :seance_id"),
-                    {"seance_id": seance_id},
-                )
-
-        db.delete(submission)
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete submission",
-        ) from exc
-
-    return {"message": "Submission deleted successfully"}
+    db.delete(submission)
+    db.commit()

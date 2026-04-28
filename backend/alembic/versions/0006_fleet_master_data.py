@@ -88,8 +88,8 @@ def downgrade() -> None:
         "driver_id",
         existing_type=sa.String(length=32),
         type_=postgresql.UUID(as_uuid=True),
-        nullable=False,
-        postgresql_using="driver_id::uuid",
+        nullable=True,
+        postgresql_using="NULL::uuid",
     )
     op.create_foreign_key(
         "vehicles_driver_id_fkey",
@@ -103,8 +103,10 @@ def downgrade() -> None:
     op.drop_column("vehicles", "vehicle_id")
 
     op.alter_column("drivers", "driver_name", nullable=True)
-    op.drop_index("ix_drivers_driver_id", table_name="drivers")
+    op.alter_column("drivers", "driver_id", nullable=True)
     op.drop_column("drivers", "notes")
     op.drop_column("drivers", "aliases")
     op.drop_column("drivers", "driver_name")
+    op.drop_index("ix_drivers_driver_id", table_name="drivers")
     op.drop_column("drivers", "driver_id")
+

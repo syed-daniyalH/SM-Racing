@@ -23,8 +23,6 @@ class Settings(BaseSettings):
     )
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
-    make_callback_secret: str | None = None
-    bootstrap_token: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod

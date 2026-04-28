@@ -8,19 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 from app.core.db_schema import SM2RACING_SCHEMA
 from app.core.enums import SeanceStatus, TireInventoryStatus
-
-
-class Track(Base):
-    __tablename__ = "tracks"
-    __table_args__ = {"schema": SM2RACING_SCHEMA}
-
-    name: Mapped[str] = mapped_column(String(255), primary_key=True)
-    latitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
-    longitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+from app.models.track import Track
 
 
 class TireInventory(Base):

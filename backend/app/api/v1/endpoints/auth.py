@@ -1,16 +1,12 @@
 from datetime import datetime, timezone
-from secrets import compare_digest
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, oauth2_scheme
-from app.core.config import get_settings
-from app.core.database import Base, get_db, get_engine
+from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.security import decode_access_token
-from app.core.security import hash_password
 from app.core.enums import UserRole
 from app.models.revoked_token import RevokedToken
 from app.models.user import User
@@ -21,14 +17,6 @@ from app.services.auth_service import authenticate_user, create_user
 
 
 router = APIRouter()
-
-
-def build_token_for_user(user: User) -> Token:
-    token = create_access_token(
-        subject=str(user.id),
-        additional_claims={"email": user.email, "role": user.role.value},
-    )
-    return Token(access_token=token)
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -51,51 +39,11 @@ def login(
             detail="Invalid email or password",
         )
 
-    return build_token_for_user(user)
-
-
-@router.post("/bootstrap-admin", response_model=Token)
-def bootstrap_admin(
-    x_bootstrap_token: str = Header(default="", alias="X-Bootstrap-Token"),
-    db: Session = Depends(get_db),
-) -> Token:
-    settings = get_settings()
-    if not settings.bootstrap_token or not compare_digest(
-        x_bootstrap_token,
-        settings.bootstrap_token,
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-
-    try:
-        Base.metadata.create_all(bind=get_engine())
-
-        email = "admin@smracing.com"
-        user = db.scalar(select(User).where(User.email == email))
-        if user is None:
-            user = User(
-                name="Admin",
-                email=email,
-                hashed_password=hash_password("123456"),
-                role=UserRole.ADMIN,
-                is_active=True,
-            )
-            db.add(user)
-        else:
-            user.name = "Admin"
-            user.hashed_password = hash_password("123456")
-            user.role = UserRole.ADMIN
-            user.is_active = True
-
-        db.commit()
-        db.refresh(user)
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database bootstrap failed: {exc}",
-        ) from exc
-
-    return build_token_for_user(user)
+    token = create_access_token(
+        subject=str(user.id),
+        additional_claims={"email": user.email, "role": user.role.value},
+    )
+    return Token(access_token=token)
 
 
 @router.get("/me", response_model=UserRead)
