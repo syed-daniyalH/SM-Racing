@@ -1,0 +1,1110 @@
+"use client"
+
+import { useEffect, useMemo, useRef, useState } from "react"
+import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined"
+import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined"
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined"
+import DataObjectOutlinedIcon from "@mui/icons-material/DataObjectOutlined"
+import DeleteSweepOutlinedIcon from "@mui/icons-material/DeleteSweepOutlined"
+import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined"
+import EventOutlinedIcon from "@mui/icons-material/EventOutlined"
+import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined"
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined"
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined"
+import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
+import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined"
+import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined"
+import SendOutlinedIcon from "@mui/icons-material/SendOutlined"
+import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined"
+import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined"
+import ThermostatOutlinedIcon from "@mui/icons-material/ThermostatOutlined"
+import TrackChangesOutlinedIcon from "@mui/icons-material/TrackChangesOutlined"
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined"
+import FilterAltOutlinedIcon from "@mui/icons-material/FilterAltOutlined"
+import Loader from "../../components/Common/Loader"
+import ProtectedRoute from "../../components/ProtectedRoute"
+import StatusBadge from "../../components/Common/StatusBadge"
+import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
+import "./ChatbotAssistant.css"
+
+const QUICK_ACTIONS = [
+  { label: "Show all events", icon: EventOutlinedIcon },
+  { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+  { label: "Show sessions for this event", icon: EventOutlinedIcon },
+  { label: "Show sessions for driver Alex", icon: PeopleAltOutlinedIcon },
+  { label: "Show setup for latest session", icon: TuneOutlinedIcon },
+  { label: "Show tire pressures for Session 2", icon: SpeedOutlinedIcon },
+  { label: "Show suspension data", icon: TuneOutlinedIcon },
+  { label: "Show alignment for Car 12", icon: TrackChangesOutlinedIcon },
+  { label: "Show latest submissions", icon: HistoryOutlinedIcon },
+  { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+]
+
+const MESSAGE_ICON_MAP = {
+  user: AdminPanelSettingsOutlinedIcon,
+  assistant: SmartToyOutlinedIcon,
+  system: InfoOutlinedIcon,
+  error: ErrorOutlineOutlinedIcon,
+}
+
+const SECTION_ICON_MAP = {
+  event: EventOutlinedIcon,
+  session: ScheduleOutlinedIcon,
+  pressure: SpeedOutlinedIcon,
+  suspension: TuneOutlinedIcon,
+  alignment: TrackChangesOutlinedIcon,
+  temperature: ThermostatOutlinedIcon,
+  history: HistoryOutlinedIcon,
+  compare: CompareArrowsOutlinedIcon,
+  driver: PeopleAltOutlinedIcon,
+  vehicle: DirectionsCarOutlinedIcon,
+  default: DataObjectOutlinedIcon,
+}
+
+const formatTimestamp = (value) => {
+  if (!value) return "Just now"
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return "Just now"
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed)
+}
+
+const createMessage = (role, text, extra = {}) => ({
+  id: `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  role,
+  text,
+  createdAt: new Date().toISOString(),
+  ...extra,
+})
+
+const serializeResponse = (response) => {
+  if (!response) return ""
+
+  const lines = []
+  if (response.title) {
+    lines.push(response.title)
+  }
+
+  if (response.answer || response.summary) {
+    lines.push(response.answer || response.summary)
+  }
+
+  if (response.data_source || response.source_label) {
+    lines.push(`Data source: ${response.data_source || response.source_label}`)
+  }
+
+  if (response.intent) {
+    lines.push(`Intent: ${response.intent}`)
+  }
+
+  if (response.status) {
+    lines.push(`Status: ${response.status}`)
+  }
+
+  if (Array.isArray(response.records_used) && response.records_used.length) {
+    lines.push("")
+    lines.push("Records used")
+    response.records_used.forEach((record) => {
+      lines.push(
+        `- ${record.kind}: ${record.label}${record.details ? ` | ${record.details}` : ""}`,
+      )
+      })
+  }
+
+  if (response.error_message || response.error) {
+    lines.push("")
+    lines.push(`Error: ${response.error_message || response.error}`)
+  }
+
+  if (Array.isArray(response.sections)) {
+    response.sections.forEach((section) => {
+      lines.push("")
+      lines.push(section.title)
+      if (section.subtitle) {
+        lines.push(section.subtitle)
+      }
+
+      if (section.variant === "fields" && Array.isArray(section.fields)) {
+        section.fields.forEach((field) => {
+          lines.push(`${field.label}: ${field.value}`)
+        })
+      }
+
+      if (section.variant === "cards" && Array.isArray(section.cards)) {
+        section.cards.forEach((card) => {
+          lines.push(`- ${card.title}${card.subtitle ? ` | ${card.subtitle}` : ""}`)
+          if (Array.isArray(card.fields)) {
+            card.fields.forEach((field) => {
+              lines.push(`  ${field.label}: ${field.value}`)
+            })
+          }
+        })
+      }
+
+      if (section.variant === "table" && Array.isArray(section.table_rows)) {
+        if (Array.isArray(section.table_headers) && section.table_headers.length) {
+          lines.push(section.table_headers.join(" | "))
+        }
+        section.table_rows.forEach((row) => {
+          lines.push(row.join(" | "))
+        })
+      }
+    })
+  }
+
+  return lines.join("\n")
+}
+
+const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MAP.default
+
+const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
+
+function ChatbotSection({ section }) {
+  const Icon = getSectionIcon(section.icon_key)
+
+  return (
+    <section className="chatbot-section">
+      <header className="chatbot-section-header">
+        <div className="chatbot-section-icon" aria-hidden="true">
+          <Icon fontSize="small" />
+        </div>
+        <div className="chatbot-section-copy">
+          <h3 className="chatbot-section-title">{section.title}</h3>
+          {section.subtitle ? <p className="chatbot-section-subtitle">{section.subtitle}</p> : null}
+        </div>
+      </header>
+
+      {section.variant === "fields" ? (
+        <div className="chatbot-field-grid">
+          {section.fields.map((field) => (
+            <article className="chatbot-field-card" key={`${section.title}-${field.label}`}>
+              <span className="chatbot-field-label">{field.label}</span>
+              <span className="chatbot-field-value">{field.value}</span>
+            </article>
+          ))}
+        </div>
+      ) : null}
+
+      {section.variant === "cards" ? (
+        <div className="chatbot-card-grid">
+          {section.cards.map((card) => {
+            const CardIcon = getSectionIcon(card.icon_key || section.icon_key)
+
+            return (
+              <article className="chatbot-data-card" key={`${section.title}-${card.title}`}>
+                <div className="chatbot-data-card-top">
+                  <div className="chatbot-data-card-title-wrap">
+                    <div className="chatbot-data-card-icon" aria-hidden="true">
+                      <CardIcon fontSize="small" />
+                    </div>
+                    <div>
+                      <h4 className="chatbot-data-card-title">{card.title}</h4>
+                      {card.subtitle ? <p className="chatbot-data-card-subtitle">{card.subtitle}</p> : null}
+                    </div>
+                  </div>
+                  {card.badge ? (
+                    <StatusBadge
+                      label={card.badge}
+                      tone={card.badge_tone || "neutral"}
+                    />
+                  ) : null}
+                </div>
+
+                <div className="chatbot-data-card-fields">
+                  {card.fields.map((field) => (
+                    <div className="chatbot-inline-field" key={`${card.title}-${field.label}`}>
+                      <span className="chatbot-inline-field-label">{field.label}</span>
+                      <span className="chatbot-inline-field-value">{field.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      ) : null}
+
+      {section.variant === "table" ? (
+        <div className="chatbot-table-wrap">
+          <table className="chatbot-table">
+            <thead>
+              <tr>
+                {section.table_headers.map((header) => (
+                  <th key={header}>{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {section.table_rows.map((row, rowIndex) => (
+                <tr key={`${section.title}-${rowIndex}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={`${section.title}-${rowIndex}-${cellIndex}`}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function ChatbotMessage({ message, onCopy, onFollowUp }) {
+  const Icon = getMessageIcon(message.role)
+  const isAssistant = message.role === "assistant"
+  const isSystem = message.role === "system"
+  const isError = message.role === "error"
+  const response = message.response
+  const dataSource = response?.data_source || response?.source_label || "SM2 Racing Database"
+  const recordsUsed = Array.isArray(response?.records_used) ? response.records_used : []
+  const messageText = response?.answer || response?.summary || message.text
+  const responseStatus = response?.status || "success"
+  const responseTone =
+    responseStatus === "error"
+      ? "danger"
+      : responseStatus === "not_found"
+        ? "warning"
+        : responseStatus === "unsupported"
+          ? "neutral"
+          : "success"
+
+  return (
+    <article className={`chatbot-message chatbot-message-${message.role}`}>
+      <header className="chatbot-message-header">
+        <div className="chatbot-message-avatar" aria-hidden="true">
+          <Icon fontSize="small" />
+        </div>
+        <div className="chatbot-message-meta">
+          <div className="chatbot-message-label">
+            {message.role === "user"
+              ? "Admin"
+              : message.role === "assistant"
+                ? "AI Race Assistant"
+                : message.role === "error"
+                  ? "Connection Issue"
+                  : "System"}
+          </div>
+          <div className="chatbot-message-time">{formatTimestamp(message.createdAt)}</div>
+        </div>
+
+        {isAssistant && response ? (
+          <button
+            type="button"
+            className="chatbot-message-copy"
+            onClick={() => onCopy?.(message)}
+            title="Copy answer"
+            aria-label="Copy answer"
+          >
+            <ContentCopyOutlinedIcon fontSize="inherit" />
+          </button>
+        ) : null}
+      </header>
+
+      <div className="chatbot-message-body">
+        <p
+          className={`chatbot-message-text ${
+            isError ? "chatbot-message-text-error" : isSystem ? "chatbot-message-text-system" : ""
+          }`}
+        >
+          {messageText}
+        </p>
+
+        {isAssistant && response?.data_found ? (
+          <div className="chatbot-source-chip">
+            <span className="chatbot-source-label">Data source:</span>
+            <span>{dataSource}</span>
+          </div>
+        ) : null}
+
+        {isAssistant && response ? (
+          <div className="chatbot-response-meta">
+            <StatusBadge
+              label={`${recordsUsed.length} record${recordsUsed.length === 1 ? "" : "s"}`}
+              tone={recordsUsed.length ? "success" : "neutral"}
+            />
+            <StatusBadge label={responseStatus.replace(/_/g, " ")} tone={responseTone} />
+          </div>
+        ) : null}
+
+        {isAssistant && recordsUsed.length ? (
+          <div className="chatbot-records-used">
+            <div className="chatbot-records-used-label">Records used</div>
+            <div className="chatbot-records-chip-row">
+              {recordsUsed.map((record) => (
+                <span
+                  key={`${message.id}-${record.kind}-${record.value}`}
+                  className="chatbot-record-chip"
+                  title={record.details || record.label}
+                >
+                  <strong>{record.kind}</strong>
+                  <span>{record.label}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {isAssistant && Array.isArray(response?.sections) && response.sections.length ? (
+          <div className="chatbot-response-sections">
+            {response.sections.map((section) => (
+              <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+            ))}
+          </div>
+        ) : null}
+
+        {isAssistant && Array.isArray(response?.follow_up) && response.follow_up.length ? (
+          <div className="chatbot-follow-up">
+            <div className="chatbot-follow-up-label">Suggested next steps</div>
+            <div className="chatbot-follow-up-chips">
+              {response.follow_up.map((item) => {
+                const ActionIcon = QUICK_ACTIONS.find((action) => action.label === item)?.icon || AutoAwesomeOutlinedIcon
+
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    className="chatbot-follow-up-chip"
+                    onClick={() => onFollowUp?.(item)}
+                  >
+                    <ActionIcon fontSize="inherit" />
+                    <span>{item}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function EmptyState({ onQuickAction, isLoading }) {
+  return (
+    <div className="chatbot-empty-state">
+      <div className="chatbot-empty-hero">
+        <div className="chatbot-empty-icon" aria-hidden="true">
+          <SmartToyOutlinedIcon fontSize="inherit" />
+        </div>
+        <div className="chatbot-empty-copy">
+          <h2>Start a race-weekend query</h2>
+          <p>
+            Ask the AI Race Assistant to review sessions, setup sheets, events, tire data,
+            or driver and vehicle records from the live SM2 Racing database.
+          </p>
+        </div>
+      </div>
+
+      <div className="chatbot-empty-actions">
+        {QUICK_ACTIONS.map((action) => {
+          const Icon = action.icon
+          return (
+            <button
+              key={action.label}
+              type="button"
+              className="chatbot-empty-chip"
+              onClick={() => onQuickAction(action.label)}
+              disabled={isLoading}
+            >
+              <Icon fontSize="inherit" />
+              <span>{action.label}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export default function ChatbotPage() {
+  const [contextLoading, setContextLoading] = useState(true)
+  const [contextError, setContextError] = useState("")
+  const [context, setContext] = useState({
+    events: [],
+    sessions: [],
+    drivers: [],
+    vehicles: [],
+    default_event_id: null,
+    default_session_id: null,
+    default_driver_id: null,
+    default_vehicle_id: null,
+    has_event_data: false,
+    has_session_data: false,
+    has_driver_data: false,
+    has_vehicle_data: false,
+    source_label: "SM2 Racing Database",
+  })
+  const [messages, setMessages] = useState([])
+  const [draft, setDraft] = useState("")
+  const [selectedEventId, setSelectedEventId] = useState("")
+  const [selectedSessionId, setSelectedSessionId] = useState("")
+  const [selectedDriverId, setSelectedDriverId] = useState("")
+  const [selectedVehicleId, setSelectedVehicleId] = useState("")
+  const [isSending, setIsSending] = useState(false)
+  const [notice, setNotice] = useState("")
+  const [lastUserQuery, setLastUserQuery] = useState("")
+  const listRef = useRef(null)
+  const composerRef = useRef(null)
+
+  const loadContext = async () => {
+    try {
+      setContextLoading(true)
+      setContextError("")
+      const response = await getChatbotContext()
+      setContext(response.context || {
+        events: [],
+        sessions: [],
+        drivers: [],
+        vehicles: [],
+        default_event_id: null,
+        default_session_id: null,
+        default_driver_id: null,
+        default_vehicle_id: null,
+        has_event_data: false,
+        has_session_data: false,
+        has_driver_data: false,
+        has_vehicle_data: false,
+        source_label: "SM2 Racing Database",
+      })
+    } catch (error) {
+      setContextError(error.message || "Failed to load AI Race Assistant context.")
+      setContext({
+        events: [],
+        sessions: [],
+        drivers: [],
+        vehicles: [],
+        default_event_id: null,
+        default_session_id: null,
+        default_driver_id: null,
+        default_vehicle_id: null,
+        has_event_data: false,
+        has_session_data: false,
+        has_driver_data: false,
+        has_vehicle_data: false,
+        source_label: "SM2 Racing Database",
+      })
+    } finally {
+      setContextLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadContext()
+  }, [])
+
+  useEffect(() => {
+    if (!notice) {
+      return undefined
+    }
+
+    const timeout = window.setTimeout(() => setNotice(""), 4000)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
+
+  const selectedEvent = useMemo(
+    () => context.events.find((event) => event.value === selectedEventId) || null,
+    [context.events, selectedEventId],
+  )
+
+  const selectedDriver = useMemo(
+    () => context.drivers.find((driver) => driver.value === selectedDriverId) || null,
+    [context.drivers, selectedDriverId],
+  )
+
+  const selectedVehicle = useMemo(
+    () => context.vehicles.find((vehicle) => vehicle.value === selectedVehicleId) || null,
+    [context.vehicles, selectedVehicleId],
+  )
+
+  const visibleSessions = useMemo(
+    () =>
+      context.sessions.filter((session) => {
+        if (selectedEventId && session.event_id !== selectedEventId) {
+          return false
+        }
+
+        if (selectedDriverId && session.driver_id !== selectedDriverId) {
+          return false
+        }
+
+        if (selectedVehicleId && session.vehicle_id !== selectedVehicleId) {
+          return false
+        }
+
+        return true
+      }),
+    [context.sessions, selectedDriverId, selectedEventId, selectedVehicleId],
+  )
+
+  const selectedSession = useMemo(
+    () => visibleSessions.find((session) => session.value === selectedSessionId) || null,
+    [selectedSessionId, visibleSessions],
+  )
+
+  const latestAssistantMessage = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === "assistant") {
+        return messages[index]
+      }
+    }
+    return null
+  }, [messages])
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      return
+    }
+
+    if (!visibleSessions.some((session) => session.value === selectedSessionId)) {
+      setSelectedSessionId("")
+    }
+  }, [selectedSessionId, visibleSessions])
+
+  useEffect(() => {
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: "smooth",
+    })
+  }, [messages, isSending])
+
+  useEffect(() => {
+    if (context.default_event_id && !selectedEventId) {
+      setNotice("Live context loaded from the SM2 Racing Database.")
+    }
+  }, [context.default_event_id, selectedEventId])
+
+  const appendMessage = (message) => {
+    setMessages((current) => [...current, message])
+  }
+
+  const runQuery = async (
+    queryText,
+    { addUserMessage = true, messageText = null, clearDraft = true } = {},
+  ) => {
+    const trimmed = queryText.trim()
+    if (!trimmed || isSending) {
+      return
+    }
+
+    if (addUserMessage) {
+      appendMessage(createMessage("user", trimmed))
+      setLastUserQuery(trimmed)
+    } else if (messageText) {
+      appendMessage(createMessage("system", messageText))
+    }
+
+    setIsSending(true)
+
+    try {
+      const response = await sendChatbotQuery({
+        message: trimmed,
+        query: trimmed,
+        event_id: selectedEventId || null,
+        session_id: selectedSessionId || null,
+        driver_id: selectedDriverId || null,
+        vehicle_id: selectedVehicleId || null,
+        limit: 6,
+      })
+
+      const assistantResponse = response.response
+      appendMessage(
+        createMessage(
+          assistantResponse.status === "error" ? "error" : "assistant",
+          assistantResponse.answer || assistantResponse.summary || "Response received.",
+          {
+            response: assistantResponse,
+          },
+        ),
+      )
+      setNotice("Latest database response loaded.")
+    } catch (error) {
+      appendMessage(
+        createMessage("error", error.message || "The AI Race Assistant could not reach the database."),
+      )
+    } finally {
+      setIsSending(false)
+      if (clearDraft) {
+        setDraft("")
+      }
+      composerRef.current?.focus()
+    }
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    await runQuery(draft)
+  }
+
+  const handleQuickAction = async (prompt) => {
+    setDraft(prompt)
+    await runQuery(prompt)
+  }
+
+  const handleRefresh = async () => {
+    await loadContext()
+
+    if (lastUserQuery) {
+      await runQuery(lastUserQuery, {
+        addUserMessage: false,
+        messageText: "Refreshing the latest data for the current scope.",
+        clearDraft: false,
+      })
+      return
+    }
+
+    setNotice("Context refreshed from the live database.")
+  }
+
+  const handleClearChat = () => {
+    setMessages([])
+    setLastUserQuery("")
+    setDraft("")
+    setNotice("Conversation cleared.")
+    composerRef.current?.focus()
+  }
+
+  const handleCopyMessage = async (message) => {
+    const response = message?.response
+    if (!response) {
+      return
+    }
+
+    const text = serializeResponse(response)
+
+    try {
+      await navigator.clipboard.writeText(text)
+      setNotice("Answer copied to the clipboard.")
+    } catch (error) {
+      setNotice("Unable to copy the answer.")
+    }
+  }
+
+  const handleCopyLatest = async () => {
+    if (!latestAssistantMessage) {
+      return
+    }
+
+    await handleCopyMessage(latestAssistantMessage)
+  }
+
+  const handleEventChange = (event) => {
+    const nextEventId = event.target.value
+    setSelectedEventId(nextEventId)
+    setSelectedSessionId("")
+  }
+
+  const handleSessionChange = (event) => {
+    setSelectedSessionId(event.target.value)
+  }
+
+  const handleDriverChange = (event) => {
+    const nextDriverId = event.target.value
+    setSelectedDriverId(nextDriverId)
+    setSelectedSessionId("")
+  }
+
+  const handleVehicleChange = (event) => {
+    const nextVehicleId = event.target.value
+    setSelectedVehicleId(nextVehicleId)
+    setSelectedSessionId("")
+  }
+
+  const hasMessages = messages.length > 0
+  const canCopy = Boolean(latestAssistantMessage?.response)
+
+  return (
+    <ProtectedRoute requireAdmin>
+      <div className="chatbot-page">
+        <div className="chatbot-shell">
+          <header className="chatbot-hero">
+            <div className="chatbot-hero-copy">
+              <div className="chatbot-eyebrow">
+                <AdminPanelSettingsOutlinedIcon fontSize="inherit" />
+                <span>Admin Operations</span>
+              </div>
+              <h1>AI Race Assistant</h1>
+              <p>
+                Ask questions, review sessions, and access setup data from the SM2 Racing
+                database.
+              </p>
+            </div>
+
+            <div className="chatbot-hero-tools">
+              <div className="chatbot-hero-badges">
+                <StatusBadge
+                  label={context.source_label || "SM2 Racing Database"}
+                  tone={contextLoading ? "warning" : "success"}
+                />
+                <StatusBadge
+                  label={contextError ? "Database unavailable" : "Database ready"}
+                  tone={contextError ? "danger" : "success"}
+                />
+                <StatusBadge
+                  label={context.has_driver_data ? "Drivers loaded" : "No drivers"}
+                  tone={context.has_driver_data ? "success" : "warning"}
+                />
+                <StatusBadge
+                  label={context.has_vehicle_data ? "Vehicles loaded" : "No vehicles"}
+                  tone={context.has_vehicle_data ? "success" : "warning"}
+                />
+              </div>
+
+              <div className="chatbot-hero-actions">
+                <button
+                  type="button"
+                  className="chatbot-action-button"
+                  onClick={handleRefresh}
+                  disabled={isSending}
+                >
+                  <RefreshOutlinedIcon fontSize="small" />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  type="button"
+                  className="chatbot-action-button"
+                  onClick={handleCopyLatest}
+                  disabled={!canCopy}
+                >
+                  <ContentCopyOutlinedIcon fontSize="small" />
+                  <span>Copy answer</span>
+                </button>
+                <button
+                  type="button"
+                  className="chatbot-action-button danger"
+                  onClick={handleClearChat}
+                  disabled={!hasMessages || isSending}
+                >
+                  <DeleteSweepOutlinedIcon fontSize="small" />
+                  <span>Clear chat</span>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="chatbot-grid">
+            <aside className="chatbot-sidebar">
+              <section className="chatbot-sidebar-card chatbot-status-card">
+                <div className="chatbot-sidebar-card-head">
+                  <div className="chatbot-sidebar-card-icon" aria-hidden="true">
+                    <AutoAwesomeOutlinedIcon fontSize="small" />
+                  </div>
+                  <div>
+                    <h2>Live context</h2>
+                    <p>Realtime filters and source status</p>
+                  </div>
+                </div>
+
+                <div className="chatbot-metric-grid">
+                  <article className="chatbot-metric-card">
+                    <span className="chatbot-metric-value">{context.events.length}</span>
+                    <span className="chatbot-metric-label">Events</span>
+                  </article>
+                  <article className="chatbot-metric-card">
+                    <span className="chatbot-metric-value">{context.sessions.length}</span>
+                    <span className="chatbot-metric-label">Sessions</span>
+                  </article>
+                  <article className="chatbot-metric-card">
+                    <span className="chatbot-metric-value">{context.drivers.length}</span>
+                    <span className="chatbot-metric-label">Drivers</span>
+                  </article>
+                  <article className="chatbot-metric-card">
+                    <span className="chatbot-metric-value">{context.vehicles.length}</span>
+                    <span className="chatbot-metric-label">Vehicles</span>
+                  </article>
+                </div>
+
+                {notice ? <div className="chatbot-notice">{notice}</div> : null}
+              </section>
+
+              <section className="chatbot-sidebar-card">
+                <div className="chatbot-sidebar-card-head">
+                  <div className="chatbot-sidebar-card-icon" aria-hidden="true">
+                    <FilterAltOutlinedIcon fontSize="small" />
+                  </div>
+                  <div>
+                    <h2>Scope filters</h2>
+                    <p>Optional event and session scoping</p>
+                  </div>
+                </div>
+
+                <div className="chatbot-filter-grid">
+                  <div className="chatbot-filter-group">
+                    <label className="chatbot-filter-label" htmlFor="event-filter">
+                      Event
+                    </label>
+                    <select
+                      id="event-filter"
+                      className="chatbot-select"
+                      value={selectedEventId}
+                      onChange={handleEventChange}
+                      disabled={contextLoading}
+                    >
+                      <option value="">All events</option>
+                      {context.events.map((event) => (
+                        <option key={event.value} value={event.value}>
+                          {event.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="chatbot-filter-group">
+                    <label className="chatbot-filter-label" htmlFor="session-filter">
+                      Session
+                    </label>
+                    <select
+                      id="session-filter"
+                      className="chatbot-select"
+                      value={selectedSessionId}
+                      onChange={handleSessionChange}
+                      disabled={contextLoading || visibleSessions.length === 0}
+                    >
+                      <option value="">Latest sessions</option>
+                      {visibleSessions.map((session) => (
+                        <option key={session.value} value={session.value}>
+                          {session.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="chatbot-filter-group">
+                    <label className="chatbot-filter-label" htmlFor="driver-filter">
+                      Driver
+                    </label>
+                    <select
+                      id="driver-filter"
+                      className="chatbot-select"
+                      value={selectedDriverId}
+                      onChange={handleDriverChange}
+                      disabled={contextLoading}
+                    >
+                      <option value="">All drivers</option>
+                      {context.drivers.map((driver) => (
+                        <option key={driver.value} value={driver.value}>
+                          {driver.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="chatbot-filter-group">
+                    <label className="chatbot-filter-label" htmlFor="vehicle-filter">
+                      Vehicle
+                    </label>
+                    <select
+                      id="vehicle-filter"
+                      className="chatbot-select"
+                      value={selectedVehicleId}
+                      onChange={handleVehicleChange}
+                      disabled={contextLoading}
+                    >
+                      <option value="">All vehicles</option>
+                      {context.vehicles.map((vehicle) => (
+                        <option key={vehicle.value} value={vehicle.value}>
+                          {vehicle.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="chatbot-scope-summary">
+                  <div className="chatbot-scope-row">
+                    <span>Event scope</span>
+                    <strong>{selectedEvent?.label || "All events"}</strong>
+                  </div>
+                  <div className="chatbot-scope-row">
+                    <span>Session scope</span>
+                    <strong>{selectedSession?.label || "Latest sessions"}</strong>
+                  </div>
+                  <div className="chatbot-scope-row">
+                    <span>Driver scope</span>
+                    <strong>{selectedDriver?.label || "All drivers"}</strong>
+                  </div>
+                  <div className="chatbot-scope-row">
+                    <span>Vehicle scope</span>
+                    <strong>{selectedVehicle?.label || "All vehicles"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="chatbot-sidebar-card">
+                <div className="chatbot-sidebar-card-head">
+                  <div className="chatbot-sidebar-card-icon" aria-hidden="true">
+                    <DataObjectOutlinedIcon fontSize="small" />
+                  </div>
+                  <div>
+                    <h2>What this assistant can do</h2>
+                    <p>Command examples for quick use</p>
+                  </div>
+                </div>
+
+                <ul className="chatbot-capabilities-list">
+                  <li>Show all events</li>
+                  <li>Show latest sessions</li>
+                  <li>Show sessions for this event</li>
+                  <li>Show sessions for driver Alex</li>
+                  <li>Show setup for latest session</li>
+                  <li>Show tire pressures for Session 2</li>
+                  <li>Show suspension data</li>
+                  <li>Show alignment for Car 12</li>
+                  <li>Show latest submissions</li>
+                  <li>Show driver and vehicle data</li>
+                  <li>Compare sessions</li>
+                </ul>
+
+                {contextLoading ? (
+                  <div className="chatbot-sidebar-loader">
+                    <Loader
+                      label="Loading context"
+                      sublabel="Fetching the latest database filters."
+                    />
+                  </div>
+                ) : null}
+              </section>
+
+              {contextError ? (
+                <section className="chatbot-sidebar-card chatbot-error-card">
+                  <div className="chatbot-sidebar-card-head">
+                    <div className="chatbot-sidebar-card-icon" aria-hidden="true">
+                      <ErrorOutlineOutlinedIcon fontSize="small" />
+                    </div>
+                    <div>
+                      <h2>Database unavailable</h2>
+                      <p>The assistant can still accept queries, but the backend is failing.</p>
+                    </div>
+                  </div>
+                  <p className="chatbot-error-text">{contextError}</p>
+                  <button
+                    type="button"
+                    className="chatbot-action-button"
+                    onClick={handleRefresh}
+                    disabled={isSending}
+                  >
+                    <RefreshOutlinedIcon fontSize="small" />
+                    <span>Retry connection</span>
+                  </button>
+                </section>
+              ) : null}
+            </aside>
+
+            <section className="chatbot-panel">
+              <div className="chatbot-panel-header">
+                <div>
+                  <h2>Conversation</h2>
+                  <p>
+                    {contextLoading
+                      ? "Connecting to the database and loading live filters."
+                      : "Ask in plain language. The assistant will respond with structured race data when available."}
+                  </p>
+                </div>
+
+                <div className="chatbot-panel-header-badges">
+                  <StatusBadge
+                    label={context.has_event_data ? "Events loaded" : "No events"}
+                    tone={context.has_event_data ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={context.has_session_data ? "Sessions loaded" : "No sessions"}
+                    tone={context.has_session_data ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={context.has_driver_data ? "Drivers loaded" : "No drivers"}
+                    tone={context.has_driver_data ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={context.has_vehicle_data ? "Vehicles loaded" : "No vehicles"}
+                    tone={context.has_vehicle_data ? "success" : "warning"}
+                  />
+                </div>
+              </div>
+
+              <div className="chatbot-message-list" ref={listRef}>
+                {!hasMessages ? (
+                  <EmptyState onQuickAction={handleQuickAction} isLoading={isSending} />
+                ) : (
+                  messages.map((message) => (
+                    <ChatbotMessage
+                      key={message.id}
+                      message={message}
+                      onCopy={handleCopyMessage}
+                      onFollowUp={handleQuickAction}
+                    />
+                  ))
+                )}
+
+                {isSending ? (
+                  <div className="chatbot-message chatbot-message-assistant chatbot-typing-message">
+                    <header className="chatbot-message-header">
+                      <div className="chatbot-message-avatar" aria-hidden="true">
+                        <SmartToyOutlinedIcon fontSize="small" />
+                      </div>
+                      <div className="chatbot-message-meta">
+                        <div className="chatbot-message-label">AI Race Assistant</div>
+                        <div className="chatbot-message-time">Thinking</div>
+                      </div>
+                    </header>
+                    <div className="chatbot-typing-indicator" aria-live="polite">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <form className="chatbot-composer" onSubmit={handleSubmit}>
+                <div className="chatbot-composer-inner">
+                  <label className="chatbot-composer-label" htmlFor="chatbot-input">
+                    Ask the AI Race Assistant
+                  </label>
+                  <textarea
+                    ref={composerRef}
+                    id="chatbot-input"
+                    className="chatbot-input"
+                    placeholder="Ask about sessions, setup sheets, events, tire pressures, or comparisons..."
+                    value={draft}
+                    rows={3}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault()
+                        void handleSubmit(event)
+                      }
+                    }}
+                    disabled={isSending}
+                  />
+
+                  <div className="chatbot-composer-footer">
+                    <div className="chatbot-composer-hint">
+                      <InfoOutlinedIcon fontSize="inherit" />
+                      <span>Press Enter to send. Shift+Enter adds a new line.</span>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="chatbot-send-button"
+                      disabled={!draft.trim() || isSending}
+                    >
+                      <SendOutlinedIcon fontSize="small" />
+                      <span>Send</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
+      </div>
+    </ProtectedRoute>
+  )
+}

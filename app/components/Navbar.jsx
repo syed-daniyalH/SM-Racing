@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined"
+import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined"
+import EventOutlinedIcon from "@mui/icons-material/EventOutlined"
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined"
+import FlagOutlinedIcon from "@mui/icons-material/FlagOutlined"
+import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined"
+import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
+import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined"
+import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined"
 import { useAuth } from "../context/AuthContext"
 import "./Navbar.css"
 
@@ -65,7 +74,7 @@ export default function Navbar() {
 
   const handleLogout = () => {
     logout()
-    router.push('/login')
+    router.push("/login")
   }
 
   const handleMechanicSubmissions = () => {
@@ -76,110 +85,160 @@ export default function Navbar() {
       return
     }
 
-    router.push('/events')
+    router.push("/events")
   }
 
   const handleDashboard = () => {
     if (isAdmin()) {
-      router.push('/admin/users')
+      router.push("/admin/users")
     } else {
-      router.push('/events')
+      router.push("/events")
     }
   }
 
+  const showChatbotLauncher = isAdmin() && pathname.startsWith("/admin") && pathname !== "/admin/chatbot"
+
+  const adminNavItems = [
+    {
+      href: "/admin/users",
+      label: "Users",
+      icon: AdminPanelSettingsOutlinedIcon,
+      active: pathname === "/admin/users",
+    },
+    {
+      href: "/admin/drivers",
+      label: "Drivers",
+      icon: PeopleAltOutlinedIcon,
+      active: pathname === "/admin/drivers",
+    },
+    {
+      href: "/admin/vehicles",
+      label: "Vehicles",
+      icon: DirectionsCarOutlinedIcon,
+      active: pathname === "/admin/vehicles",
+    },
+    {
+      href: "/admin/tracks",
+      label: "Tracks",
+      icon: RouteOutlinedIcon,
+      active: pathname === "/admin/tracks",
+    },
+    {
+      href: "/admin/events",
+      label: "Events",
+      icon: EventOutlinedIcon,
+      active: pathname === "/admin/events",
+    },
+    {
+      href: "/admin/submission-review-dashboard",
+      label: "Submission Review",
+      icon: FactCheckOutlinedIcon,
+      active:
+        pathname === "/admin/submissions" ||
+        pathname.startsWith("/admin/submissions/") ||
+        pathname === "/admin/submission-review-dashboard",
+    },
+    {
+      href: "/admin/chatbot",
+      label: "AI Assistant",
+      icon: SmartToyOutlinedIcon,
+      active: pathname.startsWith("/admin/chatbot"),
+    },
+  ]
+
   return (
-    <nav className="navbar">
-      <div className="navbar-container">
-        <div className="navbar-brand" onClick={handleDashboard}>
-          <span className="brand-icon">🏁</span>
-          <span className="brand-text">
-            <span className="brand-name">SM-2</span>
-            <span className="brand-subtitle">RACE CONTROL</span>
-          </span>
-        </div>
-        
-        <div className="navbar-content">
-          <div className="navbar-menu">
-            {isAdmin() ? (
-              <>
-              <button 
-                className={`nav-link ${pathname === '/admin/users' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/users')}
-              >
-                Users
-              </button>
-              <button 
-                className={`nav-link ${pathname === '/admin/drivers' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/drivers')}
-              >
-                Drivers
-              </button>
-              <button 
-                className={`nav-link ${pathname === '/admin/vehicles' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/vehicles')}
-              >
-                Vehicles
-              </button>
-              <button 
-                className={`nav-link ${pathname === '/admin/tracks' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/tracks')}
-              >
-                Tracks
-              </button>
-              <button 
-                className={`nav-link ${pathname === '/admin/events' ? 'active' : ''}`}
-                onClick={() => router.push('/admin/events')}
-              >
-                Events
-                </button>
-              <button
-                className={`nav-link ${
-                  pathname === '/admin/submissions' ||
-                  pathname.startsWith('/admin/submissions/') ||
-                  pathname === '/admin/submission-review-dashboard'
-                    ? 'active'
-                    : ''
-                }`}
-                onClick={() => router.push('/admin/submission-review-dashboard')}
-              >
-                Submission Review
-              </button>
-              </>
-            ) : (
-              <>
-                <button 
-                  className={`nav-link ${pathname === '/events' || pathname.startsWith('/event/') ? 'active' : ''}`}
-                  onClick={() => router.push('/events')}
-                >
-                  Events
-                </button>
-                <button
-                  className={`nav-link ${pathname.startsWith('/event/') && pathname.endsWith('/submissions') ? 'active' : ''}`}
-                  onClick={handleMechanicSubmissions}
-                  title={activeEventId ? 'Open submissions for the active event' : 'Select an event first to view submissions'}
-                >
-                  Submissions
-                </button>
-              </>
-            )}
+    <>
+      <nav className="navbar">
+        <div className="navbar-container">
+          <div className="navbar-brand" onClick={handleDashboard}>
+            <span className="brand-icon" aria-hidden="true">
+              <FlagOutlinedIcon fontSize="inherit" />
+            </span>
+            <span className="brand-text">
+              <span className="brand-name">SM-2</span>
+              <span className="brand-subtitle">RACE CONTROL</span>
+            </span>
           </div>
 
-          <div className="navbar-user">
-            <div className="user-info">
-              <div className="user-name">{user.name || user.email}</div>
-              <div className="user-role">{user.role}</div>
+          <div className="navbar-content">
+            <div className="navbar-menu">
+              {isAdmin() ? (
+                adminNavItems.map((item) => {
+                  const Icon = item.icon
+
+                  return (
+                    <button
+                      key={item.href}
+                      className={`nav-link ${item.active ? "active" : ""}`}
+                      onClick={() => router.push(item.href)}
+                      aria-current={item.active ? "page" : undefined}
+                    >
+                      <span className="nav-link-icon" aria-hidden="true">
+                        <Icon fontSize="small" />
+                      </span>
+                      <span className="nav-link-label">{item.label}</span>
+                    </button>
+                  )
+                })
+              ) : (
+                <>
+                  <button
+                    className={`nav-link ${pathname === "/events" || pathname.startsWith("/event/") ? "active" : ""}`}
+                    onClick={() => router.push("/events")}
+                  >
+                    <span className="nav-link-icon" aria-hidden="true">
+                      <EventOutlinedIcon fontSize="small" />
+                    </span>
+                    <span className="nav-link-label">Events</span>
+                  </button>
+                  <button
+                    className={`nav-link ${pathname.startsWith("/event/") && pathname.endsWith("/submissions") ? "active" : ""}`}
+                    onClick={handleMechanicSubmissions}
+                    title={activeEventId ? "Open submissions for the active event" : "Select an event first to view submissions"}
+                  >
+                    <span className="nav-link-icon" aria-hidden="true">
+                      <FactCheckOutlinedIcon fontSize="small" />
+                    </span>
+                    <span className="nav-link-label">Submissions</span>
+                  </button>
+                </>
+              )}
             </div>
-            <button 
-              className="nav-link logout"
-              onClick={handleLogout}
-              title="Logout"
-            >
-              <span className="logout-icon">🚪</span>
-              <span className="logout-text">Logout</span>
-            </button>
+
+            <div className="navbar-user">
+              <div className="user-info">
+                <div className="user-name">{user.name || user.email}</div>
+                <div className="user-role">{user.role}</div>
+              </div>
+              <button
+                className="nav-link logout"
+                onClick={handleLogout}
+                title="Logout"
+              >
+                <span className="logout-icon" aria-hidden="true">
+                  <LogoutOutlinedIcon fontSize="small" />
+                </span>
+                <span className="logout-text">Logout</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+
+      {showChatbotLauncher ? (
+        <button
+          type="button"
+          className="chatbot-launcher"
+          onClick={() => router.push("/admin/chatbot")}
+          aria-label="Open AI Race Assistant"
+          title="Open AI Race Assistant"
+        >
+          <span className="chatbot-launcher-icon" aria-hidden="true">
+            <SmartToyOutlinedIcon fontSize="small" />
+          </span>
+          <span className="chatbot-launcher-text">AI Assistant</span>
+        </button>
+      ) : null}
+    </>
   )
 }
