@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable @next/next/no-img-element */
+
 import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined"
@@ -10,9 +12,10 @@ import FlagOutlinedIcon from "@mui/icons-material/FlagOutlined"
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined"
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined"
-import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined"
 import { useAuth } from "../context/AuthContext"
 import "./Navbar.css"
+
+const ASSISTANT_ICON_SRC = "/icons/sm-ai-assistant-icon.png"
 
 const getEventId = (event) =>
   event?.id || event?._id || event?.eventId || event?.event_id || null
@@ -140,8 +143,9 @@ export default function Navbar() {
     },
     {
       href: "/admin/chatbot",
-      label: "AI Assistant",
-      icon: SmartToyOutlinedIcon,
+      label: "AI Race Assistant",
+      icon: null,
+      assistant: true,
       active: pathname.startsWith("/admin/chatbot"),
     },
   ]
@@ -162,8 +166,8 @@ export default function Navbar() {
 
           <div className="navbar-content">
             <div className="navbar-menu">
-              {isAdmin() ? (
-                adminNavItems.map((item) => {
+                {isAdmin() ? (
+                  adminNavItems.map((item) => {
                   const Icon = item.icon
 
                   return (
@@ -173,8 +177,21 @@ export default function Navbar() {
                       onClick={() => router.push(item.href)}
                       aria-current={item.active ? "page" : undefined}
                     >
-                      <span className="nav-link-icon" aria-hidden="true">
-                        <Icon fontSize="small" />
+                      <span
+                        className={`nav-link-icon ${item.assistant ? "nav-link-icon-brand" : ""}`}
+                        aria-hidden="true"
+                      >
+                        {item.assistant ? (
+                          <img
+                            src={ASSISTANT_ICON_SRC}
+                            alt=""
+                            className="nav-link-icon-image"
+                            loading="eager"
+                            decoding="async"
+                          />
+                        ) : (
+                          <Icon fontSize="small" />
+                        )}
                       </span>
                       <span className="nav-link-label">{item.label}</span>
                     </button>
@@ -233,10 +250,16 @@ export default function Navbar() {
           aria-label="Open AI Race Assistant"
           title="Open AI Race Assistant"
         >
-          <span className="chatbot-launcher-icon" aria-hidden="true">
-            <SmartToyOutlinedIcon fontSize="small" />
+          <span className="chatbot-launcher-icon chatbot-launcher-icon-brand" aria-hidden="true">
+            <img
+              src={ASSISTANT_ICON_SRC}
+              alt=""
+              className="chatbot-launcher-icon-image"
+              loading="eager"
+              decoding="async"
+            />
           </span>
-          <span className="chatbot-launcher-text">AI Assistant</span>
+          <span className="chatbot-launcher-text">AI Race Assistant</span>
         </button>
       ) : null}
     </>

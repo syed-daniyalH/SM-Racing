@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable @next/next/no-img-element */
+
 import { useEffect, useMemo, useRef, useState } from "react"
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined"
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
@@ -16,7 +18,6 @@ import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined"
 import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined"
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined"
-import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined"
 import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined"
 import ThermostatOutlinedIcon from "@mui/icons-material/ThermostatOutlined"
 import TrackChangesOutlinedIcon from "@mui/icons-material/TrackChangesOutlined"
@@ -27,6 +28,8 @@ import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import "./ChatbotAssistant.css"
+
+const ASSISTANT_ICON_SRC = "/icons/sm-ai-assistant-icon.png"
 
 const QUICK_ACTIONS = [
   { label: "Show all events", icon: EventOutlinedIcon },
@@ -43,7 +46,6 @@ const QUICK_ACTIONS = [
 
 const MESSAGE_ICON_MAP = {
   user: AdminPanelSettingsOutlinedIcon,
-  assistant: SmartToyOutlinedIcon,
   system: InfoOutlinedIcon,
   error: ErrorOutlineOutlinedIcon,
 }
@@ -166,6 +168,19 @@ const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MA
 
 const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
 
+function AssistantIcon({ className = "", decorative = false, alt = "SM Racing AI Assistant" }) {
+  return (
+    <img
+      src={ASSISTANT_ICON_SRC}
+      alt={decorative ? "" : alt}
+      aria-hidden={decorative ? "true" : undefined}
+      className={className}
+      loading="eager"
+      decoding="async"
+    />
+  )
+}
+
 function ChatbotSection({ section }) {
   const Icon = getSectionIcon(section.icon_key)
 
@@ -279,8 +294,17 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   return (
     <article className={`chatbot-message chatbot-message-${message.role}`}>
       <header className="chatbot-message-header">
-        <div className="chatbot-message-avatar" aria-hidden="true">
-          <Icon fontSize="small" />
+        <div
+          className={`chatbot-message-avatar ${
+            isAssistant ? "chatbot-message-avatar-brand" : ""
+          }`}
+          aria-hidden="true"
+        >
+          {isAssistant ? (
+            <AssistantIcon className="chatbot-message-avatar-image" decorative />
+          ) : (
+            <Icon fontSize="small" />
+          )}
         </div>
         <div className="chatbot-message-meta">
           <div className="chatbot-message-label">
@@ -391,8 +415,8 @@ function EmptyState({ onQuickAction, isLoading }) {
   return (
     <div className="chatbot-empty-state">
       <div className="chatbot-empty-hero">
-        <div className="chatbot-empty-icon" aria-hidden="true">
-          <SmartToyOutlinedIcon fontSize="inherit" />
+        <div className="chatbot-empty-icon chatbot-empty-icon-brand" aria-hidden="true">
+          <AssistantIcon className="chatbot-empty-icon-image" decorative />
         </div>
         <div className="chatbot-empty-copy">
           <h2>Start a race-weekend query</h2>
@@ -723,18 +747,28 @@ export default function ChatbotPage() {
   return (
     <ProtectedRoute requireAdmin>
       <div className="chatbot-page">
-        <div className="chatbot-shell">
+      <div className="chatbot-shell">
           <header className="chatbot-hero">
             <div className="chatbot-hero-copy">
               <div className="chatbot-eyebrow">
                 <AdminPanelSettingsOutlinedIcon fontSize="inherit" />
                 <span>Admin Operations</span>
               </div>
-              <h1>AI Race Assistant</h1>
-              <p>
-                Ask questions, review sessions, and access setup data from the SM2 Racing
-                database.
-              </p>
+              <div className="chatbot-hero-brand">
+                <div className="chatbot-hero-icon" aria-hidden="true">
+                  <AssistantIcon
+                    className="chatbot-hero-icon-image"
+                    alt="SM Racing AI Assistant"
+                  />
+                </div>
+                <div className="chatbot-hero-heading">
+                  <h1>AI Race Assistant</h1>
+                  <p>
+                    Ask questions, compare sessions, and review setup data from the SM2 Racing
+                    database.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="chatbot-hero-tools">
@@ -1045,8 +1079,11 @@ export default function ChatbotPage() {
                 {isSending ? (
                   <div className="chatbot-message chatbot-message-assistant chatbot-typing-message">
                     <header className="chatbot-message-header">
-                      <div className="chatbot-message-avatar" aria-hidden="true">
-                        <SmartToyOutlinedIcon fontSize="small" />
+                      <div
+                        className="chatbot-message-avatar chatbot-message-avatar-brand"
+                        aria-hidden="true"
+                      >
+                        <AssistantIcon className="chatbot-message-avatar-image" decorative />
                       </div>
                       <div className="chatbot-message-meta">
                         <div className="chatbot-message-label">AI Race Assistant</div>
