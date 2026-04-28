@@ -1043,7 +1043,7 @@ export default function UsersManagement() {
             title={deleteTarget ? `Delete ${deleteTarget.name}?` : "Delete user?"}
             message={
               deleteTarget
-                ? `${deleteTarget.name} will be removed only if the account is not referenced by events, run groups, submissions, or drivers. This action cannot be undone.`
+                ? `${deleteTarget.name} and any ownership links to events, run groups, submissions, or drivers will be reassigned to your account before deletion. This action cannot be undone.`
                 : ""
             }
             confirmLabel="Delete User"
@@ -1054,7 +1054,7 @@ export default function UsersManagement() {
             tone="danger"
             confirmTitle={
               deleteTarget
-                ? `Delete ${deleteTarget.name} if the account is unused`
+                ? `Delete ${deleteTarget.name} and reassign related ownership`
                 : "Delete selected user"
             }
           />
