@@ -84,6 +84,53 @@ const buildApiError = (error, fallbackMessage) => ({
   data: error.response?.data,
 });
 
+const buildInternalSubmissionRef = (sessionIdLike) => {
+  const rawBase = String(sessionIdLike || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .slice(0, 96);
+  const base = rawBase || "SM2-NOTE";
+  const suffix = `${Date.now().toString(36)}-${generateUUID().split("-")[0]}`;
+  return `${base}-${suffix}`.slice(0, 120);
+};
+
+const isPlainObject = (value) =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const cleanStructuredValue = (value) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => cleanStructuredValue(item));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, nestedValue]) => [key, cleanStructuredValue(nestedValue)])
+        .filter(([, nestedValue]) => nestedValue !== undefined),
+    );
+  }
+
+  return value;
+};
+
 const buildSubmissionPayload = async (submissionData) => {
   const legacyEventId = submissionData?.eventId || submissionData?.event_id;
   let runGroupId =
@@ -98,18 +145,14 @@ const buildSubmissionPayload = async (submissionData) => {
     runGroupId = runGroup?.id || runGroup?._id || null;
   }
 
-  const nestedPayload = submissionData?.payload || submissionData?.data || {};
+  const nestedPayload = cleanStructuredValue(
+    submissionData?.payload || submissionData?.data || {},
+  );
   const payloadData = nestedPayload?.data || {};
-  const correlationId =
-    submissionData?.correlation_id ||
-    submissionData?.correlationId ||
-    nestedPayload?.correlation_id ||
-    nestedPayload?.correlationId ||
-    generateUUID();
+  const correlationId = generateUUID();
   const sessionId =
     submissionData?.session_id ||
     submissionData?.sessionId ||
-    submissionData?.submission_ref ||
     submissionData?.submissionId ||
     submissionData?.submission_id ||
     nestedPayload?.session_id ||
@@ -117,9 +160,19 @@ const buildSubmissionPayload = async (submissionData) => {
     payloadData?.session_id ||
     payloadData?.sessionId ||
     generateUUID();
+  const submissionRef = buildInternalSubmissionRef(sessionId);
+  const analysisResult = cleanStructuredValue(
+    submissionData?.analysis_result ||
+      submissionData?.analysisResult ||
+      {
+        action: submissionData?.action,
+        confidence: submissionData?.confidence,
+        run_group: submissionData?.runGroup || submissionData?.run_group || null,
+      },
+  );
 
   const payload = {
-    submission_ref: sessionId,
+    submission_ref: submissionRef,
     correlation_id: correlationId,
     event_id: legacyEventId,
     run_group_id: runGroupId,
@@ -140,14 +193,7 @@ const buildSubmissionPayload = async (submissionData) => {
       payloadData?.vehicleId ||
       null,
     payload: nestedPayload,
-    analysis_result:
-      submissionData?.analysis_result ||
-      submissionData?.analysisResult ||
-      {
-        action: submissionData?.action,
-        confidence: submissionData?.confidence,
-        run_group: submissionData?.runGroup || submissionData?.run_group || null,
-      },
+    analysis_result: analysisResult,
   };
 
   if (typeof rawText === "string" && rawText.trim()) {

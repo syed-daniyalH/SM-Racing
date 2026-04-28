@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
@@ -17,6 +18,28 @@ DETAILED_SECTION_KEYS = (
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _parse_json_object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str):
+        return {}
+
+    text_value = value.strip()
+    if not text_value:
+        return {}
+
+    try:
+        parsed = json.loads(text_value)
+    except json.JSONDecodeError:
+        return {}
+
+    if isinstance(parsed, dict):
+        return parsed
+
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        return parsed[0]
+
+    return {}
 
 
 def _first_non_blank(*values: Any) -> Any:
@@ -40,6 +63,36 @@ def _has_meaningful_value(value: Any) -> bool:
         return any(_has_meaningful_value(item) for item in value)
 
     return True
+
+
+def _raw_input_mode(
+    *,
+    structured_only: bool,
+    has_raw_text: bool,
+    has_image: bool,
+    has_voice_notes: bool,
+) -> str:
+    if structured_only:
+        return "none"
+
+    if has_voice_notes and has_raw_text:
+        return "voice"
+
+    if has_image:
+        return "image"
+
+    if has_raw_text:
+        return "manual"
+
+    return "none"
+
+
+def normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    text_value = str(value).strip()
+    return text_value or None
 
 
 def normalize_pressures(value: Any) -> dict[str, Any]:
@@ -66,18 +119,25 @@ def normalize_pressures(value: Any) -> dict[str, Any]:
     return normalized
 
 
-def normalize_optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
+def _session_source_payload(payload: Any) -> dict[str, Any]:
+    source_payload = _dict_or_empty(payload)
+    if not source_payload:
+        return {}
 
-    text_value = str(value).strip()
-    return text_value or None
+    nested_session = _dict_or_empty(source_payload.get("data"))
+    if nested_session:
+        return deepcopy(nested_session)
+
+    openai_result_payload = _parse_json_object(source_payload.get("result"))
+    if openai_result_payload:
+        nested_result_session = _dict_or_empty(openai_result_payload.get("data"))
+        return deepcopy(nested_result_session or openai_result_payload)
+
+    return deepcopy(source_payload)
 
 
 def get_session_payload(payload: Any) -> dict[str, Any]:
-    source_payload = _dict_or_empty(payload)
-    nested_session = _dict_or_empty(source_payload.get("data"))
-    session_payload = deepcopy(nested_session or source_payload)
+    session_payload = _session_source_payload(payload)
 
     if not session_payload:
         return {}
@@ -109,7 +169,7 @@ def merge_submission_analysis(
     analysis_result: Any,
 ) -> dict[str, Any]:
     existing = deepcopy(_dict_or_empty(analysis_result))
-    source_payload = _dict_or_empty(payload)
+    source_payload = _session_source_payload(payload)
     raw_session_payload = _dict_or_empty(source_payload.get("data")) or source_payload
     session_payload = get_session_payload(payload)
     normalized_raw_text = normalize_optional_text(raw_text)
@@ -149,16 +209,12 @@ def merge_submission_analysis(
 
     structured_only = has_structured_data and not has_raw_text and not has_image
 
-    if structured_only:
-        raw_input_mode = "none"
-    elif has_voice_notes and has_raw_text:
-        raw_input_mode = "voice"
-    elif has_image:
-        raw_input_mode = "image"
-    elif has_raw_text:
-        raw_input_mode = "manual"
-    else:
-        raw_input_mode = "none"
+    raw_input_mode = _raw_input_mode(
+        structured_only=structured_only,
+        has_raw_text=has_raw_text,
+        has_image=has_image,
+        has_voice_notes=has_voice_notes,
+    )
 
     if submission_mode == "detail":
         if structured_only:
@@ -192,23 +248,10 @@ def merge_submission_analysis(
 
 def should_persist_structured_submission(analysis_result: Any) -> bool:
     analysis = _dict_or_empty(analysis_result)
-    submission_mode = str(
-        analysis.get("submission_mode") or analysis.get("submissionMode") or "",
-    ).strip().lower()
-    has_raw_text = bool(
-        analysis.get("has_raw_text") or analysis.get("hasRawText"),
+    return bool(
+        analysis.get("has_structured_data")
+        or analysis.get("hasStructuredData"),
     )
-    has_voice_notes = bool(
-        analysis.get("has_voice_notes") or analysis.get("hasVoiceNotes"),
-    )
-    has_image = bool(
-        analysis.get("has_image") or analysis.get("hasImage"),
-    )
-
-    if submission_mode == "quick" and (has_raw_text or has_voice_notes or has_image):
-        return False
-
-    return True
 
 
 def to_isoformat(value: Any) -> str | None:

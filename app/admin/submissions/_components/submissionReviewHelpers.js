@@ -82,6 +82,12 @@ const syncStateCatalog = {
   failed: { label: "Sync Failed", tone: "danger" },
 };
 
+const structuredStateCatalog = {
+  saved: { label: "Structured Saved", tone: "success" },
+  saved_with_warnings: { label: "Structured Partial", tone: "warning" },
+  skipped: { label: "Structured Skipped", tone: "neutral" },
+};
+
 const validationStateCatalog = {
   pending_review: { label: "Pending Processing", tone: "warning" },
   reviewed: { label: "Processed", tone: "neutral" },
@@ -487,7 +493,13 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   const sourceTypeKey = parseSourceTypeKey(normalized, data, analysisResult);
   const sourceTypeMeta = sourceTypeCatalog[sourceTypeKey] || sourceTypeCatalog.quick;
   const syncStateKey = normalizeLower(normalized.status || "pending");
+  const structuredStatusKey = normalizeLower(
+    normalized.structuredIngestStatus || "skipped",
+  );
   const confidence = getConfidenceValue(normalized);
+  const structuredWarnings = Array.isArray(normalized.structuredIngestWarnings)
+    ? normalized.structuredIngestWarnings
+    : [];
 
   const hardIssues = [];
   const warnings = [];
@@ -557,6 +569,12 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
     warnings.push("ocr-backed");
   }
 
+  if (structuredWarnings.length) {
+    warnings.push("structured-normalization");
+  } else if (structuredStatusKey === "skipped" && normalized.hasStructuredData) {
+    warnings.push("structured-skipped");
+  }
+
   const analysisValidationState = normalizeLower(
     analysisResult.validation_state || analysisResult.validationState || "",
   );
@@ -581,6 +599,8 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
 
   const validationStateMeta = validationStateCatalog[validationStateKey] || validationStateCatalog.pending_review;
   const syncStateMeta = syncStateCatalog[syncStateKey] || syncStateCatalog.pending;
+  const structuredStateMeta =
+    structuredStateCatalog[structuredStatusKey] || structuredStateCatalog.skipped;
 
   const validationMessages = [];
   if (missingFields.length) {
@@ -604,6 +624,17 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   if (confidence !== null && confidence < 80) {
     validationMessages.push(`Confidence is ${confidence}%, which is below the preferred review threshold.`);
   }
+  if (structuredWarnings.length) {
+    structuredWarnings.forEach((warning) => {
+      validationMessages.push(
+        `Structured normalization warning${warning.field ? ` (${warning.field})` : ""}: ${warning.message}`,
+      );
+    });
+  } else if (structuredStatusKey === "skipped" && normalized.hasStructuredData) {
+    validationMessages.push(
+      "Structured normalization was skipped even though structured fields were present. Review the backend ingest path.",
+    );
+  }
 
   const structuredIssues = [...hardIssues, ...warnings];
   const validationSeverityKey = hardIssues.length ? "failed" : warnings.length ? "warning" : "clean";
@@ -611,6 +642,8 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   const recommendation =
     validationStateKey === "failed"
       ? "Correct the failed fields, then retry validation so the record stays accurate."
+      : structuredWarnings.length
+        ? "The canonical note is saved, but some normalized tables were only partially updated. Review the structured warnings before approving."
       : validationMessages.length
         ? "Inspect the parsed data against the raw input and retry validation if needed."
         : "Submission is stored successfully and looks clean.";
@@ -630,6 +663,11 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
     syncStateKey,
     syncStateLabel: syncStateMeta.label,
     syncStateTone: syncStateMeta.tone,
+    structuredStatusKey,
+    structuredStatusLabel: structuredStateMeta.label,
+    structuredStatusTone: structuredStateMeta.tone,
+    structuredWarnings,
+    structuredWarningCount: structuredWarnings.length,
     reviewStateKey,
     reviewStateLabel: reviewStateCatalog[reviewStateKey]?.label || reviewStateCatalog.pending_review.label,
     validationStateKey,

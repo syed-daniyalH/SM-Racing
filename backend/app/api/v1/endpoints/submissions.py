@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -80,6 +80,26 @@ def _submission_log_summary(
         f"session_type={session_type or 'none'} "
         f"session_number={session_number if session_number not in (None, '') else 'none'}"
     )
+
+
+def _with_suffix(value: str, suffix: str, max_length: int) -> str:
+    if len(suffix) >= max_length:
+        return suffix[:max_length]
+    return f"{value[: max_length - len(suffix)]}{suffix}"
+
+
+def _ensure_unique_submission_ref(db: Session, submission_ref: str | None) -> str:
+    candidate = (normalize_optional_text(submission_ref) or str(uuid4()))[:120]
+    while db.scalar(select(Submission.id).where(Submission.submission_ref == candidate)) is not None:
+        candidate = _with_suffix(candidate, f"-{uuid4().hex[:8]}", 120)
+    return candidate
+
+
+def _ensure_unique_correlation_id(db: Session, correlation_id: str | None) -> str:
+    candidate = (normalize_optional_text(correlation_id) or str(uuid4()))[:36]
+    while db.scalar(select(Submission.id).where(Submission.correlation_id == candidate)) is not None:
+        candidate = str(uuid4())
+    return candidate
 
 
 def _is_integrity_duplicate_error(exc: IntegrityError) -> bool:
@@ -220,6 +240,8 @@ def _build_submission_candidate(
         image_url=image_url,
         payload=submission_in.payload,
         analysis_result=analysis_result,
+        structured_ingest_status="skipped",
+        structured_ingest_warnings=[],
         status=SubmissionStatus.PENDING,
     )
     submission.event = event
@@ -227,95 +249,6 @@ def _build_submission_candidate(
     submission.driver = driver
     submission.vehicle = vehicle
     return submission
-
-
-def _normalized_session_duplicate_key(
-    payload: dict | None,
-    *,
-    event_id: UUID | None,
-    driver_id: UUID | None,
-    vehicle_id: UUID | None,
-    track_name: str | None,
-    session_type: str | None,
-) -> tuple[str | None, str | None, str | None, str | None, str | None, str, str, int] | None:
-    session_payload = get_session_payload(payload)
-    session_date_raw = normalize_optional_text(session_payload.get("date"))
-    session_time_raw = normalize_optional_text(session_payload.get("time"))
-    session_number_raw = session_payload.get("session_number")
-
-    if session_date_raw is None or session_time_raw is None or session_number_raw in (None, ""):
-        return None
-
-    try:
-        session_date = date.fromisoformat(session_date_raw).isoformat()
-        session_time = time.fromisoformat(session_time_raw).isoformat(timespec="minutes")
-        session_number = int(session_number_raw)
-    except (TypeError, ValueError):
-        return None
-
-    normalized_track_name = normalize_optional_text(track_name)
-    if normalized_track_name is not None:
-        normalized_track_name = normalized_track_name.casefold()
-
-    normalized_session_type = normalize_optional_text(session_type)
-    if normalized_session_type is not None:
-        normalized_session_type = normalized_session_type.casefold()
-    else:
-        normalized_session_type = "practice"
-
-    return (
-        str(event_id) if event_id is not None else None,
-        str(driver_id) if driver_id is not None else None,
-        str(vehicle_id) if vehicle_id is not None else None,
-        normalized_track_name,
-        normalized_session_type,
-        session_date,
-        session_time,
-        session_number,
-    )
-
-
-def _find_existing_session_duplicate(
-    db: Session,
-    *,
-    event_id: UUID,
-    driver_id: UUID | None,
-    vehicle_id: UUID | None,
-    track_name: str | None,
-    session_type: str | None,
-    payload: dict | None,
-) -> Submission | None:
-    duplicate_key = _normalized_session_duplicate_key(
-        payload,
-        event_id=event_id,
-        driver_id=driver_id,
-        vehicle_id=vehicle_id,
-        track_name=track_name,
-        session_type=session_type,
-    )
-    if duplicate_key is None:
-        return None
-
-    stmt = (
-        select(Submission).options(*_submission_options())
-        .where(Submission.event_id == event_id)
-        .where(Submission.driver_id == driver_id)
-        .where(Submission.vehicle_id == vehicle_id)
-        .order_by(Submission.created_at.desc())
-    )
-    for existing_submission in db.scalars(stmt):
-        existing_key = _normalized_session_duplicate_key(
-            existing_submission.payload,
-            event_id=existing_submission.event_id,
-            driver_id=existing_submission.driver_id,
-            vehicle_id=existing_submission.vehicle_id,
-            track_name=existing_submission.event.track if existing_submission.event is not None else track_name,
-            session_type=get_session_payload(existing_submission.payload).get("session_type"),
-        )
-        if existing_key == duplicate_key:
-            return existing_submission
-
-    return None
 
 
 def _finalize_delivery(
@@ -431,17 +364,16 @@ def create_submission(
 
     driver, vehicle = _validate_submission_relations(db, submission_in)
 
-    existing = db.scalar(select(Submission).where(Submission.submission_ref == submission_in.submission_ref))
-    if existing:
-        raise _submission_error(
-            status.HTTP_409_CONFLICT,
-            "SUBMISSION_ALREADY_EXISTS",
-            "Submission already exists",
-        )
-
-    correlation_id = normalize_optional_text(submission_in.correlation_id) or str(uuid4())
+    submission_ref = _ensure_unique_submission_ref(db, submission_in.submission_ref)
+    correlation_id = _ensure_unique_correlation_id(db, submission_in.correlation_id)
+    submission_input = submission_in.model_copy(
+        update={
+            "submission_ref": submission_ref,
+            "correlation_id": correlation_id,
+        }
+    )
     submission_log_summary = _submission_log_summary(
-        submission_ref=submission_in.submission_ref,
+        submission_ref=submission_ref,
         correlation_id=correlation_id,
         event_id=submission_in.event_id,
         run_group_id=submission_in.run_group_id,
@@ -451,52 +383,8 @@ def create_submission(
         payload=submission_in.payload,
     )
 
-    duplicate_submission = _find_existing_session_duplicate(
-        db,
-        event_id=submission_in.event_id,
-        driver_id=driver.id if driver else None,
-        vehicle_id=vehicle.id if vehicle else None,
-        track_name=event.track,
-        session_type=get_session_payload(submission_in.payload).get("session_type"),
-        payload=submission_in.payload,
-    )
-    if duplicate_submission is not None:
-        duplicate_key = _normalized_session_duplicate_key(
-            submission_in.payload,
-            event_id=submission_in.event_id,
-            driver_id=driver.id if driver else None,
-            vehicle_id=vehicle.id if vehicle else None,
-            track_name=event.track,
-            session_type=get_session_payload(submission_in.payload).get("session_type"),
-        )
-        session_date = duplicate_key[5] if duplicate_key else None
-        session_time = duplicate_key[6] if duplicate_key else None
-        session_number = duplicate_key[7] if duplicate_key else None
-        raise _submission_error(
-            status.HTTP_409_CONFLICT,
-            "SUBMISSION_DUPLICATE",
-            (
-                "Another note already exists in the backend for "
-                f"event {event.id}, driver {driver.id if driver else 'none'}, "
-                f"vehicle {vehicle.id if vehicle else 'none'}, track {event.track}, "
-                f"session type {normalize_optional_text(get_session_payload(submission_in.payload).get('session_type')) or 'practice'}, "
-                f"date {session_date}, time {session_time}, and session #{session_number}"
-            ),
-            detail={
-                "event_id": str(event.id),
-                "driver_id": str(driver.id) if driver else None,
-                "vehicle_id": str(vehicle.id) if vehicle else None,
-                "track": event.track,
-                "session_type": normalize_optional_text(get_session_payload(submission_in.payload).get("session_type"))
-                or "practice",
-                "date": session_date,
-                "time": session_time,
-                "session_number": session_number,
-            },
-        )
-
     submission = _build_submission_candidate(
-        submission_in,
+        submission_input,
         current_user,
         event,
         run_group,
@@ -511,15 +399,36 @@ def create_submission(
         db.flush()
 
         if should_persist_structured_submission(submission.analysis_result):
-            submission_input_id = persist_structured_submission(
-                db,
-                submission=submission,
-                event=event,
-                run_group=run_group,
-                driver=driver,
-                vehicle=vehicle,
-                current_user=current_user,
-            )
+            try:
+                structured_result = persist_structured_submission(
+                    db,
+                    submission=submission,
+                    event=event,
+                    run_group=run_group,
+                    driver=driver,
+                    vehicle=vehicle,
+                    current_user=current_user,
+                )
+                submission_input_id = structured_result.submission_input_id
+                submission.structured_ingest_status = structured_result.status
+                submission.structured_ingest_warnings = structured_result.warnings
+            except Exception:
+                submission_input_id = None
+                submission.structured_ingest_status = "skipped"
+                submission.structured_ingest_warnings = [
+                    {
+                        "section": "structured_ingest",
+                        "code": "STRUCTURED_INGEST_FAILED",
+                        "message": "Structured normalization failed unexpectedly. The canonical note was still saved.",
+                    }
+                ]
+                logger.exception(
+                    "Structured submission persistence failed; continuing with raw submission only (%s)",
+                    submission_log_summary,
+                )
+        else:
+            submission.structured_ingest_status = "skipped"
+            submission.structured_ingest_warnings = []
 
         if settings.make_webhook_url:
             enqueue_submission_delivery(

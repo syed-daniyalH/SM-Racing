@@ -43,6 +43,8 @@ class SubmissionRead(TimestampedModel):
     image_url: str | None
     payload: dict[str, Any]
     analysis_result: dict[str, Any] | None = None
+    structured_ingest_status: str = "skipped"
+    structured_ingest_warnings: list[dict[str, Any]] = Field(default_factory=list)
     status: SubmissionStatus
     error_message: str | None = None
     event: EventRead | None = None

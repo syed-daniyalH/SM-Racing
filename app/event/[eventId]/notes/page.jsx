@@ -37,6 +37,16 @@ const TIRE_INVENTORY_STATUS_OPTIONS = [
   { id: "ACTIVE", label: "Active" },
   { id: "DISCARDED", label: "Discarded" },
 ];
+const PRESSURE_LIMITS = {
+  cold: { min: 5, max: 60, label: "Cold" },
+  hot: { min: 5, max: 80, label: "Hot" },
+};
+const PRESSURE_CORNERS = [
+  ["fl", "FL"],
+  ["fr", "FR"],
+  ["rl", "RL"],
+  ["rr", "RR"],
+];
 
 const isValidDateValue = (value) => {
   const cleaned = String(value || "").trim();
@@ -91,7 +101,52 @@ const buildGeneratedSessionId = (date, time, driverId, sessionNumber) => {
   return `${normalizedDate.replace(/-/g, "")}-${normalizedTime.replace(":", "")}-${normalizedDriverId}-S${normalizedSessionNumber}`;
 };
 
-const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicleOptions }) => {
+const toNullableNumber = (value) => {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const getPressureWarnings = (pressures = {}) => {
+  const warnings = [];
+
+  Object.entries(PRESSURE_LIMITS).forEach(([phase, limits]) => {
+    PRESSURE_CORNERS.forEach(([cornerKey, cornerLabel]) => {
+      const numericValue = toNullableNumber(pressures?.[phase]?.[cornerKey]);
+      if (numericValue === null) {
+        return;
+      }
+
+      if (numericValue < limits.min || numericValue > limits.max) {
+        warnings.push({
+          id: `${phase}-${cornerKey}`,
+          section: "pressures",
+          field: `${phase}_${cornerKey}`,
+          label: `${limits.label} ${cornerLabel}`,
+          message: `${limits.label} ${cornerLabel} ${numericValue} psi is outside the normalized DB range of ${limits.min}-${limits.max} psi. The note can still save, but this pressure value will be skipped from normalized tables.`,
+        });
+      }
+    });
+  });
+
+  return warnings;
+};
+
+const formatStructuredWarning = (warning) => {
+  const fieldLabel = warning?.field ? `${warning.field}: ` : "";
+  return `${fieldLabel}${warning?.message || "Structured normalization completed with a warning."}`;
+};
+
+const validateSubmissionFields = ({
+  formState,
+  trackValue,
+  runGroupValue,
+  driverOptions,
+  vehicleOptions,
+}) => {
   const errors = {};
   const validDriverIds = new Set(
     (driverOptions || [])
@@ -116,6 +171,16 @@ const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicl
     errors.session_type = "Session type is required.";
   }
 
+  const sessionNumberValue = String(formState.session_number ?? "").trim();
+  if (!sessionNumberValue) {
+    errors.session_number = "Session number is required.";
+  } else {
+    const parsedSessionNumber = Number(sessionNumberValue);
+    if (!Number.isInteger(parsedSessionNumber) || parsedSessionNumber <= 0) {
+      errors.session_number = "Session number must be a whole number greater than 0.";
+    }
+  }
+
   if (!isValidSessionId(formState.session_id)) {
     errors.session_id =
       "Session ID must use the generated format or a legacy session reference.";
@@ -131,6 +196,10 @@ const validateSubmissionFields = ({ formState, trackValue, driverOptions, vehicl
 
   if (!String(trackValue || "").trim()) {
     errors.track = "Please select a track.";
+  }
+
+  if (!String(runGroupValue || "").trim()) {
+    errors.run_group = "Run group is required before notes can be submitted.";
   }
 
   const driverId = String(formState.driver_id || "").trim();
@@ -175,6 +244,37 @@ const getSubmissionFailureMessage = (errorLike) => {
   }
 
   return message || "Failed to submit notes. Please try again.";
+};
+
+const getSubmissionSuccessState = (submission) => {
+  const structuredStatus = String(submission?.structuredIngestStatus || "").trim().toLowerCase();
+  const structuredWarnings = Array.isArray(submission?.structuredIngestWarnings)
+    ? submission.structuredIngestWarnings
+    : [];
+
+  if (structuredStatus === "saved_with_warnings" && structuredWarnings.length) {
+    return {
+      status: "sent_with_warnings",
+      message:
+        "Note saved. Some structured fields could not be normalized, so review the warnings below.",
+      warnings: structuredWarnings,
+    };
+  }
+
+  if (structuredStatus === "skipped" && structuredWarnings.length) {
+    return {
+      status: "sent_with_warnings",
+      message:
+        "Note saved, but structured normalization was skipped for some fields. Review the warnings below.",
+      warnings: structuredWarnings,
+    };
+  }
+
+  return {
+    status: "sent",
+    message: "Notes submitted successfully! Redirecting...",
+    warnings: [],
+  };
 };
 
 const createBaseFormState = () => ({
@@ -314,7 +414,9 @@ export default function NotesSubmission() {
   const [detailForm, setDetailForm] = useState(() =>
     createDetailFormState(),
   );
-  const [submissionStatus, setSubmissionStatus] = useState("pending"); // sent, pending, failed
+  const [submissionStatus, setSubmissionStatus] = useState("pending"); // sent, sent_with_warnings, pending, failed
+  const [submissionFeedback, setSubmissionFeedback] = useState("");
+  const [submissionWarnings, setSubmissionWarnings] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [sessionIdMode, setSessionIdMode] = useState({
@@ -734,11 +836,6 @@ export default function NotesSubmission() {
         ? "Event Closed"
         : "Notes Unavailable";
 
-  const toNumberOrUndefined = (value) =>
-    value === "" || value === null || value === undefined
-      ? undefined
-      : Number(value);
-
   const updateQuickForm = (key, value) => {
     setQuickForm((prev) => ({ ...prev, [key]: value }));
   };
@@ -803,101 +900,102 @@ export default function NotesSubmission() {
   };
 
   const buildData = (formState) => ({
-    date: formState.date || undefined,
-    time: formState.time || undefined,
-    session_id: formState.session_id || undefined,
-    track: formState.track || undefined,
-    driver_id: formState.driver_id || undefined,
-    vehicle_id: formState.vehicle_id || undefined,
-    session_type: formState.session_type || undefined,
-    session_number: toNumberOrUndefined(formState.session_number),
-    duration_min: toNumberOrUndefined(formState.duration_min),
-    tire_set: formState.tire_set || undefined,
-    wheelbase_mm: toNumberOrUndefined(formState.wheelbase_mm),
+    date: formState.date || null,
+    time: formState.time || null,
+    session_id: formState.session_id || null,
+    track: formState.track || null,
+    run_group: eventRunGroup || null,
+    driver_id: formState.driver_id || null,
+    vehicle_id: formState.vehicle_id || null,
+    session_type: formState.session_type || null,
+    session_number: toNullableNumber(formState.session_number),
+    duration_min: toNullableNumber(formState.duration_min),
+    tire_set: formState.tire_set || null,
+    wheelbase_mm: toNullableNumber(formState.wheelbase_mm),
     pressures: {
       unit: formState.pressures?.unit || "psi",
       cold: {
-        fl: toNumberOrUndefined(formState.pressures?.cold?.fl),
-        fr: toNumberOrUndefined(formState.pressures?.cold?.fr),
-        rl: toNumberOrUndefined(formState.pressures?.cold?.rl),
-        rr: toNumberOrUndefined(formState.pressures?.cold?.rr),
+        fl: toNullableNumber(formState.pressures?.cold?.fl),
+        fr: toNullableNumber(formState.pressures?.cold?.fr),
+        rl: toNullableNumber(formState.pressures?.cold?.rl),
+        rr: toNullableNumber(formState.pressures?.cold?.rr),
       },
       hot: {
-        fl: toNumberOrUndefined(formState.pressures?.hot?.fl),
-        fr: toNumberOrUndefined(formState.pressures?.hot?.fr),
-        rl: toNumberOrUndefined(formState.pressures?.hot?.rl),
-        rr: toNumberOrUndefined(formState.pressures?.hot?.rr),
+        fl: toNullableNumber(formState.pressures?.hot?.fl),
+        fr: toNullableNumber(formState.pressures?.hot?.fr),
+        rl: toNullableNumber(formState.pressures?.hot?.rl),
+        rr: toNullableNumber(formState.pressures?.hot?.rr),
       },
     },
   });
 
   const buildDetailExtensions = (formState) => ({
     suspension: {
-      rebound_fl: toNumberOrUndefined(formState.suspension.rebound_fl),
-      rebound_fr: toNumberOrUndefined(formState.suspension.rebound_fr),
-      rebound_rl: toNumberOrUndefined(formState.suspension.rebound_rl),
-      rebound_rr: toNumberOrUndefined(formState.suspension.rebound_rr),
-      bump_fl: toNumberOrUndefined(formState.suspension.bump_fl),
-      bump_fr: toNumberOrUndefined(formState.suspension.bump_fr),
-      bump_rl: toNumberOrUndefined(formState.suspension.bump_rl),
-      bump_rr: toNumberOrUndefined(formState.suspension.bump_rr),
-      sway_bar_f: toNumberOrUndefined(formState.suspension.sway_bar_f),
-      sway_bar_r: toNumberOrUndefined(formState.suspension.sway_bar_r),
-      wing_angle_deg: toNumberOrUndefined(formState.suspension.wing_angle_deg),
+      rebound_fl: toNullableNumber(formState.suspension.rebound_fl),
+      rebound_fr: toNullableNumber(formState.suspension.rebound_fr),
+      rebound_rl: toNullableNumber(formState.suspension.rebound_rl),
+      rebound_rr: toNullableNumber(formState.suspension.rebound_rr),
+      bump_fl: toNullableNumber(formState.suspension.bump_fl),
+      bump_fr: toNullableNumber(formState.suspension.bump_fr),
+      bump_rl: toNullableNumber(formState.suspension.bump_rl),
+      bump_rr: toNullableNumber(formState.suspension.bump_rr),
+      sway_bar_f: toNullableNumber(formState.suspension.sway_bar_f),
+      sway_bar_r: toNullableNumber(formState.suspension.sway_bar_r),
+      wing_angle_deg: toNullableNumber(formState.suspension.wing_angle_deg),
     },
     alignment: {
-      camber_fl: toNumberOrUndefined(formState.alignment.camber_fl),
-      camber_fr: toNumberOrUndefined(formState.alignment.camber_fr),
-      camber_rl: toNumberOrUndefined(formState.alignment.camber_rl),
-      camber_rr: toNumberOrUndefined(formState.alignment.camber_rr),
-      toe_front: toNumberOrUndefined(formState.alignment.toe_front),
-      toe_rear: toNumberOrUndefined(formState.alignment.toe_rear),
-      caster_l: toNumberOrUndefined(formState.alignment.caster_l),
-      caster_r: toNumberOrUndefined(formState.alignment.caster_r),
-      ride_height_f: toNumberOrUndefined(formState.alignment.ride_height_f),
-      ride_height_r: toNumberOrUndefined(formState.alignment.ride_height_r),
-      corner_weight_fl: toNumberOrUndefined(
+      camber_fl: toNullableNumber(formState.alignment.camber_fl),
+      camber_fr: toNullableNumber(formState.alignment.camber_fr),
+      camber_rl: toNullableNumber(formState.alignment.camber_rl),
+      camber_rr: toNullableNumber(formState.alignment.camber_rr),
+      toe_front: toNullableNumber(formState.alignment.toe_front),
+      toe_rear: toNullableNumber(formState.alignment.toe_rear),
+      caster_l: toNullableNumber(formState.alignment.caster_l),
+      caster_r: toNullableNumber(formState.alignment.caster_r),
+      ride_height_f: toNullableNumber(formState.alignment.ride_height_f),
+      ride_height_r: toNullableNumber(formState.alignment.ride_height_r),
+      corner_weight_fl: toNullableNumber(
         formState.alignment.corner_weight_fl,
       ),
-      corner_weight_fr: toNumberOrUndefined(
+      corner_weight_fr: toNullableNumber(
         formState.alignment.corner_weight_fr,
       ),
-      corner_weight_rl: toNumberOrUndefined(
+      corner_weight_rl: toNullableNumber(
         formState.alignment.corner_weight_rl,
       ),
-      corner_weight_rr: toNumberOrUndefined(
+      corner_weight_rr: toNullableNumber(
         formState.alignment.corner_weight_rr,
       ),
-      cross_weight_pct: toNumberOrUndefined(
+      cross_weight_pct: toNullableNumber(
         formState.alignment.cross_weight_pct,
       ),
-      rake_mm: toNumberOrUndefined(formState.alignment.rake_mm),
+      rake_mm: toNullableNumber(formState.alignment.rake_mm),
     },
     tire_temperatures: {
-      fl_in: toNumberOrUndefined(formState.tire_temperatures.fl_in),
-      fl_mid: toNumberOrUndefined(formState.tire_temperatures.fl_mid),
-      fl_out: toNumberOrUndefined(formState.tire_temperatures.fl_out),
-      fr_in: toNumberOrUndefined(formState.tire_temperatures.fr_in),
-      fr_mid: toNumberOrUndefined(formState.tire_temperatures.fr_mid),
-      fr_out: toNumberOrUndefined(formState.tire_temperatures.fr_out),
-      rl_in: toNumberOrUndefined(formState.tire_temperatures.rl_in),
-      rl_mid: toNumberOrUndefined(formState.tire_temperatures.rl_mid),
-      rl_out: toNumberOrUndefined(formState.tire_temperatures.rl_out),
-      rr_in: toNumberOrUndefined(formState.tire_temperatures.rr_in),
-      rr_mid: toNumberOrUndefined(formState.tire_temperatures.rr_mid),
-      rr_out: toNumberOrUndefined(formState.tire_temperatures.rr_out),
+      fl_in: toNullableNumber(formState.tire_temperatures.fl_in),
+      fl_mid: toNullableNumber(formState.tire_temperatures.fl_mid),
+      fl_out: toNullableNumber(formState.tire_temperatures.fl_out),
+      fr_in: toNullableNumber(formState.tire_temperatures.fr_in),
+      fr_mid: toNullableNumber(formState.tire_temperatures.fr_mid),
+      fr_out: toNullableNumber(formState.tire_temperatures.fr_out),
+      rl_in: toNullableNumber(formState.tire_temperatures.rl_in),
+      rl_mid: toNullableNumber(formState.tire_temperatures.rl_mid),
+      rl_out: toNullableNumber(formState.tire_temperatures.rl_out),
+      rr_in: toNullableNumber(formState.tire_temperatures.rr_in),
+      rr_mid: toNullableNumber(formState.tire_temperatures.rr_mid),
+      rr_out: toNullableNumber(formState.tire_temperatures.rr_out),
     },
     tire_inventory: {
-      tire_id: formState.tire_inventory.tire_id || undefined,
-      manufacturer: formState.tire_inventory.manufacturer || undefined,
-      model: formState.tire_inventory.model || undefined,
-      size: formState.tire_inventory.size || undefined,
-      purchase_date: formState.tire_inventory.purchase_date || undefined,
-      heat_cycles: toNumberOrUndefined(formState.tire_inventory.heat_cycles),
-      track_time_min: toNumberOrUndefined(
+      tire_id: formState.tire_inventory.tire_id || null,
+      manufacturer: formState.tire_inventory.manufacturer || null,
+      model: formState.tire_inventory.model || null,
+      size: formState.tire_inventory.size || null,
+      purchase_date: formState.tire_inventory.purchase_date || null,
+      heat_cycles: toNullableNumber(formState.tire_inventory.heat_cycles),
+      track_time_min: toNullableNumber(
         formState.tire_inventory.track_time_min,
       ),
-      status: formState.tire_inventory.status || undefined,
+      status: formState.tire_inventory.status || null,
     },
   });
 
@@ -907,6 +1005,8 @@ export default function NotesSubmission() {
     if (!canSubmitNotes) {
       setSubmissionStatus("failed");
       setError(submissionUnavailableMessage);
+      setSubmissionFeedback("");
+      setSubmissionWarnings([]);
       return;
     }
 
@@ -922,6 +1022,7 @@ export default function NotesSubmission() {
     const submissionErrors = validateSubmissionFields({
       formState,
       trackValue,
+      runGroupValue: eventRunGroup,
       driverOptions,
       vehicleOptions: vehicleOptionsForDriver,
     });
@@ -934,12 +1035,16 @@ export default function NotesSubmission() {
       }));
       setSubmissionStatus("failed");
       setError("Please fix the highlighted fields before submitting.");
+      setSubmissionFeedback("");
+      setSubmissionWarnings([]);
       return;
     }
 
     setIsSubmitting(true);
     setSubmissionStatus("pending");
     setError("");
+    setSubmissionFeedback("");
+    setSubmissionWarnings([]);
 
     try {
       const submissionId = String(formState.session_id || "").trim() || generateUUID();
@@ -987,8 +1092,9 @@ export default function NotesSubmission() {
       const response = await createSubmission(payload);
 
       if (response.success) {
+        const successState = getSubmissionSuccessState(response.submission);
         clearDetailDraft();
-        setSubmissionStatus("sent");
+        setSubmissionStatus(successState.status);
         setQuickRawText("");
         setDetailRawText("");
         setQuickAction("ADD_SEANCE");
@@ -1007,6 +1113,8 @@ export default function NotesSubmission() {
           detail: "auto",
         });
         setError("");
+        setSubmissionFeedback(successState.message);
+        setSubmissionWarnings(successState.warnings);
         setFieldTouched({ quick: {}, detail: {} });
         setValidationAttempted({ quick: false, detail: false });
 
@@ -1015,6 +1123,8 @@ export default function NotesSubmission() {
         }, 2000);
       } else {
         setSubmissionStatus("failed");
+        setSubmissionFeedback("");
+        setSubmissionWarnings([]);
         setError(
           response?.submission?.errorMessage ||
           getSubmissionFailureMessage(response),
@@ -1023,6 +1133,8 @@ export default function NotesSubmission() {
     } catch (error) {
       console.error("Submission error:", error);
       setSubmissionStatus("failed");
+      setSubmissionFeedback("");
+      setSubmissionWarnings([]);
       setError(getSubmissionFailureMessage(error));
     } finally {
       setIsSubmitting(false);
@@ -1143,10 +1255,11 @@ export default function NotesSubmission() {
       validateSubmissionFields({
         formState,
         trackValue,
+        runGroupValue: eventRunGroup,
         driverOptions,
         vehicleOptions: vehicleOptionsForDriver,
       }),
-    [driverOptions, formState, trackValue, vehicleOptionsForDriver],
+    [driverOptions, eventRunGroup, formState, trackValue, vehicleOptionsForDriver],
   );
   const shouldShowFieldError = (field) =>
     activeValidationAttempted || Boolean(activeFieldTouched[field]);
@@ -1160,6 +1273,10 @@ export default function NotesSubmission() {
         {getFieldError(field)}
       </p>
     ) : null;
+  const pressureWarnings = useMemo(
+    () => getPressureWarnings(formState.pressures),
+    [formState.pressures],
+  );
 
   useEffect(() => {
     if (sessionIdMode.quick !== "auto") {
@@ -1216,8 +1333,10 @@ export default function NotesSubmission() {
         date: true,
         time: true,
         track: true,
+        run_group: true,
         session_id: true,
         session_type: true,
+        session_number: true,
         driver_id: true,
         vehicle_id: true,
       },
@@ -1413,17 +1532,20 @@ export default function NotesSubmission() {
                 {renderFieldError("track")}
               </div>
 
-              <div style={{ marginTop: "0.75rem" }}>
-                <label className="form-label sub-label">Run Group</label>
-                <input
-                  className="input"
-                  type="text"
-                  value={eventRunGroup || ""}
-                  readOnly
-                  placeholder="Not assigned yet"
-                />
+                <div style={{ marginTop: "0.75rem" }}>
+                  <label className="form-label sub-label">Run Group</label>
+                  <input
+                    className={getFieldClassName("input", "run_group")}
+                    type="text"
+                    value={eventRunGroup || ""}
+                    readOnly
+                    placeholder="Not assigned yet"
+                    onBlur={() => markActiveFieldTouched("run_group")}
+                    aria-invalid={Boolean(getFieldError("run_group"))}
+                  />
+                  {renderFieldError("run_group")}
+                </div>
               </div>
-            </div>
 
             <div className="form-group">
               <label className="form-label">Driver</label>
@@ -1513,15 +1635,20 @@ export default function NotesSubmission() {
                 <div>
                   <label className="form-label sub-label">Session #</label>
                   <input
-                    className="input"
+                    data-testid="submission-session-number"
+                    className={getFieldClassName("input", "session_number")}
                     type="number"
                     min="1"
                     step="1"
                     value={formState.session_number}
-                    onChange={(e) =>
-                      updateFormFn("session_number", e.target.value)
-                    }
+                    onChange={(e) => {
+                      markActiveFieldTouched("session_number");
+                      updateFormFn("session_number", e.target.value);
+                    }}
+                    onBlur={() => markActiveFieldTouched("session_number")}
+                    aria-invalid={Boolean(getFieldError("session_number"))}
                   />
+                  {renderFieldError("session_number")}
                 </div>
               </div>
               <div className="grid-2" style={{ marginTop: "0.75rem" }}>
@@ -1687,6 +1814,21 @@ export default function NotesSubmission() {
                     />
                   </div>
                 </div>
+
+                {pressureWarnings.length ? (
+                  <div
+                    className="status-message status-pending"
+                    style={{ marginTop: "0.75rem", marginBottom: 0 }}
+                  >
+                    <strong>Structured warning:</strong>{" "}
+                    Pressure values outside the SM2 normalized DB limits will stay on the note, but those pressure fields will be skipped from normalized tables.
+                    <ul style={{ margin: "0.5rem 0 0 1rem" }}>
+                      {pressureWarnings.map((warning) => (
+                        <li key={warning.id}>{warning.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
 
             {!isQuickTab && (
@@ -2397,10 +2539,10 @@ export default function NotesSubmission() {
                             )
                           }
                         />
-                      </div>
-                    </div>
                   </div>
                 </div>
+              </div>
+            </div>
 
                 <div className="form-group">
                   <label className="form-label">Tire Inventory</label>
@@ -2588,7 +2730,21 @@ export default function NotesSubmission() {
               )}
               {submissionStatus === "sent" && (
                 <div className="status-message status-success">
-                  ✓ Notes submitted successfully! Redirecting...
+                  ✓ {submissionFeedback || "Notes submitted successfully! Redirecting..."}
+                </div>
+              )}
+              {submissionStatus === "sent_with_warnings" && (
+                <div className="status-message status-pending">
+                  <div>⚠ {submissionFeedback}</div>
+                  {submissionWarnings.length ? (
+                    <ul style={{ margin: "0.5rem 0 0 1rem" }}>
+                      {submissionWarnings.map((warning, index) => (
+                        <li key={`${warning.code || "structured-warning"}-${index}`}>
+                          {formatStructuredWarning(warning)}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               )}
               {submissionStatus === "pending" && isSubmitting && (

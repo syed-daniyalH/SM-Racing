@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import json
 import re
 import uuid
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -24,6 +27,29 @@ from app.services.submission_payload_service import get_session_payload
 
 DB_SCHEMA = get_settings().database_schema
 SESSION_ID_PATTERN = re.compile(r"^\d{8}-\d{4}-[A-Z0-9]+-S\d+$")
+PRESSURE_LIMITS = {
+    "cold": (5.0, 60.0),
+    "hot": (5.0, 80.0),
+}
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StructuredPersistResult:
+    submission_input_id: int | None = None
+    status: str = "skipped"
+    warnings: list[dict[str, Any]] = field(default_factory=list)
+    saved_sections: list[str] = field(default_factory=list)
+    skipped_sections: list[str] = field(default_factory=list)
+
+    def finalize(self) -> StructuredPersistResult:
+        if self.saved_sections and self.warnings:
+            self.status = "saved_with_warnings"
+        elif self.saved_sections:
+            self.status = "saved"
+        else:
+            self.status = "skipped"
+        return self
 
 
 def _table(name: str) -> str:
@@ -159,6 +185,227 @@ def _created_by_value(user: User) -> str:
 
 def _submission_correlation_id(submission: Submission) -> str:
     return _clean_blank(getattr(submission, "correlation_id", None)) or submission.submission_ref
+
+
+def _has_meaningful_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_has_meaningful_value(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_has_meaningful_value(item) for item in value)
+    return True
+
+
+def _record_structured_warning(
+    result: StructuredPersistResult,
+    *,
+    section: str,
+    code: str,
+    message: str,
+    field_name: str | None = None,
+    value: Any | None = None,
+    exception: Exception | None = None,
+) -> None:
+    warning: dict[str, Any] = {
+        "section": section,
+        "code": code,
+        "message": message,
+    }
+    if field_name:
+        warning["field"] = field_name
+    if value not in (None, ""):
+        warning["value"] = value
+    if exception is not None:
+        warning["detail"] = str(exception)
+    result.warnings.append(warning)
+    logger.warning("Structured ingest warning: %s", warning)
+
+
+def _parse_int_field(
+    value: Any,
+    *,
+    result: StructuredPersistResult,
+    section: str,
+    field_name: str,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    cleaned = _clean_blank(value)
+    if cleaned is None:
+        return None
+    try:
+        numeric = int(cleaned)
+    except (TypeError, ValueError):
+        _record_structured_warning(
+            result,
+            section=section,
+            code="INVALID_INTEGER",
+            message=f"{field_name} must be a whole number to be normalized.",
+            field_name=field_name,
+            value=cleaned,
+        )
+        return None
+    if minimum is not None and numeric < minimum:
+        _record_structured_warning(
+            result,
+            section=section,
+            code="VALUE_TOO_LOW",
+            message=f"{field_name} must be at least {minimum} to be normalized.",
+            field_name=field_name,
+            value=numeric,
+        )
+        return None
+    if maximum is not None and numeric > maximum:
+        _record_structured_warning(
+            result,
+            section=section,
+            code="VALUE_TOO_HIGH",
+            message=f"{field_name} must be at most {maximum} to be normalized.",
+            field_name=field_name,
+            value=numeric,
+        )
+        return None
+    return numeric
+
+
+def _parse_float_field(
+    value: Any,
+    *,
+    result: StructuredPersistResult,
+    section: str,
+    field_name: str,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None:
+    cleaned = _clean_blank(value)
+    if cleaned is None:
+        return None
+    try:
+        numeric = float(cleaned)
+    except (TypeError, ValueError):
+        _record_structured_warning(
+            result,
+            section=section,
+            code="INVALID_NUMBER",
+            message=f"{field_name} must be numeric to be normalized.",
+            field_name=field_name,
+            value=cleaned,
+        )
+        return None
+    if minimum is not None and numeric < minimum:
+        _record_structured_warning(
+            result,
+            section=section,
+            code="VALUE_TOO_LOW",
+            message=f"{field_name} must be at least {minimum} to be normalized.",
+            field_name=field_name,
+            value=numeric,
+        )
+        return None
+    if maximum is not None and numeric > maximum:
+        _record_structured_warning(
+            result,
+            section=section,
+            code="VALUE_TOO_HIGH",
+            message=f"{field_name} must be at most {maximum} to be normalized.",
+            field_name=field_name,
+            value=numeric,
+        )
+        return None
+    return numeric
+
+
+def _parse_pressure_value(
+    value: Any,
+    *,
+    result: StructuredPersistResult,
+    phase: str,
+    corner: str,
+) -> float | None:
+    minimum, maximum = PRESSURE_LIMITS[phase]
+    return _parse_float_field(
+        value,
+        result=result,
+        section="pressures",
+        field_name=f"{phase}_{corner}",
+        minimum=minimum,
+        maximum=maximum,
+    )
+
+
+def _safe_upsert_single_row(
+    db: Session,
+    result: StructuredPersistResult,
+    *,
+    section: str,
+    table_name: str,
+    id_column: str,
+    columns: list[str],
+    values: dict[str, Any],
+) -> bool:
+    provided_values = [column for column in columns if values.get(column) is not None]
+    if not provided_values:
+        result.skipped_sections.append(section)
+        return False
+
+    nested_transaction = db.begin_nested if hasattr(db, "begin_nested") else None
+    try:
+        with nested_transaction() if nested_transaction is not None else nullcontext():
+            _upsert_single_row(
+                db,
+                table_name=table_name,
+                id_column=id_column,
+                columns=columns,
+                values=values,
+            )
+    except Exception as exc:
+        _record_structured_warning(
+            result,
+            section=section,
+            code="SECTION_SAVE_FAILED",
+            message=f"Failed to save the {section.replace('_', ' ')} section to normalized tables.",
+            exception=exc,
+        )
+        result.skipped_sections.append(section)
+        return False
+
+    result.saved_sections.append(section)
+    return True
+
+
+def _update_submission_input_validation(
+    db: Session,
+    *,
+    submission_input_id: int | None,
+    id_seance: str,
+    result: StructuredPersistResult,
+) -> None:
+    if submission_input_id is None:
+        return
+
+    warning_message = None
+    if result.warnings:
+        warning_message = "; ".join(warning["message"] for warning in result.warnings)
+
+    db.execute(
+        text(
+            f"""
+            UPDATE {_table("submission_inputs")}
+            SET id_seance = :id_seance,
+                validation_status = 'APPLIED',
+                validation_message = :validation_message
+            WHERE submission_id = :submission_id
+            """
+        ),
+        {
+            "id_seance": id_seance,
+            "submission_id": submission_input_id,
+            "validation_message": warning_message,
+        },
+    )
 
 
 def _upsert_master_driver(db: Session, driver: Driver) -> None:
@@ -379,10 +626,10 @@ def _upsert_single_row(
     )
 
 
-def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
+def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> str | None:
     tire_id = _clean_blank(tire_inventory.get("tire_id"))
     if not tire_id or not re.match(r"^[YMP]-S[0-9]+$", tire_id):
-        return
+        return None
 
     db.execute(
         text(
@@ -430,6 +677,50 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> None:
             "heat_cycles": _to_int(tire_inventory.get("heat_cycles")),
             "track_time_min": _to_int(tire_inventory.get("track_time_min")),
             "status": _normalize_tire_inventory_status(tire_inventory.get("status")),
+        },
+    )
+    return tire_id
+
+
+def _upsert_tire_history(
+    db: Session,
+    *,
+    tire_id: str,
+    id_seance: str,
+    usage_date: date | None,
+    track_name: str,
+    duration_min: int | None,
+) -> None:
+    db.execute(
+        text(
+            f"""
+            INSERT INTO {_table("tire_history")} (
+                tire_id,
+                id_seance,
+                usage_date,
+                track,
+                duration_min,
+                created_at
+            ) VALUES (
+                :tire_id,
+                :id_seance,
+                :usage_date,
+                :track,
+                :duration_min,
+                now()
+            )
+            ON CONFLICT (tire_id, id_seance) DO UPDATE
+            SET usage_date = COALESCE(EXCLUDED.usage_date, {_table("tire_history")}.usage_date),
+                track = COALESCE(EXCLUDED.track, {_table("tire_history")}.track),
+                duration_min = COALESCE(EXCLUDED.duration_min, {_table("tire_history")}.duration_min)
+            """
+        ),
+        {
+            "tire_id": tire_id,
+            "id_seance": id_seance,
+            "usage_date": usage_date,
+            "track": track_name,
+            "duration_min": duration_min,
         },
     )
 
@@ -766,62 +1057,99 @@ def persist_structured_submission(
     driver: Driver | None,
     vehicle: Vehicle | None,
     current_user: User | None,
-) -> int | None:
+) -> StructuredPersistResult:
+    result = StructuredPersistResult()
     payload = _dict_or_empty(submission.payload)
     session_data = get_session_payload(payload)
     analysis_result = _dict_or_empty(submission.analysis_result)
 
     if not session_data:
-        return
+        return result.finalize()
 
     if driver is None or vehicle is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Structured submissions require both driver and vehicle",
+        _record_structured_warning(
+            result,
+            section="session",
+            code="MISSING_RELATIONS",
+            message="Structured normalization was skipped because driver or vehicle data is missing.",
         )
+        return result.finalize()
 
     track_name = _clean_blank(session_data.get("track")) or event.track
     if not track_name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Track is required for structured submission",
+        _record_structured_warning(
+            result,
+            section="session",
+            code="MISSING_TRACK",
+            message="Structured normalization was skipped because the track is missing.",
         )
+        return result.finalize()
 
-    _upsert_master_driver(db, driver)
-    _upsert_master_vehicle(db, vehicle)
-    _upsert_track(db, track_name)
+    try:
+        _upsert_master_driver(db, driver)
+        _upsert_master_vehicle(db, vehicle)
+        _upsert_track(db, track_name)
+    except Exception as exc:  # pragma: no cover - live DB guard
+        _record_structured_warning(
+            result,
+            section="session",
+            code="MASTER_DATA_SAVE_FAILED",
+            message="Structured normalization could not prepare the linked driver, vehicle, or track records.",
+            exception=exc,
+        )
+        return result.finalize()
 
-    started_at, session_date, session_time = _session_started_at(session_data)
+    try:
+        started_at, session_date, session_time = _session_started_at(session_data)
+    except HTTPException as exc:
+        _record_structured_warning(
+            result,
+            section="session",
+            code="INVALID_SESSION_TIMESTAMP",
+            message=str(exc.detail),
+        )
+        return result.finalize()
     session_type = _clean_blank(session_data.get("session_type")) or "Practice"
-    session_number = _to_int(session_data.get("session_number"))
+    session_number = _parse_int_field(
+        session_data.get("session_number"),
+        result=result,
+        section="session",
+        field_name="session_number",
+        minimum=1,
+    )
     if session_number is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Session number is required",
+        _record_structured_warning(
+            result,
+            section="session",
+            code="MISSING_SESSION_NUMBER",
+            message="Structured normalization was skipped because the session number is missing or invalid.",
         )
-
-    tire_set = _clean_blank(session_data.get("tire_set"))
-    duration_min = _to_int(session_data.get("duration_min"))
-    raw_text = submission.raw_text
-    created_by = _created_by_value(current_user) if current_user is not None else "make-webhook"
+        return result.finalize()
 
     tire_inventory = _dict_or_empty(session_data.get("tire_inventory"))
-    if tire_set or tire_inventory:
-        tire_inventory_payload = dict(tire_inventory)
-        if tire_set and not tire_inventory_payload.get("tire_id"):
-            tire_inventory_payload["tire_id"] = tire_set
-        if tire_set and not tire_inventory_payload.get("manufacturer"):
-            tire_inventory_payload["manufacturer"] = "Unknown"
-        _upsert_tire_inventory(db, tire_inventory_payload)
-
+    tire_set = _clean_blank(session_data.get("tire_set")) or _clean_blank(tire_inventory.get("tire_id"))
+    duration_min = _parse_int_field(
+        session_data.get("duration_min"),
+        result=result,
+        section="session",
+        field_name="duration_min",
+        minimum=0,
+    )
+    raw_text = submission.raw_text
+    created_by = _created_by_value(current_user) if current_user is not None else "make-webhook"
     provided_session_id = _clean_blank(session_data.get("session_id"))
     if provided_session_id is not None:
         provided_session_id = provided_session_id.upper()
         if not SESSION_ID_PATTERN.fullmatch(provided_session_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="session_id must follow YYYYMMDD-HHMM-DRIVERID-S<number>",
+            _record_structured_warning(
+                result,
+                section="session",
+                code="INVALID_SESSION_ID",
+                message="session_id did not match the normalized session format, so a generated normalized session id was used instead.",
+                field_name="session_id",
+                value=provided_session_id,
             )
+            provided_session_id = None
 
     id_seance = provided_session_id or _seance_business_id(
         track_name=track_name,
@@ -852,95 +1180,110 @@ def persist_structured_submission(
         "data": session_data,
     }
     submission_input_id = _find_submission_input_id(db, submission.submission_ref)
+    result.submission_input_id = submission_input_id
 
-    id_seance = db.execute(
-        text(
-            f"""
-            INSERT INTO {_table("seances")} (
-                id_seance,
-                session_date,
-                session_time,
-                track,
-                driver_id,
-                vehicle_id,
-                session_type,
-                session_number,
-                duration_min,
-                tire_set,
-                notes,
-                created_by,
-                created_at
-            ) VALUES (
-                :id_seance,
-                :session_date,
-                :session_time,
-                :track,
-                :driver_id,
-                :vehicle_id,
-                :session_type,
-                :session_number,
-                :duration_min,
-                :tire_set,
-                :notes,
-                :created_by,
-                now()
-            )
-            ON CONFLICT ON CONSTRAINT uq_session_identity DO UPDATE
-            SET session_date = EXCLUDED.session_date,
-                session_time = COALESCE(EXCLUDED.session_time, {_table("seances")}.session_time),
-                track = EXCLUDED.track,
-                driver_id = EXCLUDED.driver_id,
-                vehicle_id = EXCLUDED.vehicle_id,
-                session_type = COALESCE(EXCLUDED.session_type, {_table("seances")}.session_type),
-                session_number = EXCLUDED.session_number,
-                duration_min = COALESCE(EXCLUDED.duration_min, {_table("seances")}.duration_min),
-                tire_set = COALESCE(EXCLUDED.tire_set, {_table("seances")}.tire_set),
-                notes = COALESCE(EXCLUDED.notes, {_table("seances")}.notes),
-                created_by = EXCLUDED.created_by
-            RETURNING id_seance
-            """
-        ),
-        {
-            "id_seance": id_seance,
-            "session_date": session_date,
-            "session_time": session_time,
-            "track": track_name,
-            "driver_id": driver.driver_id,
-            "vehicle_id": vehicle.vehicle_id,
-            "session_type": session_type,
-            "session_number": session_number,
-            "duration_min": duration_min,
-            "tire_set": tire_set,
-            "notes": raw_text,
-            "created_by": created_by,
-        },
-    ).scalar_one()
-
-    if submission_input_id is None:
-        submission_input_id = _insert_submission_input(
-            db,
-            id_seance=id_seance,
-            submission_type=submission_type,
-            source="make",
-            raw_text=raw_text,
-            raw_payload=raw_payload_snapshot,
-            confidence=confidence,
-            created_by=created_by,
-            validation_status="APPLIED",
-            validation_message=None,
-        )
-    else:
-        db.execute(
+    try:
+        id_seance = db.execute(
             text(
                 f"""
-                UPDATE {_table("submission_inputs")}
-                SET id_seance = :id_seance,
-                    validation_status = 'APPLIED',
-                    validation_message = NULL
-                WHERE submission_id = :submission_id
+                INSERT INTO {_table("seances")} (
+                    id_seance,
+                    session_date,
+                    session_time,
+                    track,
+                    driver_id,
+                    vehicle_id,
+                    session_type,
+                    session_number,
+                    duration_min,
+                    tire_set,
+                    notes,
+                    created_by,
+                    created_at
+                ) VALUES (
+                    :id_seance,
+                    :session_date,
+                    :session_time,
+                    :track,
+                    :driver_id,
+                    :vehicle_id,
+                    :session_type,
+                    :session_number,
+                    :duration_min,
+                    :tire_set,
+                    :notes,
+                    :created_by,
+                    now()
+                )
+                ON CONFLICT ON CONSTRAINT uq_session_identity DO UPDATE
+                SET session_date = EXCLUDED.session_date,
+                    session_time = COALESCE(EXCLUDED.session_time, {_table("seances")}.session_time),
+                    track = EXCLUDED.track,
+                    driver_id = EXCLUDED.driver_id,
+                    vehicle_id = EXCLUDED.vehicle_id,
+                    session_type = COALESCE(EXCLUDED.session_type, {_table("seances")}.session_type),
+                    session_number = EXCLUDED.session_number,
+                    duration_min = COALESCE(EXCLUDED.duration_min, {_table("seances")}.duration_min),
+                    tire_set = COALESCE(EXCLUDED.tire_set, {_table("seances")}.tire_set),
+                    notes = COALESCE(EXCLUDED.notes, {_table("seances")}.notes),
+                    created_by = EXCLUDED.created_by
+                RETURNING id_seance
                 """
             ),
-            {"id_seance": id_seance, "submission_id": submission_input_id},
+            {
+                "id_seance": id_seance,
+                "session_date": session_date,
+                "session_time": session_time,
+                "track": track_name,
+                "driver_id": driver.driver_id,
+                "vehicle_id": vehicle.vehicle_id,
+                "session_type": session_type,
+                "session_number": session_number,
+                "duration_min": duration_min,
+                "tire_set": tire_set,
+                "notes": raw_text,
+                "created_by": created_by,
+            },
+        ).scalar_one()
+        result.saved_sections.append("seances")
+    except Exception as exc:  # pragma: no cover - live DB guard
+        _record_structured_warning(
+            result,
+            section="seances",
+            code="SEANCE_SAVE_FAILED",
+            message="Structured normalization could not save the session row.",
+            exception=exc,
+        )
+        return result.finalize()
+
+    if submission_input_id is None:
+        try:
+            result.submission_input_id = _insert_submission_input(
+                db,
+                id_seance=id_seance,
+                submission_type=submission_type,
+                source="pwa",
+                raw_text=raw_text,
+                raw_payload=raw_payload_snapshot,
+                confidence=confidence,
+                created_by=created_by,
+                validation_status="APPLIED",
+                validation_message=None,
+            )
+        except Exception as exc:  # pragma: no cover - live DB guard
+            _record_structured_warning(
+                result,
+                section="submission_inputs",
+                code="SUBMISSION_INPUT_SAVE_FAILED",
+                message="Structured normalization saved the session but could not stage the normalized input snapshot.",
+                exception=exc,
+            )
+    else:
+        _update_submission_input_validation(
+            db,
+            submission_input_id=submission_input_id,
+            id_seance=id_seance,
+            result=result,
         )
 
     pressures = _dict_or_empty(session_data.get("pressures"))
@@ -957,10 +1300,20 @@ def persist_structured_submission(
         ]
         pressure_values = {
             "id_seance": id_seance,
-            **{column: _to_float(pressures.get(column)) for column in pressure_columns},
+            **{
+                column: _parse_pressure_value(
+                    pressures.get(column),
+                    result=result,
+                    phase="cold" if column.startswith("cold_") else "hot",
+                    corner=column.split("_", 1)[1],
+                )
+                for column in pressure_columns
+            },
         }
-        _upsert_single_row(
+        _safe_upsert_single_row(
             db,
+            result,
+            section="pressures",
             table_name="pressures",
             id_column="id_seance",
             columns=pressure_columns,
@@ -984,20 +1337,75 @@ def persist_structured_submission(
         ]
         suspension_values = {
             "id_seance": id_seance,
-            "rebound_fl": _to_int(suspension.get("rebound_fl")),
-            "rebound_fr": _to_int(suspension.get("rebound_fr")),
-            "rebound_rl": _to_int(suspension.get("rebound_rl")),
-            "rebound_rr": _to_int(suspension.get("rebound_rr")),
-            "bump_fl": _to_int(suspension.get("bump_fl")),
-            "bump_fr": _to_int(suspension.get("bump_fr")),
-            "bump_rl": _to_int(suspension.get("bump_rl")),
-            "bump_rr": _to_int(suspension.get("bump_rr")),
+            "rebound_fl": _parse_int_field(
+                suspension.get("rebound_fl"),
+                result=result,
+                section="suspension",
+                field_name="rebound_fl",
+                minimum=0,
+            ),
+            "rebound_fr": _parse_int_field(
+                suspension.get("rebound_fr"),
+                result=result,
+                section="suspension",
+                field_name="rebound_fr",
+                minimum=0,
+            ),
+            "rebound_rl": _parse_int_field(
+                suspension.get("rebound_rl"),
+                result=result,
+                section="suspension",
+                field_name="rebound_rl",
+                minimum=0,
+            ),
+            "rebound_rr": _parse_int_field(
+                suspension.get("rebound_rr"),
+                result=result,
+                section="suspension",
+                field_name="rebound_rr",
+                minimum=0,
+            ),
+            "bump_fl": _parse_int_field(
+                suspension.get("bump_fl"),
+                result=result,
+                section="suspension",
+                field_name="bump_fl",
+                minimum=0,
+            ),
+            "bump_fr": _parse_int_field(
+                suspension.get("bump_fr"),
+                result=result,
+                section="suspension",
+                field_name="bump_fr",
+                minimum=0,
+            ),
+            "bump_rl": _parse_int_field(
+                suspension.get("bump_rl"),
+                result=result,
+                section="suspension",
+                field_name="bump_rl",
+                minimum=0,
+            ),
+            "bump_rr": _parse_int_field(
+                suspension.get("bump_rr"),
+                result=result,
+                section="suspension",
+                field_name="bump_rr",
+                minimum=0,
+            ),
             "sway_bar_f": _clean_blank(suspension.get("sway_bar_f")),
             "sway_bar_r": _clean_blank(suspension.get("sway_bar_r")),
-            "wing_angle_deg": _to_float(suspension.get("wing_angle_deg")),
+            "wing_angle_deg": _parse_float_field(
+                suspension.get("wing_angle_deg"),
+                result=result,
+                section="suspension",
+                field_name="wing_angle_deg",
+            ),
         }
-        _upsert_single_row(
+        _safe_upsert_single_row(
             db,
+            result,
+            section="suspension",
             table_name="suspensions",
             id_column="id_seance",
             columns=suspension_columns,
@@ -1027,26 +1435,104 @@ def persist_structured_submission(
         ]
         alignment_values = {
             "id_seance": id_seance,
-            "camber_fl": _to_float(alignment.get("camber_fl")),
-            "camber_fr": _to_float(alignment.get("camber_fr")),
-            "camber_rl": _to_float(alignment.get("camber_rl")),
-            "camber_rr": _to_float(alignment.get("camber_rr")),
+            "camber_fl": _parse_float_field(
+                alignment.get("camber_fl"),
+                result=result,
+                section="alignment",
+                field_name="camber_fl",
+            ),
+            "camber_fr": _parse_float_field(
+                alignment.get("camber_fr"),
+                result=result,
+                section="alignment",
+                field_name="camber_fr",
+            ),
+            "camber_rl": _parse_float_field(
+                alignment.get("camber_rl"),
+                result=result,
+                section="alignment",
+                field_name="camber_rl",
+            ),
+            "camber_rr": _parse_float_field(
+                alignment.get("camber_rr"),
+                result=result,
+                section="alignment",
+                field_name="camber_rr",
+            ),
             "toe_front": _clean_blank(alignment.get("toe_front")),
             "toe_rear": _clean_blank(alignment.get("toe_rear")),
-            "caster_l": _to_float(alignment.get("caster_l")),
-            "caster_r": _to_float(alignment.get("caster_r")),
-            "ride_height_f": _to_float(alignment.get("ride_height_f")),
-            "ride_height_r": _to_float(alignment.get("ride_height_r")),
-            "corner_weight_fl": _to_float(alignment.get("corner_weight_fl")),
-            "corner_weight_fr": _to_float(alignment.get("corner_weight_fr")),
-            "corner_weight_rl": _to_float(alignment.get("corner_weight_rl")),
-            "corner_weight_rr": _to_float(alignment.get("corner_weight_rr")),
-            "cross_weight_pct": _to_float(alignment.get("cross_weight_pct")),
-            "rake_mm": _to_float(alignment.get("rake_mm")),
-            "wheelbase_mm": _to_positive_float(alignment.get("wheelbase_mm"), "wheelbase_mm"),
+            "caster_l": _parse_float_field(
+                alignment.get("caster_l"),
+                result=result,
+                section="alignment",
+                field_name="caster_l",
+            ),
+            "caster_r": _parse_float_field(
+                alignment.get("caster_r"),
+                result=result,
+                section="alignment",
+                field_name="caster_r",
+            ),
+            "ride_height_f": _parse_float_field(
+                alignment.get("ride_height_f"),
+                result=result,
+                section="alignment",
+                field_name="ride_height_f",
+            ),
+            "ride_height_r": _parse_float_field(
+                alignment.get("ride_height_r"),
+                result=result,
+                section="alignment",
+                field_name="ride_height_r",
+            ),
+            "corner_weight_fl": _parse_float_field(
+                alignment.get("corner_weight_fl"),
+                result=result,
+                section="alignment",
+                field_name="corner_weight_fl",
+            ),
+            "corner_weight_fr": _parse_float_field(
+                alignment.get("corner_weight_fr"),
+                result=result,
+                section="alignment",
+                field_name="corner_weight_fr",
+            ),
+            "corner_weight_rl": _parse_float_field(
+                alignment.get("corner_weight_rl"),
+                result=result,
+                section="alignment",
+                field_name="corner_weight_rl",
+            ),
+            "corner_weight_rr": _parse_float_field(
+                alignment.get("corner_weight_rr"),
+                result=result,
+                section="alignment",
+                field_name="corner_weight_rr",
+            ),
+            "cross_weight_pct": _parse_float_field(
+                alignment.get("cross_weight_pct"),
+                result=result,
+                section="alignment",
+                field_name="cross_weight_pct",
+            ),
+            "rake_mm": _parse_float_field(
+                alignment.get("rake_mm"),
+                result=result,
+                section="alignment",
+                field_name="rake_mm",
+            ),
+            "wheelbase_mm": _parse_float_field(
+                alignment.get("wheelbase_mm"),
+                result=result,
+                section="alignment",
+                field_name="wheelbase_mm",
+                minimum=0,
+            ),
         }
-        _upsert_single_row(
+        _safe_upsert_single_row(
             db,
+            result,
+            section="alignment",
             table_name="alignment",
             id_column="id_seance",
             columns=alignment_columns,
@@ -1072,83 +1558,198 @@ def persist_structured_submission(
         ]
         tire_temperature_values = {
             "id_seance": id_seance,
-            "fl_in": _to_float(tire_temperatures.get("fl_in")),
-            "fl_mid": _to_float(tire_temperatures.get("fl_mid")),
-            "fl_out": _to_float(tire_temperatures.get("fl_out")),
-            "fr_in": _to_float(tire_temperatures.get("fr_in")),
-            "fr_mid": _to_float(tire_temperatures.get("fr_mid")),
-            "fr_out": _to_float(tire_temperatures.get("fr_out")),
-            "rl_in": _to_float(tire_temperatures.get("rl_in")),
-            "rl_mid": _to_float(tire_temperatures.get("rl_mid")),
-            "rl_out": _to_float(tire_temperatures.get("rl_out")),
-            "rr_in": _to_float(tire_temperatures.get("rr_in")),
-            "rr_mid": _to_float(tire_temperatures.get("rr_mid")),
-            "rr_out": _to_float(tire_temperatures.get("rr_out")),
+            "fl_in": _parse_float_field(
+                tire_temperatures.get("fl_in"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fl_in",
+            ),
+            "fl_mid": _parse_float_field(
+                tire_temperatures.get("fl_mid"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fl_mid",
+            ),
+            "fl_out": _parse_float_field(
+                tire_temperatures.get("fl_out"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fl_out",
+            ),
+            "fr_in": _parse_float_field(
+                tire_temperatures.get("fr_in"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fr_in",
+            ),
+            "fr_mid": _parse_float_field(
+                tire_temperatures.get("fr_mid"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fr_mid",
+            ),
+            "fr_out": _parse_float_field(
+                tire_temperatures.get("fr_out"),
+                result=result,
+                section="tire_temperatures",
+                field_name="fr_out",
+            ),
+            "rl_in": _parse_float_field(
+                tire_temperatures.get("rl_in"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rl_in",
+            ),
+            "rl_mid": _parse_float_field(
+                tire_temperatures.get("rl_mid"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rl_mid",
+            ),
+            "rl_out": _parse_float_field(
+                tire_temperatures.get("rl_out"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rl_out",
+            ),
+            "rr_in": _parse_float_field(
+                tire_temperatures.get("rr_in"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rr_in",
+            ),
+            "rr_mid": _parse_float_field(
+                tire_temperatures.get("rr_mid"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rr_mid",
+            ),
+            "rr_out": _parse_float_field(
+                tire_temperatures.get("rr_out"),
+                result=result,
+                section="tire_temperatures",
+                field_name="rr_out",
+            ),
             "photo_url": _clean_blank(submission.image_url),
         }
-        _upsert_single_row(
+        _safe_upsert_single_row(
             db,
+            result,
+            section="tire_temperatures",
             table_name="tire_temperatures",
             id_column="id_seance",
             columns=tire_temperature_columns,
             values=tire_temperature_values,
         )
 
-    if tire_set and db.get(TireInventory, tire_set) is not None:
-        db.execute(
-            text(
-                f"""
-                INSERT INTO {_table("tire_history")} (
-                    tire_id,
-                    id_seance,
-                    usage_date,
-                    track,
-                    duration_min,
-                    created_at
-                ) VALUES (
-                    :tire_id,
-                    :id_seance,
-                    :usage_date,
-                    :track,
-                    :duration_min,
-                    now()
+    tire_id = None
+    if tire_set or tire_inventory:
+        tire_inventory_payload = dict(tire_inventory)
+        if tire_set and not tire_inventory_payload.get("tire_id"):
+            tire_inventory_payload["tire_id"] = tire_set
+        if tire_set and not tire_inventory_payload.get("manufacturer"):
+            tire_inventory_payload["manufacturer"] = "Unknown"
+        tire_inventory_payload["heat_cycles"] = _parse_int_field(
+            tire_inventory_payload.get("heat_cycles"),
+            result=result,
+            section="tire_inventory",
+            field_name="heat_cycles",
+            minimum=0,
+        )
+        tire_inventory_payload["track_time_min"] = _parse_int_field(
+            tire_inventory_payload.get("track_time_min"),
+            result=result,
+            section="tire_inventory",
+            field_name="track_time_min",
+            minimum=0,
+        )
+        try:
+            tire_id = _upsert_tire_inventory(db, tire_inventory_payload)
+            if tire_id:
+                result.saved_sections.append("tire_inventory")
+            elif _has_meaningful_value(tire_inventory_payload):
+                result.skipped_sections.append("tire_inventory")
+                _record_structured_warning(
+                    result,
+                    section="tire_inventory",
+                    code="INVALID_TIRE_ID",
+                    message="Tire inventory could not be normalized because the tire ID format is invalid.",
+                    field_name="tire_id",
+                    value=tire_inventory_payload.get("tire_id") or tire_set,
                 )
-                ON CONFLICT (tire_id, id_seance) DO UPDATE
-                SET usage_date = COALESCE(EXCLUDED.usage_date, {_table("tire_history")}.usage_date),
-                    track = COALESCE(EXCLUDED.track, {_table("tire_history")}.track),
-                    duration_min = COALESCE(EXCLUDED.duration_min, {_table("tire_history")}.duration_min)
-                """
-            ),
-            {
-                "tire_id": tire_set,
-                "id_seance": id_seance,
-                "usage_date": session_date,
-                "track": track_name,
-                "duration_min": duration_min,
-            },
-        )
+        except Exception as exc:  # pragma: no cover - live DB guard
+            _record_structured_warning(
+                result,
+                section="tire_inventory",
+                code="SECTION_SAVE_FAILED",
+                message="Failed to save the tire inventory section to normalized tables.",
+                exception=exc,
+            )
+            result.skipped_sections.append("tire_inventory")
 
-    if submission.image_url and not _media_file_exists(db, submission_input_id):
-        _insert_media_file(
-            db,
-            submission_id=submission_input_id,
-            submission_ref=submission.submission_ref,
-            image_url=submission.image_url,
-            uploaded_by=created_by,
-        )
+    if tire_id:
+        try:
+            nested_transaction = db.begin_nested if hasattr(db, "begin_nested") else None
+            with nested_transaction() if nested_transaction is not None else nullcontext():
+                _upsert_tire_history(
+                    db,
+                    tire_id=tire_id,
+                    id_seance=id_seance,
+                    usage_date=session_date,
+                    track_name=track_name,
+                    duration_min=duration_min,
+                )
+            result.saved_sections.append("tire_history")
+        except Exception as exc:  # pragma: no cover - live DB guard
+            _record_structured_warning(
+                result,
+                section="tire_history",
+                code="SECTION_SAVE_FAILED",
+                message="Failed to save tire history for this session.",
+                exception=exc,
+            )
+            result.skipped_sections.append("tire_history")
 
+    _update_submission_input_validation(
+        db,
+        submission_input_id=result.submission_input_id,
+        id_seance=id_seance,
+        result=result,
+    )
+
+    if submission.image_url and result.submission_input_id is not None and not _media_file_exists(db, result.submission_input_id):
+        try:
+            _insert_media_file(
+                db,
+                submission_id=result.submission_input_id,
+                submission_ref=submission.submission_ref,
+                image_url=submission.image_url,
+                uploaded_by=created_by,
+            )
+        except Exception as exc:  # pragma: no cover - live DB guard
+            _record_structured_warning(
+                result,
+                section="media_files",
+                code="SECTION_SAVE_FAILED",
+                message="Structured normalization saved the note, but the linked media row could not be refreshed.",
+                exception=exc,
+            )
+
+    finalized = result.finalize()
     _write_audit_log(
         db,
         action="submission.apply.structured",
-        status="SUCCESS",
+        status="WARNING" if finalized.warnings else "SUCCESS",
         message=f"Structured submission applied for {submission.submission_ref}",
         payload={
             "submission_ref": submission.submission_ref,
             "correlation_id": _submission_correlation_id(submission),
-            "submission_input_id": submission_input_id,
+            "submission_input_id": finalized.submission_input_id,
             "id_seance": id_seance,
+            "structured_status": finalized.status,
+            "structured_warnings": finalized.warnings,
         },
         user=created_by,
     )
 
-    return submission_input_id
+    return finalized

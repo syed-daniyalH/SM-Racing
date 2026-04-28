@@ -82,6 +82,25 @@ const normalizeStringList = (value) => {
   return [];
 };
 
+const normalizeStructuredWarnings = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((warning) =>
+      warning && typeof warning === "object"
+        ? {
+            ...warning,
+            section: warning.section || "structured_ingest",
+            code: warning.code || "STRUCTURED_WARNING",
+            message: warning.message || "Structured normalization completed with a warning.",
+          }
+        : null,
+    )
+    .filter(Boolean);
+};
+
 export const normalizeDriver = (driver) => {
   if (!driver) return null;
 
@@ -197,6 +216,9 @@ export const normalizeSubmission = (submission) => {
     payload && typeof payload === "object" && payload.data && typeof payload.data === "object"
       ? payload.data
       : payload;
+  const structuredIngestWarnings = normalizeStructuredWarnings(
+    submission.structured_ingest_warnings || submission.structuredIngestWarnings,
+  );
 
   return {
     ...submission,
@@ -234,6 +256,12 @@ export const normalizeSubmission = (submission) => {
       analysisResult?.has_raw_text ?? analysisResult?.hasRawText ?? false,
     hasImage:
       analysisResult?.has_image ?? analysisResult?.hasImage ?? false,
+    structuredIngestStatus:
+      submission.structured_ingest_status ||
+      submission.structuredIngestStatus ||
+      (structuredIngestWarnings.length ? "saved_with_warnings" : "skipped"),
+    structuredIngestWarnings,
+    hasStructuredWarnings: structuredIngestWarnings.length > 0,
     confidence:
       analysisResult?.confidence ??
       analysisResult?.confidence_score ??

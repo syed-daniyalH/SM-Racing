@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1.endpoints import submissions as submission_api
 from app.core.enums import SeanceStatus, SubmissionStatus, TireInventoryStatus
 from app.models.structured_notes import Alignment, Seance, TireHistory, TireInventory, Track
 from app.services import submission_delivery_service as delivery_service
@@ -337,22 +336,6 @@ class _DeliverySession:
         return None
 
 
-class _DuplicateScalarResult:
-    def __init__(self, items):
-        self._items = items
-
-    def __iter__(self):
-        return iter(self._items)
-
-
-class _DuplicateLookupDb:
-    def __init__(self, items):
-        self._items = items
-
-    def scalars(self, statement):
-        return _DuplicateScalarResult(self._items)
-
-
 def test_submission_stage_records_raw_media_and_audit_log():
     db = FakeSession()
     submission_ref = "SEB-20260423-1531-PRACTICE-3-NG-NG-GT4-2025"
@@ -499,7 +482,7 @@ def test_persist_structured_submission_links_session_tables_and_history():
         {"data": session_data},
     )
 
-    submission_input_id = ingest_service.persist_structured_submission(
+    result = ingest_service.persist_structured_submission(
         db,
         submission=submission,
         event=event,
@@ -508,7 +491,9 @@ def test_persist_structured_submission_links_session_tables_and_history():
         vehicle=vehicle,
         current_user=current_user,
     )
-    assert submission_input_id == 101
+    assert result.submission_input_id == 101
+    assert result.status == "saved"
+    assert result.warnings == []
 
     started_at = datetime.combine(date.fromisoformat("2026-04-23"), time.fromisoformat("15:31")).replace(
         tzinfo=timezone.utc
@@ -556,6 +541,40 @@ def test_persist_structured_submission_links_session_tables_and_history():
     assert tire_history_insert["id_seance"] == expected_seance_id
     assert tire_history_insert["track"] == "Sebring International Raceway"
     assert tire_history_insert["duration_min"] == 10
+
+
+def test_persist_structured_submission_preserves_note_when_pressure_is_out_of_range():
+    db = FakeSession()
+    submission_ref = "SEB-20260423-1531-WARNING-3-NG-NG-GT4-2025"
+    session_data = _session_data(tire_status="DISCARDED")
+    session_data["pressures"]["cold"]["fl"] = 112
+    submission, event, run_group, driver, vehicle, current_user = _make_actor_context(
+        submission_ref,
+        {"data": session_data},
+    )
+
+    result = ingest_service.persist_structured_submission(
+        db,
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        current_user=current_user,
+    )
+
+    assert result.submission_input_id == 101
+    assert result.status == "saved_with_warnings"
+    assert any(warning["field"] == "cold_fl" for warning in result.warnings)
+
+    pressure_insert = next(params for sql, params in db.executed if "insert into sm2racing.pressures" in sql.lower())
+    assert pressure_insert["cold_fl"] is None
+    assert pressure_insert["cold_fr"] == 21.0
+
+    validation_update = next(
+        params for sql, params in db.executed if "update sm2racing.submission_inputs" in sql.lower()
+    )
+    assert "cold_fl must be at most 60.0" in (validation_update["validation_message"] or "")
 
 
 def test_structured_submission_service_preserves_enum_statuses():
@@ -640,80 +659,6 @@ def test_invalid_tire_inventory_status_is_rejected():
 
     with pytest.raises(structured_service.StructuredSubmissionError):
         structured_service._parse_tire_status("BROKEN")
-
-
-def test_duplicate_detection_requires_driver_vehicle_and_session_type_match():
-    event_id = uuid4()
-    driver_id = uuid4()
-    vehicle_id = uuid4()
-    base_payload = {
-        "data": {
-            "date": "2026-04-23",
-            "time": "15:31",
-            "track": "Sebring International Raceway",
-            "session_type": "Practice",
-            "session_number": 3,
-        }
-    }
-
-    exact_match = SimpleNamespace(
-        submission_ref="EXACT",
-        payload=base_payload,
-        event_id=event_id,
-        driver_id=driver_id,
-        vehicle_id=vehicle_id,
-        event=SimpleNamespace(track="Sebring International Raceway"),
-    )
-    driver_mismatch = SimpleNamespace(
-        submission_ref="DRIVER",
-        payload=base_payload,
-        event_id=event_id,
-        driver_id=uuid4(),
-        vehicle_id=vehicle_id,
-        event=SimpleNamespace(track="Sebring International Raceway"),
-    )
-    session_type_mismatch = SimpleNamespace(
-        submission_ref="SESSION",
-        payload={
-            "data": {
-                "date": "2026-04-23",
-                "time": "15:31",
-                "track": "Sebring International Raceway",
-                "session_type": "Qualifying",
-                "session_number": 3,
-            }
-        },
-        event_id=event_id,
-        driver_id=driver_id,
-        vehicle_id=vehicle_id,
-        event=SimpleNamespace(track="Sebring International Raceway"),
-    )
-
-    db = _DuplicateLookupDb([driver_mismatch, session_type_mismatch, exact_match])
-    duplicate = submission_api._find_existing_session_duplicate(
-        db,
-        event_id=event_id,
-        driver_id=driver_id,
-        vehicle_id=vehicle_id,
-        track_name="Sebring International Raceway",
-        session_type="Practice",
-        payload=base_payload,
-    )
-
-    assert duplicate is exact_match
-
-    db_without_exact = _DuplicateLookupDb([driver_mismatch, session_type_mismatch])
-    no_duplicate = submission_api._find_existing_session_duplicate(
-        db_without_exact,
-        event_id=event_id,
-        driver_id=driver_id,
-        vehicle_id=vehicle_id,
-        track_name="Sebring International Raceway",
-        session_type="Practice",
-        payload=base_payload,
-    )
-
-    assert no_duplicate is None
 
 
 @pytest.mark.parametrize(
@@ -885,3 +830,16 @@ def test_submission_analysis_classifies_raw_voice_and_image_inputs(
     assert analysis["raw_input_mode"] == expected_mode
     assert analysis["has_raw_text"] == bool(raw_text)
     assert analysis["has_image"] == bool(image_url)
+
+
+def test_quick_hybrid_notes_still_persist_structured_data():
+    analysis = payload_service.merge_submission_analysis(
+        _submission_payload(),
+        raw_text="manual note with structured fields",
+        image_url=None,
+        analysis_result={"submission_mode": "quick"},
+    )
+
+    assert analysis["source_type"] == "quick_hybrid"
+    assert analysis["has_structured_data"] is True
+    assert payload_service.should_persist_structured_submission(analysis) is True

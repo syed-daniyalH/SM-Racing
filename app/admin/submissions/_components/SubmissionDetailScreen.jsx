@@ -1022,6 +1022,11 @@ export default function SubmissionDetailScreen({
               <StatusBadge label={status.label} tone={status.tone} title="Submission status" />
               <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} title="Validation status" />
               <StatusBadge label={record.syncStateLabel} tone={record.syncStateTone} title="Sync status" />
+              <StatusBadge
+                label={record.structuredStatusLabel}
+                tone={record.structuredStatusTone}
+                title="Structured normalization status"
+              />
               <StatusBadge label={record.sourceTypeLabel} tone={record.sourceTypeTone} title="Source type" />
               <span className={`submission-confidence-chip tone-${confidenceTone}`}>Confidence {record.confidenceLabel}</span>
               {previewMessage ? <StatusBadge label="Preview Mode" tone={previewTone} title={previewMessage} /> : null}
@@ -1193,6 +1198,7 @@ export default function SubmissionDetailScreen({
                 <div className="submission-detail-section-meta">
                   <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} />
                   <StatusBadge label={record.reviewStateLabel} tone="neutral" />
+                  <StatusBadge label={record.structuredStatusLabel} tone={record.structuredStatusTone} />
                 </div>
               </div>
 
@@ -1252,7 +1258,41 @@ export default function SubmissionDetailScreen({
                     {record.runGroupNormalizationWarning ? "Needs review" : "Aligned"}
                   </p>
                 </div>
+                <div className="submission-issue-card">
+                  <p className="submission-issue-label">Structured Normalization</p>
+                  <p className="submission-issue-value">
+                    {record.structuredStatusLabel}
+                    {record.structuredWarningCount
+                      ? ` (${record.structuredWarningCount} warning${record.structuredWarningCount === 1 ? "" : "s"})`
+                      : ""}
+                  </p>
+                </div>
               </div>
+
+              {record.structuredWarnings.length ? (
+                <div className="submission-detail-admin-note" style={{ marginTop: "1rem" }}>
+                  <div className="submission-detail-admin-note-header">
+                    <div>
+                      <div className="submission-detail-group-title">Structured Ingest Warnings</div>
+                      <p className="submission-detail-group-copy">
+                        The canonical note saved successfully, but some normalized table updates were partial or skipped.
+                      </p>
+                    </div>
+                    <StatusBadge
+                      label={record.structuredStatusLabel}
+                      tone={record.structuredStatusTone}
+                    />
+                  </div>
+                  <ul className="submission-alert-list">
+                    {record.structuredWarnings.map((warning, index) => (
+                      <li key={`${warning.code || "structured-warning"}-${index}`}>
+                        {warning.field ? `${warning.field}: ` : ""}
+                        {warning.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               <div className="submission-detail-admin-note">
                 <div className="submission-detail-admin-note-header">
@@ -1491,6 +1531,14 @@ export default function SubmissionDetailScreen({
                 <div className="submission-kv-card">
                   <p className="submission-kv-label">Review</p>
                   <p className="submission-kv-value">{record.reviewStateLabel}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Structured Status</p>
+                  <p className="submission-kv-value">{record.structuredStatusLabel}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Structured Warnings</p>
+                  <p className="submission-kv-value">{record.structuredWarningCount || 0}</p>
                 </div>
               </div>
             </section>

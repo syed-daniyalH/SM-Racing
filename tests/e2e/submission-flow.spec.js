@@ -84,8 +84,21 @@ const makeSessionData = ({ tireStatus = "DISCARDED" } = {}) => ({
   },
 });
 
-async function mockSubmissionApp(page) {
+async function mockSubmissionApp(page, options = {}) {
   const submissionRequests = [];
+  const buildSubmissionResponse =
+    options.buildSubmissionResponse ||
+    ((body) => ({
+      submission_ref: body.submission_ref,
+      correlation_id: body.correlation_id,
+      status: "SENT",
+      raw_text: body.raw_text ?? null,
+      image_url: body.image_url ?? null,
+      payload: body.payload,
+      analysis_result: body.analysis_result,
+      created_at: makeDateTime("2026-04-23T15:31:00.000Z"),
+      updated_at: makeDateTime("2026-04-23T15:33:00.000Z"),
+    }));
 
   await page.addInitScript(
     ({ transcript, token }) => {
@@ -261,20 +274,10 @@ async function mockSubmissionApp(page) {
       return route.fulfill({
         status: 201,
         json: {
-          submission: {
-            submission_ref: body.submission_ref,
-            correlation_id: body.correlation_id,
-            status: "SENT",
-            raw_text: body.raw_text ?? null,
-            image_url: body.image_url ?? null,
-            payload: body.payload,
-            analysis_result: body.analysis_result,
-            created_at: makeDateTime("2026-04-23T15:31:00.000Z"),
-            updated_at: makeDateTime("2026-04-23T15:33:00.000Z"),
-          },
+          submission: buildSubmissionResponse(body),
         },
-  });
-}
+      });
+    }
 
     return route.fulfill({ status: 200, json: {} });
   });
@@ -370,6 +373,58 @@ test.describe("submission flow", () => {
     await expect(page.getByTestId("submission-track-manual")).toHaveValue(TRACK_NAME);
     await expect(page.getByTestId("submission-driver-select")).toHaveValue("NG");
     await expect(page.getByTestId("submission-vehicle-select")).toHaveValue("NG-GT4-2025");
+  });
+
+  test("detail submissions show structured warnings when normalized pressure values are skipped", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page, {
+      buildSubmissionResponse: (body) => ({
+        submission_ref: body.submission_ref,
+        correlation_id: body.correlation_id,
+        status: "SENT",
+        raw_text: body.raw_text ?? null,
+        image_url: body.image_url ?? null,
+        payload: body.payload,
+        analysis_result: body.analysis_result,
+        structured_ingest_status: "saved_with_warnings",
+        structured_ingest_warnings: [
+          {
+            section: "pressures",
+            code: "VALUE_TOO_HIGH",
+            field: "cold_fl",
+            value: 112,
+            message: "cold_fl must be at most 60.0 to be normalized.",
+          },
+        ],
+        created_at: makeDateTime("2026-04-23T15:31:00.000Z"),
+        updated_at: makeDateTime("2026-04-23T15:33:00.000Z"),
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/notes`);
+    await page.getByTestId("submission-tab-detail").click();
+    await page.getByTestId("submission-date").fill("2026-04-23");
+    await page.getByTestId("submission-time").fill("15:31");
+    await page.getByTestId("submission-session-id").fill(`${SUBMISSION_REF}-WARN`);
+    await page.getByTestId("submission-track-select").selectOption("__OTHER__");
+    await page.getByTestId("submission-track-manual").fill(TRACK_NAME);
+    await page.getByTestId("submission-driver-select").selectOption("NG");
+    await page.getByTestId("submission-vehicle-select").selectOption("NG-GT4-2025");
+    await page.getByTestId("submission-session-type").selectOption("Practice");
+    await page.getByTestId("detail-tire-set").fill("Y-S3");
+    await page.getByTestId("detail-pressure-fl").fill("112");
+
+    await expect(page.getByText("Pressure values outside the SM2 normalized DB limits")).toBeVisible();
+
+    await page.getByRole("button", { name: "Submit Notes" }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(
+      page.getByText("Note saved. Some structured fields could not be normalized, so review the warnings below."),
+    ).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.getByText("cold_fl: cold_fl must be at most 60.0 to be normalized."),
+    ).toBeVisible();
   });
 
   test("quick submissions preserve raw text, photos, and voice data", async ({ page }) => {
