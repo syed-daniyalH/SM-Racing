@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.core.enums import SubmissionStatus
 from app.schemas.driver import DriverRead
@@ -51,3 +51,13 @@ class SubmissionRead(TimestampedModel):
     run_group: RunGroupRead | None = None
     driver: DriverRead | None = None
     vehicle: VehicleRead | None = None
+
+    @field_validator("structured_ingest_status", mode="before")
+    @classmethod
+    def default_structured_ingest_status(cls, value: Any) -> str:
+        return value or "skipped"
+
+    @field_validator("structured_ingest_warnings", mode="before")
+    @classmethod
+    def default_structured_ingest_warnings(cls, value: Any) -> list[dict[str, Any]]:
+        return [] if value is None else value

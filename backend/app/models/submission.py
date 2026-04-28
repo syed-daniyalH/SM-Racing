@@ -24,7 +24,7 @@ class Submission(Base, TimestampMixin):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     analysis_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     structured_ingest_status: Mapped[str] = mapped_column(String(32), nullable=False, default="skipped")
-    structured_ingest_warnings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    structured_ingest_warnings: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[SubmissionStatus] = mapped_column(
         Enum(SubmissionStatus, name="submission_status", schema=DB_SCHEMA),
         nullable=False,

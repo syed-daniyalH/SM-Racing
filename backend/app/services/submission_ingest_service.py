@@ -653,7 +653,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> str |
                 :purchase_date,
                 :heat_cycles,
                 :track_time_min,
-                COALESCE(:status, 'ACTIVE'),
+                COALESCE(CAST(:status AS {_table("sm2_tire_inventory_status")}), 'ACTIVE'::{_table("sm2_tire_inventory_status")}),
                 now(),
                 now()
             )
@@ -664,7 +664,7 @@ def _upsert_tire_inventory(db: Session, tire_inventory: dict[str, Any]) -> str |
                 purchase_date = COALESCE(EXCLUDED.purchase_date, {_table("tire_inventory")}.purchase_date),
                 heat_cycles = COALESCE(EXCLUDED.heat_cycles, {_table("tire_inventory")}.heat_cycles),
                 track_time_min = COALESCE(EXCLUDED.track_time_min, {_table("tire_inventory")}.track_time_min),
-                status = COALESCE(:status, {_table("tire_inventory")}.status),
+                status = COALESCE(CAST(:status AS {_table("sm2_tire_inventory_status")}), {_table("tire_inventory")}.status),
                 updated_at = now()
             """
         ),
@@ -839,34 +839,39 @@ def _write_audit_log(
     payload: dict[str, Any] | None = None,
     user: str | None = None,
 ) -> None:
-    db.execute(
-        text(
-            f"""
-            INSERT INTO {_table("logs")} (
-                action,
-                status,
-                message,
-                payload,
-                "user",
-                logged_at
-            ) VALUES (
-                :action,
-                :status,
-                :message,
-                CAST(:payload AS jsonb),
-                :user,
-                now()
+    nested_transaction = db.begin_nested if hasattr(db, "begin_nested") else None
+    try:
+        with nested_transaction() if nested_transaction is not None else nullcontext():
+            db.execute(
+                text(
+                    f"""
+                    INSERT INTO {_table("logs")} (
+                        action,
+                        status,
+                        message,
+                        payload,
+                        "user",
+                        logged_at
+                    ) VALUES (
+                        :action,
+                        :status,
+                        :message,
+                        CAST(:payload AS jsonb),
+                        :user,
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "action": action,
+                    "status": status,
+                    "message": message,
+                    "payload": json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, default=str),
+                    "user": user,
+                },
             )
-            """
-        ),
-        {
-            "action": action,
-            "status": status,
-            "message": message,
-            "payload": json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, default=str),
-            "user": user,
-        },
-    )
+    except Exception:
+        logger.warning("Structured audit log write skipped for action %s", action, exc_info=True)
 
 
 def _submission_type_from_payload(payload: dict[str, Any]) -> str:
@@ -1664,19 +1669,21 @@ def persist_structured_submission(
             minimum=0,
         )
         try:
-            tire_id = _upsert_tire_inventory(db, tire_inventory_payload)
-            if tire_id:
-                result.saved_sections.append("tire_inventory")
-            elif _has_meaningful_value(tire_inventory_payload):
-                result.skipped_sections.append("tire_inventory")
-                _record_structured_warning(
-                    result,
-                    section="tire_inventory",
-                    code="INVALID_TIRE_ID",
-                    message="Tire inventory could not be normalized because the tire ID format is invalid.",
-                    field_name="tire_id",
-                    value=tire_inventory_payload.get("tire_id") or tire_set,
-                )
+            nested_transaction = db.begin_nested if hasattr(db, "begin_nested") else None
+            with nested_transaction() if nested_transaction is not None else nullcontext():
+                tire_id = _upsert_tire_inventory(db, tire_inventory_payload)
+                if tire_id:
+                    result.saved_sections.append("tire_inventory")
+                elif _has_meaningful_value(tire_inventory_payload):
+                    result.skipped_sections.append("tire_inventory")
+                    _record_structured_warning(
+                        result,
+                        section="tire_inventory",
+                        code="INVALID_TIRE_ID",
+                        message="Tire inventory could not be normalized because the tire ID format is invalid.",
+                        field_name="tire_id",
+                        value=tire_inventory_payload.get("tire_id") or tire_set,
+                    )
         except Exception as exc:  # pragma: no cover - live DB guard
             _record_structured_warning(
                 result,
