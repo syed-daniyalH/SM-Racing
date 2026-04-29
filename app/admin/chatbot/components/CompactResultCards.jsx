@@ -38,8 +38,8 @@ const CARD_LAYOUTS = {
   },
   session: {
     columns: 3,
-    visibleLabels: ["Event", "Driver", "Vehicle", "Type", "Run group", "Duration", "Created"],
-    secondaryLabels: ["Tire set", "Created by"],
+    visibleLabels: ["Event", "Driver", "Vehicle", "Type", "Run group"],
+    secondaryLabels: ["Duration", "Created", "Tire set"],
     detailsColumns: 2,
   },
   driver: {
