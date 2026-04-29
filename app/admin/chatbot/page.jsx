@@ -28,6 +28,13 @@ import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import AssistantIcon from "./components/AssistantIcon"
+import {
+  ChatEmptyState,
+  ChatErrorState,
+  ChatNotFoundState,
+  ChatUnsupportedState,
+  ChatValidationState,
+} from "./components/ChatSupportStates"
 import ComparisonResponseSections from "./components/ComparisonResponseSections"
 import CompactResultSection from "./components/CompactResultCards"
 import SetupDetailSection from "./components/SetupDetailSections"
@@ -36,19 +43,6 @@ import AssistantResponseShell, {
   serializeAssistantResponse,
 } from "./components/AssistantResponseShell"
 import "./ChatbotAssistant.css"
-
-const QUICK_ACTIONS = [
-  { label: "Show all events", icon: EventOutlinedIcon },
-  { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-  { label: "Show sessions for this event", icon: EventOutlinedIcon },
-  { label: "Show sessions for driver Alex", icon: PeopleAltOutlinedIcon },
-  { label: "Show setup for latest session", icon: TuneOutlinedIcon },
-  { label: "Show tire pressures for Session 2", icon: SpeedOutlinedIcon },
-  { label: "Show suspension data", icon: TuneOutlinedIcon },
-  { label: "Show alignment for Car 12", icon: TrackChangesOutlinedIcon },
-  { label: "Show latest submissions", icon: HistoryOutlinedIcon },
-  { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-]
 
 const MESSAGE_ICON_MAP = {
   user: AdminPanelSettingsOutlinedIcon,
@@ -71,6 +65,18 @@ const SECTION_ICON_MAP = {
 }
 
 const COMPACT_RESPONSE_KINDS = new Set(["events", "sessions", "fleet", "submissions"])
+const VALIDATION_HINT_PATTERNS = [
+  /please select/i,
+  /include the event name/i,
+  /need a specific/i,
+  /field required/i,
+  /required field/i,
+  /message is required/i,
+  /provide more details/i,
+  /choose the correct/i,
+  /missing context/i,
+  /multiple .* matching/i,
+]
 const SETUP_SECTION_TITLES = [
   "session info",
   "pressures",
@@ -108,6 +114,178 @@ const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MA
 const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
 
 const normalizeSectionTitle = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase()
+
+const normalizeSupportText = (value) => String(value || "").replace(/\s+/g, " ").trim()
+
+const isValidationText = (value) => VALIDATION_HINT_PATTERNS.some((pattern) => pattern.test(value))
+
+const buildLoadingCopy = (queryText) => {
+  const text = normalizeSupportText(queryText).toLowerCase()
+
+  if (/compare|difference|delta/.test(text)) {
+    return "Preparing comparison..."
+  }
+
+  if (/setup|pressure|suspension|alignment|temperature|history/.test(text)) {
+    return "Reviewing setup data..."
+  }
+
+  if (/event/.test(text)) {
+    return "Checking event records..."
+  }
+
+  if (/driver|vehicle|car/.test(text)) {
+    return "Checking driver and vehicle data..."
+  }
+
+  if (/submission/.test(text)) {
+    return "Reviewing latest submissions..."
+  }
+
+  return "Checking the SM2 Racing database..."
+}
+
+const buildStarterActions = (context) => [
+  {
+    label: context.default_event_id ? "Show sessions for this event" : "Show all events",
+    icon: EventOutlinedIcon,
+  },
+  { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+  { label: "Show setup for latest session", icon: TuneOutlinedIcon },
+  { label: "Compare sessions", icon: CompareArrowsOutlinedIcon },
+  { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+]
+
+const buildStateActions = ({ kind, scope = {}, response }) => {
+  const actionsByKind = {
+    not_found: [
+      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+      { label: "Show all events", icon: EventOutlinedIcon },
+      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+    ],
+    unsupported: [
+      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+      { label: "Show setup for latest session", icon: TuneOutlinedIcon },
+      { label: "Compare sessions", icon: CompareArrowsOutlinedIcon },
+    ],
+    validation: [
+      { label: "Show sessions for this event", icon: EventOutlinedIcon },
+      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+    ],
+    error: [
+      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+      { label: "Show all events", icon: EventOutlinedIcon },
+      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+    ],
+  }
+
+  const items = [...(actionsByKind[kind] || [])]
+
+  if (scope?.event_id) {
+    items.unshift({ label: "Show sessions for this event", icon: EventOutlinedIcon })
+  }
+
+  if (scope?.session_id) {
+    items.unshift({ label: "Show setup for this session", icon: TuneOutlinedIcon })
+  }
+
+  if (scope?.driver_id) {
+    items.unshift({ label: "Show sessions for this driver", icon: PeopleAltOutlinedIcon })
+  }
+
+  if (scope?.vehicle_id) {
+    items.unshift({ label: "Show alignment for this vehicle", icon: TrackChangesOutlinedIcon })
+  }
+
+  if (response?.kind === "compare") {
+    items.unshift({ label: "Show full setup for latest session", icon: TuneOutlinedIcon })
+  }
+
+  const uniqueItems = []
+  const seen = new Set()
+
+  items.forEach((item) => {
+    const label = normalizeSupportText(item?.label)
+    if (!label) {
+      return
+    }
+
+    const key = label.toLowerCase()
+    if (seen.has(key)) {
+      return
+    }
+
+    seen.add(key)
+    uniqueItems.push({ ...item, label })
+  })
+
+  return uniqueItems.slice(0, 4)
+}
+
+const getSupportState = ({ message, response, scope }) => {
+  const status = response?.status || (message?.role === "error" ? "error" : "")
+  const supportText = normalizeSupportText(
+    response?.error_message || response?.error || response?.summary || message?.text,
+  )
+  const isValidation =
+    status === "error" &&
+    (message?.errorStatus === 400 ||
+      message?.errorStatus === 422 ||
+      isValidationText(supportText))
+
+  if (status === "not_found") {
+    return {
+      variant: "not_found",
+      component: ChatNotFoundState,
+      props: {
+        title: "No matching data was found in the SM2 Racing database.",
+        message: "Try narrowing the event, session, driver, or vehicle, then ask again.",
+        actions: buildStateActions({ kind: "not_found", scope, response }),
+      },
+    }
+  }
+
+  if (status === "unsupported") {
+    return {
+      variant: "unsupported",
+      component: ChatUnsupportedState,
+      props: {
+        title: "I can help with sessions, events, setup data, comparisons, and summaries.",
+        message: "Use one of the supported race-data queries to stay within the current scope.",
+        actions: buildStateActions({ kind: "unsupported", scope, response }),
+      },
+    }
+  }
+
+  if (isValidation) {
+    return {
+      variant: "validation",
+      component: ChatValidationState,
+      props: {
+        title: "I need a more specific filter before I can continue.",
+        message: supportText || "Select an event, session, driver, or vehicle, then try again.",
+        actions: buildStateActions({ kind: "validation", scope, response }),
+      },
+    }
+  }
+
+  if (status === "error") {
+    return {
+      variant: "error",
+      component: ChatErrorState,
+      props: {
+        title: "The assistant could not reach the live database.",
+        message:
+          supportText ||
+          "Try again in a moment or refresh the context from the sidebar.",
+        actions: buildStateActions({ kind: "error", scope, response }),
+      },
+    }
+  }
+
+  return null
+}
 
 const isSetupLikeResponse = (response) =>
   response?.kind === "setup" ||
@@ -213,11 +391,47 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const isSystem = message.role === "system"
   const isError = message.role === "error"
   const response = message.response
+  const supportState = getSupportState({
+    message,
+    response: response || (isError ? { status: "error", error_message: message.text } : null),
+    scope: message.scope || {},
+  })
+  const SupportComponent = supportState?.component
   const useComparisonLayout = Boolean(response && response.kind === "compare")
   const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
   const useSetupLayout = isSetupLikeResponse(response)
+  const responseSections = Array.isArray(response?.sections) ? response.sections : []
+  const showSupportState = Boolean(supportState)
 
   if (isAssistant || (isError && response)) {
+    const responseContent = showSupportState ? (
+      <SupportComponent {...supportState.props} onAction={onFollowUp} />
+    ) : responseSections.length ? (
+      <div
+        className={`chatbot-response-sections ${
+          useCompactResultLayout ? "chatbot-response-sections-compact" : ""
+        }`.trim()}
+      >
+        {useComparisonLayout ? (
+          <ComparisonResponseSections response={response} scope={message.scope} />
+        ) : (
+          responseSections.map((section) =>
+            useSetupLayout ? (
+              <SetupDetailSection key={`${message.id}-${section.title}`} section={section} />
+            ) : useCompactResultLayout ? (
+              <CompactResultSection
+                key={`${message.id}-${section.title}`}
+                section={section}
+                responseKind={response?.kind}
+              />
+            ) : (
+              <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+            ),
+          )
+        )}
+      </div>
+    ) : null
+
     return (
       <article className="chatbot-message chatbot-message-assistant">
         <AssistantResponseShell
@@ -227,32 +441,24 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
           onCopy={response ? () => onCopy?.(message) : null}
           onFollowUp={onFollowUp}
         >
-          {Array.isArray(response?.sections) && response.sections.length ? (
-            <div
-              className={`chatbot-response-sections ${
-                useCompactResultLayout ? "chatbot-response-sections-compact" : ""
-              }`.trim()}
-            >
-              {useComparisonLayout ? (
-                <ComparisonResponseSections response={response} scope={message.scope} />
-              ) : (
-                response.sections.map((section) =>
-                  useSetupLayout ? (
-                    <SetupDetailSection key={`${message.id}-${section.title}`} section={section} />
-                  ) : useCompactResultLayout ? (
-                    <CompactResultSection
-                      key={`${message.id}-${section.title}`}
-                      section={section}
-                      responseKind={response?.kind}
-                    />
-                  ) : (
-                    <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
-                  ),
-                )
-              )}
-            </div>
-          ) : null}
+          {responseContent}
         </AssistantResponseShell>
+      </article>
+    )
+  }
+
+  if (isError && !response) {
+    if (SupportComponent) {
+      return (
+        <article className="chatbot-message chatbot-message-error chatbot-message-support">
+          <SupportComponent {...supportState.props} onAction={onFollowUp} />
+        </article>
+      )
+    }
+
+    return (
+      <article className="chatbot-message chatbot-message-error chatbot-message-support">
+        <p className="chatbot-message-text chatbot-message-text-error">{message.text}</p>
       </article>
     )
   }
@@ -283,46 +489,6 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
         </p>
       </div>
     </article>
-  )
-}
-
-function EmptyState({ onQuickAction, isLoading }) {
-  return (
-    <div className="chatbot-empty-state">
-      <div className="chatbot-empty-hero">
-        <div className="chatbot-empty-icon" aria-hidden="true">
-          <AssistantIcon
-            className="chatbot-empty-icon-image assistant-icon-spin"
-            decorative
-          />
-        </div>
-        <div className="chatbot-empty-copy">
-          <h2>Start a race-weekend query</h2>
-          <p>
-            Ask the AI Race Assistant to review sessions, setup sheets, events, tire data,
-            or driver and vehicle records from the live SM2 Racing database.
-          </p>
-        </div>
-      </div>
-
-      <div className="chatbot-empty-actions">
-        {QUICK_ACTIONS.map((action) => {
-          const Icon = action.icon
-          return (
-            <button
-              key={action.label}
-              type="button"
-              className="chatbot-empty-chip"
-              onClick={() => onQuickAction(action.label)}
-              disabled={isLoading}
-            >
-              <Icon fontSize="inherit" />
-              <span>{action.label}</span>
-            </button>
-          )
-        })}
-      </div>
-    </div>
   )
 }
 
@@ -545,7 +711,14 @@ export default function ChatbotPage() {
       setNotice("Latest database response loaded.")
     } catch (error) {
       appendMessage(
-        createMessage("error", error.message || "The AI Race Assistant could not reach the database."),
+        createMessage(
+          "error",
+          error.message || "The AI Race Assistant could not reach the database.",
+          {
+            errorStatus: error.status ?? null,
+            errorData: error.data ?? null,
+          },
+        ),
       )
     } finally {
       setIsSending(false)
@@ -958,7 +1131,11 @@ export default function ChatbotPage() {
 
               <div className="chatbot-message-list" ref={listRef}>
                 {!hasMessages ? (
-                  <EmptyState onQuickAction={handleQuickAction} isLoading={isSending} />
+                  <ChatEmptyState
+                    actions={buildStarterActions(context)}
+                    onAction={handleQuickAction}
+                    loading={contextLoading || isSending}
+                  />
                 ) : (
                   messages.map((message) => (
                     <ChatbotMessage
@@ -973,7 +1150,10 @@ export default function ChatbotPage() {
                 {isSending ? (
                   <article className="chatbot-message chatbot-message-assistant chatbot-typing-message">
                     <AssistantResponseShell
-                      message={{ createdAt: null, text: "Working through the live database now." }}
+                      message={{
+                        createdAt: null,
+                        text: buildLoadingCopy(lastUserQuery || draft),
+                      }}
                       response={{
                         kind: "message",
                         status: "loading",

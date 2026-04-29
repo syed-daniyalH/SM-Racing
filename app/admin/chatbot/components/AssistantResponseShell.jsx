@@ -4,6 +4,7 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined"
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import StatusBadge from "../../../components/Common/StatusBadge"
 import AssistantIcon from "./AssistantIcon"
+import { ChatLoadingState } from "./ChatSupportStates"
 import {
   buildComparisonMetaItems,
   buildComparisonSummary,
@@ -14,6 +15,7 @@ const RESPONSE_STATUS_TONES = {
   not_found: "warning",
   error: "danger",
   unsupported: "neutral",
+  validation: "warning",
   loading: "info",
   empty: "neutral",
 }
@@ -23,6 +25,7 @@ const RESPONSE_STATUS_LABELS = {
   not_found: "No match",
   error: "Error",
   unsupported: "Needs detail",
+  validation: "Needs context",
   loading: "Thinking",
   empty: "Empty",
 }
@@ -56,6 +59,42 @@ const humanizeLabel = (value) => {
 }
 
 const normalizeWhitespace = (value) => String(value || "").replace(/\s+/g, " ").trim()
+
+const VALIDATION_HINT_PATTERNS = [
+  /please select/i,
+  /include the event name/i,
+  /need a specific/i,
+  /field required/i,
+  /required field/i,
+  /message is required/i,
+  /provide more details/i,
+  /choose the correct/i,
+  /missing context/i,
+  /multiple .* matching/i,
+]
+
+const isValidationMessage = (value) => VALIDATION_HINT_PATTERNS.some((pattern) => pattern.test(value))
+
+const polishValidationText = (value) => {
+  const text = normalizeWhitespace(value)
+  if (!text || !isValidationMessage(text)) {
+    return ""
+  }
+
+  if (/please select an event/i.test(text)) {
+    return "Please select an event or include the event name before trying again."
+  }
+
+  if (/field required|message is required|required field/i.test(text)) {
+    return "I need a more specific event, session, driver, or vehicle before I can continue."
+  }
+
+  if (/provide more details/i.test(text)) {
+    return "I need a little more context before I can continue."
+  }
+
+  return text
+}
 
 const polishAssistantText = (value) => {
   const text = normalizeWhitespace(value)
@@ -120,6 +159,18 @@ export const getResponseState = (response, loading = false) => {
     return "loading"
   }
 
+  const state = response?.status || "empty"
+  if (
+    state === "error" &&
+    isValidationMessage(
+      normalizeWhitespace(
+        [response?.error_message, response?.error, response?.summary, response?.answer].filter(Boolean).join(" "),
+      ),
+    )
+  ) {
+    return "validation"
+  }
+
   return response?.status || "empty"
 }
 
@@ -154,13 +205,20 @@ export const buildAssistantSummary = (response, fallbackText = "") => {
         ? response.no_data_message || response.summary || response.answer || fallbackText
         : response.summary || response.answer || fallbackText
 
+  if (response.status === "error") {
+    const validationSummary = polishValidationText(rawSummary)
+    if (validationSummary) {
+      return validationSummary
+    }
+  }
+
   const summary = polishAssistantText(rawSummary)
   if (summary) {
     return summary
   }
 
   if (response.status === "loading") {
-    return "Working through the live database now."
+    return normalizeWhitespace(fallbackText) || "Working through the live database now."
   }
 
   if (response.status === "not_found") {
@@ -232,6 +290,10 @@ export const buildResponseInsights = ({ response, scope = {}, recordCount }) => 
     return []
   }
 
+  if (response?.status && response.status !== "success") {
+    return []
+  }
+
   const insights = []
   const scopeItems = [
     {
@@ -287,8 +349,122 @@ export const buildResponseInsights = ({ response, scope = {}, recordCount }) => 
   return insights.slice(0, 5)
 }
 
-export const getSuggestedNextSteps = (response, limit = 5) =>
-  (Array.isArray(response?.follow_up) ? response.follow_up : []).slice(0, limit)
+const dedupeSuggestions = (items) => {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = String(item || "").toLowerCase()
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+const buildSuggestedNextSteps = (response, scope, messageText) => {
+  if (response?.status === "loading") {
+    return []
+  }
+
+  const state = getResponseState(response)
+  const text = normalizeWhitespace(messageText).toLowerCase()
+  const suggestions = []
+  const eventSelected = Boolean(readScopeValue(scope, ["event_label", "eventLabel"]))
+  const sessionSelected = Boolean(readScopeValue(scope, ["session_label", "sessionLabel"]))
+  const driverSelected = Boolean(readScopeValue(scope, ["driver_label", "driverLabel"]))
+  const vehicleSelected = Boolean(readScopeValue(scope, ["vehicle_label", "vehicleLabel"]))
+
+  const add = (items) => {
+    suggestions.push(...items)
+  }
+
+  if (response?.kind === "compare" || /compare|difference|delta/.test(text)) {
+    add([
+      "Show full setup for latest session",
+      "Compare latest two sessions",
+      "Show tire pressures only",
+    ])
+  } else if (response?.kind === "setup" || /setup|pressure|suspension|alignment|temperature|history/.test(text)) {
+    add([
+      "Compare with previous session",
+      "Show alignment only",
+      "Summarize this session",
+    ])
+  } else if (response?.kind === "events") {
+    add([
+      "Show latest sessions",
+      "Show sessions for this event",
+      "Show driver and vehicle data",
+    ])
+  } else if (response?.kind === "sessions") {
+    add([
+      "Show setup for latest session",
+      "Show sessions for driver Alex",
+      "Compare sessions",
+    ])
+  } else if (response?.kind === "fleet") {
+    add([
+      "Show latest sessions",
+      "Show all events",
+      "Show driver and vehicle data",
+    ])
+  } else if (response?.kind === "submissions") {
+    add([
+      "Show latest sessions",
+      "Show setup for latest session",
+      "Show all events",
+    ])
+  }
+
+  if (state === "not_found") {
+    add([
+      "Show latest sessions",
+      "Show all events",
+      "Show driver and vehicle data",
+    ])
+  } else if (state === "unsupported") {
+    add([
+      "Show latest sessions",
+      "Show setup for latest session",
+      "Compare sessions",
+    ])
+  } else if (state === "validation") {
+    add([
+      "Show sessions for this event",
+      "Show latest sessions",
+      "Show driver and vehicle data",
+    ])
+  } else if (state === "error") {
+    add([
+      "Show latest sessions",
+      "Show all events",
+      "Show driver and vehicle data",
+    ])
+  }
+
+  if (eventSelected) {
+    add(["Show sessions for this event"])
+  }
+
+  if (sessionSelected) {
+    add(["Show setup for latest session"])
+  }
+
+  if (driverSelected) {
+    add(["Show sessions for driver Alex"])
+  }
+
+  if (vehicleSelected) {
+    add(["Show alignment for Car 12"])
+  }
+
+  add(Array.isArray(response?.follow_up) ? response.follow_up : [])
+
+  return dedupeSuggestions(suggestions)
+}
+
+export const getSuggestedNextSteps = (response, scope = {}, messageText = "", limit = 4) =>
+  buildSuggestedNextSteps(response, scope, messageText).slice(0, limit)
 
 export const serializeAssistantResponse = (response, scope = {}) => {
   if (!response) {
@@ -493,7 +669,7 @@ export function ResponseContentSlot({ children }) {
 }
 
 export function SuggestedNextSteps({ suggestions = [], onFollowUp, loading = false }) {
-  const visibleSuggestions = suggestions.slice(0, 5)
+  const visibleSuggestions = suggestions.slice(0, 4)
 
   if (!visibleSuggestions.length) {
     return null
@@ -546,7 +722,11 @@ export default function AssistantResponseShell({
     scope: scope || message?.scope || {},
     recordCount: getRecordCount(response),
   })
-  const nextSteps = getSuggestedNextSteps(response)
+  const nextSteps = getSuggestedNextSteps(
+    response,
+    scope || message?.scope || {},
+    message?.text || "",
+  )
 
   return (
     <div className={`chatbot-response-shell chatbot-response-shell-${state}`}>
@@ -563,11 +743,12 @@ export default function AssistantResponseShell({
         <ResponseInsightsRow items={insights} />
 
         {loading ? (
-          <div className="chatbot-response-loading" aria-live="polite">
-            <span />
-            <span />
-            <span />
-          </div>
+          <ResponseContentSlot>
+            <ChatLoadingState
+              label={summary}
+              hint="The assistant is checking the live database before replying."
+            />
+          </ResponseContentSlot>
         ) : (
           <ResponseContentSlot>{children}</ResponseContentSlot>
         )}

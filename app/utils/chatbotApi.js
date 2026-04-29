@@ -29,9 +29,44 @@ const getErrorDetail = (error) =>
   error?.error ||
   ""
 
+const formatValidationDetail = (detail) => {
+  if (!detail) {
+    return ""
+  }
+
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim()
+        }
+
+        const loc = Array.isArray(item?.loc) ? item.loc.filter(Boolean).join(".") : ""
+        const message = item?.msg || item?.message || item?.detail || ""
+        const cleanedMessage = String(message || "").trim()
+
+        if (loc && cleanedMessage) {
+          return `${loc}: ${cleanedMessage}`
+        }
+
+        return loc || cleanedMessage
+      })
+      .filter(Boolean)
+
+    return parts.join(" • ")
+  }
+
+  if (typeof detail === "object") {
+    return String(detail?.msg || detail?.message || detail?.detail || "").trim()
+  }
+
+  return String(detail).trim()
+}
+
 const buildApiError = (error, fallbackMessage) => {
   const status = error?.response?.status ?? error?.status ?? null
-  const detail = getErrorDetail(error)
+  const rawDetail = getErrorDetail(error)
+  const detail = formatValidationDetail(rawDetail)
   const message =
     typeof detail === "string" && detail.trim() && !isHtmlLikeError(detail)
       ? detail.trim()
