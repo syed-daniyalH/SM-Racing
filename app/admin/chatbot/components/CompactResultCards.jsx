@@ -164,6 +164,14 @@ const buildCardType = (responseKind, section) => {
     return "mapping"
   }
 
+  if (
+    responseKind === "compare" &&
+    typeof section?.title === "string" &&
+    /session\s+[ab]/i.test(section.title)
+  ) {
+    return "session"
+  }
+
   return "default"
 }
 

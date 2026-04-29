@@ -28,6 +28,7 @@ import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import AssistantIcon from "./components/AssistantIcon"
+import ComparisonResponseSections from "./components/ComparisonResponseSections"
 import CompactResultSection from "./components/CompactResultCards"
 import SetupDetailSection from "./components/SetupDetailSections"
 import AssistantResponseShell, {
@@ -212,6 +213,7 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const isSystem = message.role === "system"
   const isError = message.role === "error"
   const response = message.response
+  const useComparisonLayout = Boolean(response && response.kind === "compare")
   const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
   const useSetupLayout = isSetupLikeResponse(response)
 
@@ -231,19 +233,23 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
                 useCompactResultLayout ? "chatbot-response-sections-compact" : ""
               }`.trim()}
             >
-              {response.sections.map((section) => (
-                useSetupLayout ? (
-                  <SetupDetailSection key={`${message.id}-${section.title}`} section={section} />
-                ) : useCompactResultLayout ? (
-                  <CompactResultSection
-                    key={`${message.id}-${section.title}`}
-                    section={section}
-                    responseKind={response?.kind}
-                  />
-                ) : (
-                  <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+              {useComparisonLayout ? (
+                <ComparisonResponseSections response={response} scope={message.scope} />
+              ) : (
+                response.sections.map((section) =>
+                  useSetupLayout ? (
+                    <SetupDetailSection key={`${message.id}-${section.title}`} section={section} />
+                  ) : useCompactResultLayout ? (
+                    <CompactResultSection
+                      key={`${message.id}-${section.title}`}
+                      section={section}
+                      responseKind={response?.kind}
+                    />
+                  ) : (
+                    <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+                  ),
                 )
-              ))}
+              )}
             </div>
           ) : null}
         </AssistantResponseShell>

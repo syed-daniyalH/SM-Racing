@@ -4,6 +4,10 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined"
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import StatusBadge from "../../../components/Common/StatusBadge"
 import AssistantIcon from "./AssistantIcon"
+import {
+  buildComparisonMetaItems,
+  buildComparisonSummary,
+} from "./comparisonUtils"
 
 const RESPONSE_STATUS_TONES = {
   success: "success",
@@ -136,6 +140,13 @@ export const buildAssistantSummary = (response, fallbackText = "") => {
     return normalizeWhitespace(fallbackText)
   }
 
+  if (response.kind === "compare" && response.status === "success") {
+    const comparisonSummary = buildComparisonSummary(response)
+    if (comparisonSummary) {
+      return comparisonSummary
+    }
+  }
+
   const rawSummary =
     response.status === "error"
       ? response.error_message || response.error || response.summary || response.answer || fallbackText
@@ -192,6 +203,10 @@ const buildScopeLabel = (scope) => {
 }
 
 export const buildResponseMetaItems = ({ response, scope = {}, recordCount }) => {
+  if (response?.kind === "compare") {
+    return buildComparisonMetaItems(response, scope)
+  }
+
   const items = []
   const state = getResponseState(response)
   const statusLabel = getResponseStateLabel(state)
@@ -213,6 +228,10 @@ export const buildResponseMetaItems = ({ response, scope = {}, recordCount }) =>
 }
 
 export const buildResponseInsights = ({ response, scope = {}, recordCount }) => {
+  if (response?.kind === "compare") {
+    return []
+  }
+
   const insights = []
   const scopeItems = [
     {

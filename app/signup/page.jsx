@@ -30,7 +30,7 @@ function SignupIcon({ type }) {
 
   return (
     <svg
-      className="signup-input__icon"
+      className="login-input__icon signup-input__icon"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -84,7 +84,7 @@ function BrandFlag() {
 function ArrowIcon() {
   return (
     <svg
-      className="signup-button__arrow"
+      className="login-button__arrow signup-button__arrow"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -341,7 +341,6 @@ export default function Signup() {
                   <label htmlFor="password" className="login-field__label">
                     Password
                   </label>
-                  <span className="login-field__hint">Forgot?</span>
                 </div>
                 <div className="login-field__control">
                   <SignupIcon type="lock" />
@@ -412,7 +411,11 @@ export default function Signup() {
                 className="login-button signup-button"
                 disabled={isLoading}
               >
-                {isLoading ? "Creating Account..." : "Create Account"}
+                {isLoading ? (
+                  <span className="signup-button__label">Creating<br />Account...</span>
+                ) : (
+                  <span className="signup-button__label">Create<br />Account</span>
+                )}
                 {!isLoading && <ArrowIcon />}
               </button>
             </form>
