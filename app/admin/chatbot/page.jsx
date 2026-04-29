@@ -29,6 +29,7 @@ import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import AssistantIcon from "./components/AssistantIcon"
 import CompactResultSection from "./components/CompactResultCards"
+import SetupDetailSection from "./components/SetupDetailSections"
 import AssistantResponseShell, {
   buildAssistantSummary,
   serializeAssistantResponse,
@@ -69,6 +70,15 @@ const SECTION_ICON_MAP = {
 }
 
 const COMPACT_RESPONSE_KINDS = new Set(["events", "sessions", "fleet", "submissions"])
+const SETUP_SECTION_TITLES = [
+  "session info",
+  "pressures",
+  "suspension",
+  "alignment",
+  "tire temperatures",
+  "tire history",
+  "metadata",
+]
 
 const formatTimestamp = (value) => {
   if (!value) return "Just now"
@@ -95,6 +105,15 @@ const createMessage = (role, text, extra = {}) => ({
 const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MAP.default
 
 const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
+
+const normalizeSectionTitle = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase()
+
+const isSetupLikeResponse = (response) =>
+  response?.kind === "setup" ||
+  (Array.isArray(response?.sections) &&
+    response.sections.some((section) =>
+      SETUP_SECTION_TITLES.includes(normalizeSectionTitle(section?.title)),
+    ))
 
 function ChatbotSection({ section }) {
   const Icon = getSectionIcon(section.icon_key)
@@ -194,6 +213,7 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const isError = message.role === "error"
   const response = message.response
   const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
+  const useSetupLayout = isSetupLikeResponse(response)
 
   if (isAssistant || (isError && response)) {
     return (
@@ -212,7 +232,9 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
               }`.trim()}
             >
               {response.sections.map((section) => (
-                useCompactResultLayout ? (
+                useSetupLayout ? (
+                  <SetupDetailSection key={`${message.id}-${section.title}`} section={section} />
+                ) : useCompactResultLayout ? (
                   <CompactResultSection
                     key={`${message.id}-${section.title}`}
                     section={section}
