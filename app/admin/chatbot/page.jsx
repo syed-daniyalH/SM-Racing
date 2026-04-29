@@ -28,6 +28,7 @@ import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import AssistantIcon from "./components/AssistantIcon"
+import CompactResultSection from "./components/CompactResultCards"
 import AssistantResponseShell, {
   buildAssistantSummary,
   serializeAssistantResponse,
@@ -66,6 +67,8 @@ const SECTION_ICON_MAP = {
   vehicle: DirectionsCarOutlinedIcon,
   default: DataObjectOutlinedIcon,
 }
+
+const COMPACT_RESPONSE_KINDS = new Set(["events", "sessions", "fleet", "submissions"])
 
 const formatTimestamp = (value) => {
   if (!value) return "Just now"
@@ -190,6 +193,7 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const isSystem = message.role === "system"
   const isError = message.role === "error"
   const response = message.response
+  const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
 
   if (isAssistant || (isError && response)) {
     return (
@@ -202,9 +206,21 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
           onFollowUp={onFollowUp}
         >
           {Array.isArray(response?.sections) && response.sections.length ? (
-            <div className="chatbot-response-sections">
+            <div
+              className={`chatbot-response-sections ${
+                useCompactResultLayout ? "chatbot-response-sections-compact" : ""
+              }`.trim()}
+            >
               {response.sections.map((section) => (
-                <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+                useCompactResultLayout ? (
+                  <CompactResultSection
+                    key={`${message.id}-${section.title}`}
+                    section={section}
+                    responseKind={response?.kind}
+                  />
+                ) : (
+                  <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+                )
               ))}
             </div>
           ) : null}

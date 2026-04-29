@@ -8,13 +8,13 @@ import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettin
 import DirectionsCarOutlinedIcon from "@mui/icons-material/DirectionsCarOutlined"
 import EventOutlinedIcon from "@mui/icons-material/EventOutlined"
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined"
-import FlagOutlinedIcon from "@mui/icons-material/FlagOutlined"
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined"
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined"
 import { useAuth } from "../context/AuthContext"
 import "./Navbar.css"
 
+const BRAND_ICON_SRC = "/icons/sm-racing-checkered-flag.svg"
 const ASSISTANT_ICON_SRC = "/icons/sm-ai-assistant-icon.png"
 
 const getEventId = (event) =>
@@ -156,7 +156,13 @@ export default function Navbar() {
         <div className="navbar-container">
           <div className="navbar-brand" onClick={handleDashboard}>
             <span className="brand-icon" aria-hidden="true">
-              <FlagOutlinedIcon fontSize="inherit" />
+              <img
+                src={BRAND_ICON_SRC}
+                alt=""
+                className="brand-icon-image"
+                loading="eager"
+                decoding="async"
+              />
             </span>
             <span className="brand-text">
               <span className="brand-name">SM-2</span>
