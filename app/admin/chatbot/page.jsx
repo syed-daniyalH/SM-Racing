@@ -27,9 +27,12 @@ import Loader from "../../components/Common/Loader"
 import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
+import AssistantIcon from "./components/AssistantIcon"
+import AssistantResponseShell, {
+  buildAssistantSummary,
+  serializeAssistantResponse,
+} from "./components/AssistantResponseShell"
 import "./ChatbotAssistant.css"
-
-const ASSISTANT_ICON_SRC = "/icons/sm-ai-assistant-icon.png"
 
 const QUICK_ACTIONS = [
   { label: "Show all events", icon: EventOutlinedIcon },
@@ -86,100 +89,9 @@ const createMessage = (role, text, extra = {}) => ({
   ...extra,
 })
 
-const serializeResponse = (response) => {
-  if (!response) return ""
-
-  const lines = []
-  if (response.title) {
-    lines.push(response.title)
-  }
-
-  if (response.answer || response.summary) {
-    lines.push(response.answer || response.summary)
-  }
-
-  if (response.data_source || response.source_label) {
-    lines.push(`Data source: ${response.data_source || response.source_label}`)
-  }
-
-  if (response.intent) {
-    lines.push(`Intent: ${response.intent}`)
-  }
-
-  if (response.status) {
-    lines.push(`Status: ${response.status}`)
-  }
-
-  if (Array.isArray(response.records_used) && response.records_used.length) {
-    lines.push("")
-    lines.push("Records used")
-    response.records_used.forEach((record) => {
-      lines.push(
-        `- ${record.kind}: ${record.label}${record.details ? ` | ${record.details}` : ""}`,
-      )
-      })
-  }
-
-  if (response.error_message || response.error) {
-    lines.push("")
-    lines.push(`Error: ${response.error_message || response.error}`)
-  }
-
-  if (Array.isArray(response.sections)) {
-    response.sections.forEach((section) => {
-      lines.push("")
-      lines.push(section.title)
-      if (section.subtitle) {
-        lines.push(section.subtitle)
-      }
-
-      if (section.variant === "fields" && Array.isArray(section.fields)) {
-        section.fields.forEach((field) => {
-          lines.push(`${field.label}: ${field.value}`)
-        })
-      }
-
-      if (section.variant === "cards" && Array.isArray(section.cards)) {
-        section.cards.forEach((card) => {
-          lines.push(`- ${card.title}${card.subtitle ? ` | ${card.subtitle}` : ""}`)
-          if (Array.isArray(card.fields)) {
-            card.fields.forEach((field) => {
-              lines.push(`  ${field.label}: ${field.value}`)
-            })
-          }
-        })
-      }
-
-      if (section.variant === "table" && Array.isArray(section.table_rows)) {
-        if (Array.isArray(section.table_headers) && section.table_headers.length) {
-          lines.push(section.table_headers.join(" | "))
-        }
-        section.table_rows.forEach((row) => {
-          lines.push(row.join(" | "))
-        })
-      }
-    })
-  }
-
-  return lines.join("\n")
-}
-
 const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MAP.default
 
 const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
-
-function AssistantIcon({ className = "", decorative = false, alt = "SM Racing AI Assistant" }) {
-  return (
-    <img
-      src={ASSISTANT_ICON_SRC}
-      alt={decorative ? "" : alt}
-      aria-hidden={decorative ? "true" : undefined}
-      className={className}
-      loading="eager"
-      decoding="async"
-    />
-  )
-}
 
 function ChatbotSection({ section }) {
   const Icon = getSectionIcon(section.icon_key)
@@ -278,58 +190,43 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const isSystem = message.role === "system"
   const isError = message.role === "error"
   const response = message.response
-  const dataSource = response?.data_source || response?.source_label || "SM2 Racing Database"
-  const recordsUsed = Array.isArray(response?.records_used) ? response.records_used : []
+
+  if (isAssistant || (isError && response)) {
+    return (
+      <article className="chatbot-message chatbot-message-assistant">
+        <AssistantResponseShell
+          message={message}
+          response={response}
+          scope={message.scope}
+          onCopy={response ? () => onCopy?.(message) : null}
+          onFollowUp={onFollowUp}
+        >
+          {Array.isArray(response?.sections) && response.sections.length ? (
+            <div className="chatbot-response-sections">
+              {response.sections.map((section) => (
+                <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
+              ))}
+            </div>
+          ) : null}
+        </AssistantResponseShell>
+      </article>
+    )
+  }
+
   const messageText = response?.answer || response?.summary || message.text
-  const responseStatus = response?.status || "success"
-  const responseTone =
-    responseStatus === "error"
-      ? "danger"
-      : responseStatus === "not_found"
-        ? "warning"
-        : responseStatus === "unsupported"
-          ? "neutral"
-          : "success"
 
   return (
     <article className={`chatbot-message chatbot-message-${message.role}`}>
       <header className="chatbot-message-header">
-        <div
-          className={`chatbot-message-avatar ${
-            isAssistant ? "chatbot-message-avatar-brand" : ""
-          }`}
-          aria-hidden="true"
-        >
-          {isAssistant ? (
-            <AssistantIcon className="chatbot-message-avatar-image" decorative />
-          ) : (
-            <Icon fontSize="small" />
-          )}
+        <div className="chatbot-message-avatar" aria-hidden="true">
+          <Icon fontSize="small" />
         </div>
         <div className="chatbot-message-meta">
           <div className="chatbot-message-label">
-            {message.role === "user"
-              ? "Admin"
-              : message.role === "assistant"
-                ? "AI Race Assistant"
-                : message.role === "error"
-                  ? "Connection Issue"
-                  : "System"}
+            {message.role === "user" ? "Admin" : message.role === "error" ? "Connection Issue" : "System"}
           </div>
           <div className="chatbot-message-time">{formatTimestamp(message.createdAt)}</div>
         </div>
-
-        {isAssistant && response ? (
-          <button
-            type="button"
-            className="chatbot-message-copy"
-            onClick={() => onCopy?.(message)}
-            title="Copy answer"
-            aria-label="Copy answer"
-          >
-            <ContentCopyOutlinedIcon fontSize="inherit" />
-          </button>
-        ) : null}
       </header>
 
       <div className="chatbot-message-body">
@@ -340,72 +237,6 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
         >
           {messageText}
         </p>
-
-        {isAssistant && response?.data_found ? (
-          <div className="chatbot-source-chip">
-            <span className="chatbot-source-label">Data source:</span>
-            <span>{dataSource}</span>
-          </div>
-        ) : null}
-
-        {isAssistant && response ? (
-          <div className="chatbot-response-meta">
-            <StatusBadge
-              label={`${recordsUsed.length} record${recordsUsed.length === 1 ? "" : "s"}`}
-              tone={recordsUsed.length ? "success" : "neutral"}
-            />
-            <StatusBadge label={responseStatus.replace(/_/g, " ")} tone={responseTone} />
-          </div>
-        ) : null}
-
-        {isAssistant && recordsUsed.length ? (
-          <div className="chatbot-records-used">
-            <div className="chatbot-records-used-label">Records used</div>
-            <div className="chatbot-records-chip-row">
-              {recordsUsed.map((record) => (
-                <span
-                  key={`${message.id}-${record.kind}-${record.value}`}
-                  className="chatbot-record-chip"
-                  title={record.details || record.label}
-                >
-                  <strong>{record.kind}</strong>
-                  <span>{record.label}</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {isAssistant && Array.isArray(response?.sections) && response.sections.length ? (
-          <div className="chatbot-response-sections">
-            {response.sections.map((section) => (
-              <ChatbotSection key={`${message.id}-${section.title}`} section={section} />
-            ))}
-          </div>
-        ) : null}
-
-        {isAssistant && Array.isArray(response?.follow_up) && response.follow_up.length ? (
-          <div className="chatbot-follow-up">
-            <div className="chatbot-follow-up-label">Suggested next steps</div>
-            <div className="chatbot-follow-up-chips">
-              {response.follow_up.map((item) => {
-                const ActionIcon = QUICK_ACTIONS.find((action) => action.label === item)?.icon || AutoAwesomeOutlinedIcon
-
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    className="chatbot-follow-up-chip"
-                    onClick={() => onFollowUp?.(item)}
-                  >
-                    <ActionIcon fontSize="inherit" />
-                    <span>{item}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ) : null}
       </div>
     </article>
   )
@@ -415,8 +246,11 @@ function EmptyState({ onQuickAction, isLoading }) {
   return (
     <div className="chatbot-empty-state">
       <div className="chatbot-empty-hero">
-        <div className="chatbot-empty-icon chatbot-empty-icon-brand" aria-hidden="true">
-          <AssistantIcon className="chatbot-empty-icon-image" decorative />
+        <div className="chatbot-empty-icon" aria-hidden="true">
+          <AssistantIcon
+            className="chatbot-empty-icon-image assistant-icon-spin"
+            decorative
+          />
         </div>
         <div className="chatbot-empty-copy">
           <h2>Start a race-weekend query</h2>
@@ -575,7 +409,10 @@ export default function ChatbotPage() {
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index].role === "assistant") {
+      if (
+        messages[index].role === "assistant" ||
+        (messages[index].role === "error" && messages[index].response)
+      ) {
         return messages[index]
       }
     }
@@ -618,6 +455,17 @@ export default function ChatbotPage() {
       return
     }
 
+    const scopeSnapshot = {
+      event_id: selectedEventId || null,
+      event_label: selectedEvent?.label || null,
+      session_id: selectedSessionId || null,
+      session_label: selectedSession?.label || null,
+      driver_id: selectedDriverId || null,
+      driver_label: selectedDriver?.label || null,
+      vehicle_id: selectedVehicleId || null,
+      vehicle_label: selectedVehicle?.label || null,
+    }
+
     if (addUserMessage) {
       appendMessage(createMessage("user", trimmed))
       setLastUserQuery(trimmed)
@@ -639,12 +487,14 @@ export default function ChatbotPage() {
       })
 
       const assistantResponse = response.response
+      const assistantMessageText = buildAssistantSummary(assistantResponse, "Response received.")
       appendMessage(
         createMessage(
           assistantResponse.status === "error" ? "error" : "assistant",
-          assistantResponse.answer || assistantResponse.summary || "Response received.",
+          assistantMessageText,
           {
             response: assistantResponse,
+            scope: scopeSnapshot,
           },
         ),
       )
@@ -701,7 +551,7 @@ export default function ChatbotPage() {
       return
     }
 
-    const text = serializeResponse(response)
+    const text = serializeAssistantResponse(response, message?.scope || {})
 
     try {
       await navigator.clipboard.writeText(text)
@@ -757,7 +607,7 @@ export default function ChatbotPage() {
               <div className="chatbot-hero-brand">
                 <div className="chatbot-hero-icon" aria-hidden="true">
                   <AssistantIcon
-                    className="chatbot-hero-icon-image"
+                    className="chatbot-hero-icon-image assistant-icon-spin"
                     alt="SM Racing AI Assistant"
                   />
                 </div>
@@ -1077,25 +927,18 @@ export default function ChatbotPage() {
                 )}
 
                 {isSending ? (
-                  <div className="chatbot-message chatbot-message-assistant chatbot-typing-message">
-                    <header className="chatbot-message-header">
-                      <div
-                        className="chatbot-message-avatar chatbot-message-avatar-brand"
-                        aria-hidden="true"
-                      >
-                        <AssistantIcon className="chatbot-message-avatar-image" decorative />
-                      </div>
-                      <div className="chatbot-message-meta">
-                        <div className="chatbot-message-label">AI Race Assistant</div>
-                        <div className="chatbot-message-time">Thinking</div>
-                      </div>
-                    </header>
-                    <div className="chatbot-typing-indicator" aria-live="polite">
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                  </div>
+                  <article className="chatbot-message chatbot-message-assistant chatbot-typing-message">
+                    <AssistantResponseShell
+                      message={{ createdAt: null, text: "Working through the live database now." }}
+                      response={{
+                        kind: "message",
+                        status: "loading",
+                        source_label: context.source_label || "SM2 Racing Database",
+                        data_source: context.source_label || "SM2 Racing Database",
+                      }}
+                      loading
+                    />
+                  </article>
                 ) : null}
               </div>
 

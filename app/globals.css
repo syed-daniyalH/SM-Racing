@@ -50,6 +50,28 @@ body {
   font-size: 14px;
 }
 
+.assistant-icon-spin {
+  transform-origin: center;
+  will-change: transform;
+  animation: assistantIconSpin 16s linear infinite;
+}
+
+@keyframes assistantIconSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-icon-spin {
+    animation: none;
+  }
+}
+
 /* Racing Stripes Background Effect */
 body::before {
   content: '';

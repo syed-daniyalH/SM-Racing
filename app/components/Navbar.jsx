@@ -254,7 +254,7 @@ export default function Navbar() {
             <img
               src={ASSISTANT_ICON_SRC}
               alt=""
-              className="chatbot-launcher-icon-image"
+              className="chatbot-launcher-icon-image assistant-icon-spin"
               loading="eager"
               decoding="async"
             />
