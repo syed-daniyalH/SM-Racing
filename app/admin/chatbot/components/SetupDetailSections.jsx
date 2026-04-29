@@ -161,7 +161,60 @@ const buildSectionEntries = (section) => {
         index,
       })
     })
-  } else if (section?.data && typeof section.data === "object") {
+  }
+
+  if (Array.isArray(section?.cards)) {
+    section.cards.forEach((card, cardIndex) => {
+      const cardTitle = normalizeText(card?.title)
+      const cardSubtitle = normalizeText(card?.subtitle)
+      const cardPrefix = [cardTitle, cardSubtitle].filter(Boolean)
+
+      if (!Array.isArray(card?.fields) || !card.fields.length) {
+        return
+      }
+
+      card.fields.forEach((field, fieldIndex) => {
+        const label = normalizeText(field?.label || `Field ${fieldIndex + 1}`)
+        const value = field?.value
+        if (!isMeaningfulValue(value)) {
+          return
+        }
+
+        entries.push({
+          label: [...cardPrefix, label].filter(Boolean).join(" "),
+          value,
+          searchText: normalizeKey([section?.title, ...cardPrefix, label, value].join(" ")),
+          index: entries.length || cardIndex * 100 + fieldIndex,
+        })
+      })
+    })
+  }
+
+  if (Array.isArray(section?.table_rows)) {
+    section.table_rows.forEach((row, rowIndex) => {
+      if (!Array.isArray(row)) {
+        return
+      }
+
+      const headers = Array.isArray(section?.table_headers) ? section.table_headers : []
+      row.forEach((value, cellIndex) => {
+        if (!isMeaningfulValue(value)) {
+          return
+        }
+
+        const header = normalizeText(headers[cellIndex])
+        const label = header || `Column ${cellIndex + 1}`
+        entries.push({
+          label,
+          value,
+          searchText: normalizeKey([section?.title, label, value].join(" ")),
+          index: entries.length || rowIndex * 100 + cellIndex,
+        })
+      })
+    })
+  }
+
+  if (!entries.length && section?.data && typeof section.data === "object") {
     flattenSource(section.data, [], entries)
   }
 
@@ -243,6 +296,10 @@ const selectEntriesByPriority = (entries, priorities = [], limit = 8) => {
 }
 
 const buildCardValueSummary = (entries, patterns, directions = CORNER_DEFS) => {
+  if (!Array.isArray(directions)) {
+    return ""
+  }
+
   const pieces = directions
     .map((direction) => {
       const value =
@@ -259,12 +316,13 @@ const buildMetricCards = (entries, definitions, { directions = CORNER_DEFS } = {
   definitions
     .map((definition) => {
       const directValue = findEntryValueAny(entries, definition.patterns || [])
+      const canUseDirectionalSummary = definition.directions !== false && directions !== false
       const directionalValue =
-        definition.directions === false
+        !canUseDirectionalSummary
           ? ""
           : buildCardValueSummary(entries, definition.patterns || [], definition.directions || directions)
 
-      const value = definition.directions === false ? directValue : directionalValue || directValue
+      const value = canUseDirectionalSummary ? directionalValue || directValue : directValue
       if (!value) {
         return null
       }
@@ -337,9 +395,9 @@ export function SetupMetricGrid({ items = [], columns = 2, className = "" }) {
       className={`chatbot-setup-metric-grid ${className}`.trim()}
       style={{ "--setup-grid-columns": String(columns) }}
     >
-      {items.map((item) => (
+      {items.map((item, index) => (
         <SetupMetricCard
-          key={`${item.title}-${item.value || item.subtitle || "metric"}`}
+          key={`${item.title}-${item.value || item.subtitle || "metric"}-${index}`}
           title={item.title}
           subtitle={item.subtitle}
           value={item.value}
@@ -362,6 +420,7 @@ export function SetupSectionShell({
   emptyHint = "",
   subdued = false,
 }) {
+  const ResolvedIcon = Icon || SECTION_ICON_MAP.default
   const shellClass = [
     "chatbot-setup-section",
     `chatbot-setup-section-${kind || "default"}`,
@@ -375,7 +434,7 @@ export function SetupSectionShell({
       <summary className="chatbot-setup-section-summary">
         <div className="chatbot-setup-section-summary-main">
           <div className="chatbot-setup-section-icon" aria-hidden="true">
-            <Icon fontSize="small" />
+            <ResolvedIcon fontSize="small" />
           </div>
           <div className="chatbot-setup-section-heading">
             <h4>{title}</h4>

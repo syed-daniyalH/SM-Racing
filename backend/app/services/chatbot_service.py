@@ -568,6 +568,27 @@ def _extract_session_number(query: str) -> int | None:
     return None
 
 
+def _extract_compare_session_numbers(query: str) -> tuple[int, int] | None:
+    patterns = [
+        r"\bsession(?:\s+number)?\s*#?\s*(\d+)\s*(?:vs\.?|versus|and|to|with|against)\s*(?:session(?:\s+number)?\s*#?\s*)?(\d+)\b",
+        r"\bs(?:ession)?\s*#?\s*(\d+)\s*(?:vs\.?|versus|and|to|with|against)\s*s(?:ession)?\s*#?\s*(\d+)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match:
+            first = int(match.group(1))
+            second = int(match.group(2))
+            return (first, second) if first != second else None
+
+    numbers = re.findall(r"\b(?:session|seance)\s*#?\s*(\d+)\b", query, flags=re.IGNORECASE)
+    if len(numbers) >= 2:
+        first = int(numbers[0])
+        second = int(numbers[1])
+        return (first, second) if first != second else None
+
+    return None
+
+
 def _extract_driver_query(query: str) -> str | None:
     patterns = [
         r"(?:for\s+driver|driver\s+sessions?|driver)\s+(.+)$",
@@ -1946,12 +1967,36 @@ def _compare_response(
     session_id: str | None,
     driver_id: str | None,
     vehicle_id: str | None,
+    query: str | None = None,
 ) -> ChatbotResponse | None:
     rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
     if len(rows) < 2:
         return None
 
-    if session_id:
+    compare_numbers = _extract_compare_session_numbers(query or "")
+    if compare_numbers is not None:
+        first_number, second_number = compare_numbers
+        first_matches = _load_session_rows_by_number(
+            db,
+            session_number=first_number,
+            event=event,
+            driver_id=driver_id,
+            vehicle_id=vehicle_id,
+        )
+        second_matches = _load_session_rows_by_number(
+            db,
+            session_number=second_number,
+            event=event,
+            driver_id=driver_id,
+            vehicle_id=vehicle_id,
+        )
+        if not first_matches or not second_matches:
+            return None
+        left_row = first_matches[0]
+        right_row = second_matches[0]
+        if left_row[0].id_seance == right_row[0].id_seance:
+            return None
+    elif session_id:
         anchor_index = next(
             (index for index, (session, _, _) in enumerate(rows) if session.id_seance == session_id),
             None,
@@ -2795,6 +2840,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             session_id=query_in.session_id,
             driver_id=query_in.driver_id,
             vehicle_id=query_in.vehicle_id,
+            query=query,
         )
         if response is None:
             logger.info(
