@@ -259,7 +259,6 @@ export default function Navbar() {
               decoding="async"
             />
           </span>
-          <span className="chatbot-launcher-text">AI Race Assistant</span>
         </button>
       ) : null}
     </>
