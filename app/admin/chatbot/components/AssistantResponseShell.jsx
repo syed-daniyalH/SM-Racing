@@ -285,7 +285,7 @@ export const serializeAssistantResponse = (response, scope = {}) => {
   const lines = []
 
   if (responseTypeLabel) {
-    lines.push(`AI Race Assistant • ${responseTypeLabel}`)
+    lines.push(`AI Race Assistant - ${responseTypeLabel}`)
   }
 
   if (summary) {
