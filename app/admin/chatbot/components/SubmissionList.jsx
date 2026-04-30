@@ -12,6 +12,8 @@ const buildSubmissionItems = (section) =>
       ...item,
       reference: getFieldValue(item.lookup, "submission ref") || item.title,
       session: getFieldValue(item.lookup, "session"),
+      type: getFieldValue(item.lookup, "submission type") || getFieldValue(item.lookup, "type"),
+      runGroup: getFieldValue(item.lookup, "run group"),
       driver: getFieldValue(item.lookup, "driver"),
       vehicle: getFieldValue(item.lookup, "vehicle"),
       created: getFieldValue(item.lookup, "created"),
@@ -37,6 +39,7 @@ function SubmissionRow({ item, selected, onSelect }) {
       <div className="chatbot-list-row-meta">
         <span>{item.vehicle || "Vehicle unavailable"}</span>
         <span>{item.created || "Timestamp unavailable"}</span>
+        {item.type || item.runGroup ? <span>{[item.type, item.runGroup].filter(Boolean).join(" • ")}</span> : null}
       </div>
 
       {item.status ? <StatusBadge label={item.status} tone={item.badgeTone} /> : null}
@@ -53,7 +56,8 @@ export default function SubmissionList({ section }) {
       getItemKey={(item) => item.reference}
       listTitle="Latest submissions"
       listSubtitle="Recent records in a compact queue, with the selected submission expanded on the right."
-      detailTitle="Submission details"
+      detailTitle="Submission review"
+      detailSubtitle="The selected row opens in the same review workspace style used across the admin portal."
       emptyTitle="No submissions"
       emptyMessage="No submission records were available for this response."
       renderRow={({ item, selected, onSelect }) => (

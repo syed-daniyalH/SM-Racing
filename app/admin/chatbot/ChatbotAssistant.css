@@ -2575,10 +2575,10 @@
   align-items: center;
   gap: 0.8rem;
   width: 100%;
-  padding: 0.78rem 0.82rem;
-  border-radius: 16px;
+  padding: 0.68rem 0.74rem;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(255, 255, 255, 0.018);
   color: var(--color-text);
   text-align: left;
   cursor: pointer;
@@ -2588,14 +2588,14 @@
 
 .chatbot-list-row:hover {
   transform: translateY(-1px);
-  border-color: rgba(240, 83, 35, 0.22);
-  background: rgba(240, 83, 35, 0.07);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.16);
+  border-color: rgba(240, 83, 35, 0.18);
+  background: rgba(240, 83, 35, 0.055);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
 }
 
 .chatbot-list-row.is-selected {
-  border-color: rgba(240, 83, 35, 0.42);
-  background: rgba(240, 83, 35, 0.13);
+  border-color: rgba(240, 83, 35, 0.36);
+  background: rgba(240, 83, 35, 0.1);
 }
 
 .chatbot-list-row-main,

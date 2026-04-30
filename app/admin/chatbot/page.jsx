@@ -49,6 +49,7 @@ import {
   buildSupportPromptSuggestions,
   normalizePromptItem,
 } from "./components/promptLibraryData"
+import "../submissions/SubmissionReview.css"
 import "./ChatbotAssistant.css"
 
 const MESSAGE_ICON_MAP = {

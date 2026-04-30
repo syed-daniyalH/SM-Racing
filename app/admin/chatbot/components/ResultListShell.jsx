@@ -8,6 +8,7 @@ export default function ResultListShell({
   listTitle,
   listSubtitle,
   detailTitle = "Details",
+  detailSubtitle = "Review the selected record first, then expand into the supporting details below.",
   emptyTitle = "No records",
   emptyMessage = "No result rows were available for this response.",
   renderRow,
@@ -79,7 +80,7 @@ export default function ResultListShell({
         <header className="chatbot-result-shell-header">
           <div>
             <h3>{detailTitle}</h3>
-            <p>Review the selected record first, then expand into the supporting details below.</p>
+            {detailSubtitle ? <p>{detailSubtitle}</p> : null}
           </div>
         </header>
 
