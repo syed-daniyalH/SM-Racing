@@ -81,6 +81,9 @@ const buildApiError = (error, fallbackMessage) => ({
     error.message ||
     fallbackMessage,
   detail: error.response?.data?.detail,
+  errors:
+    error.response?.data?.errors ||
+    (!Array.isArray(error.response?.data?.detail) ? error.response?.data?.detail : null),
   data: error.response?.data,
 });
 
@@ -97,6 +100,68 @@ const buildInternalSubmissionRef = (sessionIdLike) => {
 
 const isPlainObject = (value) =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const RAW_NOTE_SESSION_PATTERN = /\bs\d+\b/i;
+const RAW_NOTE_CUE_PATTERNS = [
+  /\b(?:pf|pc|wb|best|ca|rh|rb|bp|sb|c|t)\b/i,
+  /\b[ymp]-s\d+\b/i,
+  /\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?){3}\b/,
+];
+
+const normalizeRawNoteText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
+const getSubmissionMode = (submissionData) =>
+  String(
+    submissionData?.analysis_result?.submission_mode ||
+      submissionData?.analysis_result?.submissionMode ||
+      submissionData?.analysisResult?.submission_mode ||
+      submissionData?.analysisResult?.submissionMode ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+
+const hasVoiceNotes = (submissionData) =>
+  Boolean(
+    submissionData?.analysis_result?.voice_input_used ||
+      submissionData?.analysis_result?.voiceInputUsed ||
+      submissionData?.analysisResult?.voice_input_used ||
+      submissionData?.analysisResult?.voiceInputUsed,
+  );
+
+const hasImageInput = (submissionData) =>
+  Boolean(
+    submissionData?.image_url ||
+      submissionData?.image ||
+      submissionData?.imageUrl ||
+      submissionData?.payload?.image_url ||
+      submissionData?.payload?.imageUrl,
+  );
+
+const looksLikeRawRaceNote = (rawText) => {
+  const text = normalizeRawNoteText(rawText);
+  if (!text) {
+    return false;
+  }
+
+  if (!RAW_NOTE_SESSION_PATTERN.test(text)) {
+    return false;
+  }
+
+  return RAW_NOTE_CUE_PATTERNS.some((pattern) => pattern.test(text));
+};
+
+const shouldUseRawSubmissionRoute = (submissionData) => {
+  if (getSubmissionMode(submissionData) !== "quick") {
+    return false;
+  }
+
+  if (hasVoiceNotes(submissionData) || hasImageInput(submissionData)) {
+    return false;
+  }
+
+  return looksLikeRawRaceNote(submissionData?.raw_text ?? submissionData?.rawText ?? "");
+};
 
 const cleanStructuredValue = (value) => {
   if (value === undefined) {
@@ -129,6 +194,27 @@ const cleanStructuredValue = (value) => {
   }
 
   return value;
+};
+
+const buildRawSubmissionPayload = (submissionData) => {
+  const rawText = submissionData?.raw_text ?? submissionData?.rawText ?? "";
+
+  return {
+    source: String(submissionData?.source || "pwa").trim() || "pwa",
+    created_by:
+      String(
+        submissionData?.created_by ||
+          submissionData?.createdBy ||
+          submissionData?.created_by_user?.name ||
+          submissionData?.createdByUser?.name ||
+          submissionData?.created_by_user?.email ||
+          submissionData?.createdByUser?.email ||
+          "",
+      ).trim(),
+    eventId: submissionData?.eventId || submissionData?.event_id || "",
+    runGroup: submissionData?.runGroup || submissionData?.run_group || "",
+    raw_text: rawText,
+  };
 };
 
 const buildSubmissionPayload = async (submissionData) => {
@@ -209,6 +295,39 @@ const buildSubmissionPayload = async (submissionData) => {
 
 export const createSubmission = async (submissionData) => {
   try {
+    if (shouldUseRawSubmissionRoute(submissionData)) {
+      const rawResponse = await axiosInstance.post(
+        "/submissions/raw",
+        buildRawSubmissionPayload(submissionData),
+      );
+      const rawResult = rawResponse.data || {};
+      const rawStatus = String(rawResult.status || "").toUpperCase();
+      const rawMessage = rawResult.message || "Session stored successfully";
+
+      return {
+        success: rawStatus === "SUCCESS",
+        submission: {
+          submission_ref:
+            rawResult.id_seance ||
+            buildInternalSubmissionRef(
+              submissionData?.session_id ||
+                submissionData?.sessionId ||
+                submissionData?.submissionId ||
+                submissionData?.submission_id,
+            ),
+          status: rawStatus === "SUCCESS" ? "SENT" : "FAILED",
+          raw_text: submissionData?.raw_text ?? submissionData?.rawText ?? null,
+          rawSubmissionStatus: rawStatus || "SUCCESS",
+          rawSubmissionMessage: rawMessage,
+          rawSubmissionIdSeance: rawResult.id_seance || null,
+          structuredIngestStatus: "skipped",
+          structuredIngestWarnings: [],
+          errorMessage: rawStatus === "SUCCESS" ? null : rawMessage,
+        },
+        message: rawMessage,
+      };
+    }
+
     const response = await axiosInstance.post(
       "/submissions",
       await buildSubmissionPayload(submissionData),

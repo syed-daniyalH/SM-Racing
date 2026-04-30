@@ -247,6 +247,14 @@ const getSubmissionFailureMessage = (errorLike) => {
 };
 
 const getSubmissionSuccessState = (submission) => {
+  if (submission?.rawSubmissionMessage) {
+    return {
+      status: "sent",
+      message: submission.rawSubmissionMessage,
+      warnings: [],
+    };
+  }
+
   const structuredStatus = String(submission?.structuredIngestStatus || "").trim().toLowerCase();
   const structuredWarnings = Array.isArray(submission?.structuredIngestWarnings)
     ? submission.structuredIngestWarnings
@@ -428,6 +436,31 @@ export default function NotesSubmission() {
     quick: false,
     detail: false,
   });
+  const currentUserSubmissionLabel = useMemo(() => {
+    const resolveUserLabel = (candidate) =>
+      candidate?.name ||
+      candidate?.email ||
+      candidate?.user?.name ||
+      candidate?.user?.email ||
+      null;
+
+    if (typeof window !== "undefined") {
+      try {
+        const storedUser = window.localStorage.getItem("sm2_user");
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser);
+          const storedLabel = resolveUserLabel(parsedUser);
+          if (storedLabel) {
+            return String(storedLabel).trim();
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to read stored user for submission payload:", error);
+      }
+    }
+
+    return resolveUserLabel(user) ? String(resolveUserLabel(user)).trim() : "";
+  }, [user]);
   const currentUserStorageKey = useMemo(() => {
     const resolveUserKey = (candidate) =>
       candidate?.id ||
@@ -1067,6 +1100,8 @@ export default function NotesSubmission() {
         submissionId,
         session_id: submissionId,
         correlation_id: correlationId,
+        source: "pwa",
+        created_by: currentUserSubmissionLabel || undefined,
         eventId: eventIdToSend,
         runGroup: eventRunGroup || undefined,
         action: actionValue,

@@ -86,6 +86,7 @@ const makeSessionData = ({ tireStatus = "DISCARDED" } = {}) => ({
 
 async function mockSubmissionApp(page, options = {}) {
   const submissionRequests = [];
+  const rawSubmissionRequests = [];
   const buildSubmissionResponse =
     options.buildSubmissionResponse ||
     ((body) => ({
@@ -98,6 +99,14 @@ async function mockSubmissionApp(page, options = {}) {
       analysis_result: body.analysis_result,
       created_at: makeDateTime("2026-04-23T15:31:00.000Z"),
       updated_at: makeDateTime("2026-04-23T15:33:00.000Z"),
+    }));
+  const buildRawSubmissionResponse =
+    options.buildRawSubmissionResponse ||
+    ((body) => ({
+      status: "SUCCESS",
+      id_seance: "20260423-NG-S01",
+      message: "Session stored successfully",
+      raw_text: body.raw_text,
     }));
 
   await page.addInitScript(
@@ -279,9 +288,26 @@ async function mockSubmissionApp(page, options = {}) {
       });
     }
 
+    if (pathname === "/api/v1/submissions/raw" && method === "POST") {
+      const body = request.postDataJSON();
+      rawSubmissionRequests.push(body);
+      const rawResponse = buildRawSubmissionResponse(body);
+      const statusCode =
+        rawResponse?.statusCode ||
+        rawResponse?.httpStatus ||
+        (String(rawResponse?.status || "").toUpperCase() === "VALIDATION_FAILED" ? 400 : 201);
+      const responseBody = rawResponse?.body || rawResponse;
+
+      return route.fulfill({
+        status: statusCode,
+        json: responseBody,
+      });
+    }
+
     return route.fulfill({ status: 200, json: {} });
   });
 
+  submissionRequests.rawSubmissionRequests = rawSubmissionRequests;
   return submissionRequests;
 }
 
@@ -474,6 +500,77 @@ test.describe("submission flow", () => {
     expect(body.analysis_result.submission_mode).toBe("quick");
     expect(body.payload.track).toBe(TRACK_NAME);
     expect(body.payload.session_type).toBe("Practice");
+  });
+
+  test("quick shorthand submissions route to the raw endpoint and surface raw validation errors", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page, {
+      buildRawSubmissionResponse: (body) => ({
+        status: "SUCCESS",
+        id_seance: "20260423-NG-S01",
+        message: "Session stored successfully",
+        raw_text: body.raw_text,
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/notes`);
+    await page.getByTestId("quick-raw-notes").fill("s1 30min nico gt4 Y-S3 pf 27 wb 2450");
+    await page.getByTestId("submission-date").fill("2026-04-23");
+    await page.getByTestId("submission-time").fill("15:31");
+    await page.getByTestId("submission-session-id").fill(`${SUBMISSION_REF}-RAW`);
+    await page.getByTestId("submission-track-select").selectOption("__OTHER__");
+    await page.getByTestId("submission-track-manual").fill(TRACK_NAME);
+    await page.getByTestId("submission-driver-select").selectOption("NG");
+    await page.getByTestId("submission-vehicle-select").selectOption("NG-GT4-2025");
+    await page.getByTestId("submission-session-type").selectOption("Practice");
+
+    await page.getByRole("button", { name: "Submit Notes" }).click();
+    await expect.poll(() => requests.rawSubmissionRequests.length).toBe(1);
+    await expect.poll(() => requests.length).toBe(0);
+    await expect(page.getByText("Session stored successfully")).toBeVisible({
+      timeout: 5000,
+    });
+
+    expect(requests.rawSubmissionRequests[0]).toEqual({
+      source: "pwa",
+      created_by: "Mechanic One",
+      eventId: EVENT_ID,
+      runGroup: "BLUE",
+      raw_text: "s1 30min nico gt4 Y-S3 pf 27 wb 2450",
+    });
+  });
+
+  test("raw validation failures are shown clearly in the quick submit flow", async ({ page }) => {
+    const requests = await mockSubmissionApp(page, {
+      buildRawSubmissionResponse: () => ({
+        status: "VALIDATION_FAILED",
+        message: "vehicle_id does not belong to driver_id",
+        errors: [
+          {
+            field: "vehicle_id",
+            message: "vehicle_id does not belong to driver_id",
+          },
+        ],
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/notes`);
+    await page.getByTestId("quick-raw-notes").fill("s1 30min nico gt4 Y-S3 pf 27 wb 2450");
+    await page.getByTestId("submission-date").fill("2026-04-23");
+    await page.getByTestId("submission-time").fill("15:31");
+    await page.getByTestId("submission-session-id").fill(`${SUBMISSION_REF}-RAW-ERR`);
+    await page.getByTestId("submission-track-select").selectOption("__OTHER__");
+    await page.getByTestId("submission-track-manual").fill(TRACK_NAME);
+    await page.getByTestId("submission-driver-select").selectOption("NG");
+    await page.getByTestId("submission-vehicle-select").selectOption("NG-GT4-2025");
+    await page.getByTestId("submission-session-type").selectOption("Practice");
+
+    await page.getByRole("button", { name: "Submit Notes" }).click();
+    await expect.poll(() => requests.rawSubmissionRequests.length).toBe(1);
+    await expect(page.getByText("vehicle_id does not belong to driver_id")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("quick submissions handle raw-only, voice-only, and image-only payloads", async ({
