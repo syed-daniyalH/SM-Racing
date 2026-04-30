@@ -206,6 +206,46 @@ def _raw_payload_hash(*, raw_text: str, payload: dict[str, Any]) -> str:
     return hasher.hexdigest()
 
 
+def _raw_storage_mode(db: Session) -> str:
+    seance_columns = _table_columns(db, "seances")
+    track_columns = _table_columns(db, "tracks")
+
+    has_current_seance_columns = {
+        "track_id",
+        "vehicle_assignment_id",
+        "session_started_at",
+        "created_by_user_id",
+    }.issubset(seance_columns)
+    has_current_track_columns = any(column in track_columns for column in ("track_id", "id")) and any(
+        column in track_columns for column in ("track_name", "name")
+    )
+    if has_current_seance_columns and has_current_track_columns:
+        return "current"
+
+    has_legacy_seance_columns = {
+        "track",
+        "driver_id",
+        "vehicle_id",
+        "session_date",
+        "session_time",
+        "session_number",
+        "created_by",
+    }.issubset(seance_columns)
+    has_legacy_track_columns = "name" in track_columns
+    if has_legacy_seance_columns and has_legacy_track_columns:
+        return "legacy"
+
+    raise RawSubmissionValidationError(
+        "raw submission storage schema is not compatible with this database",
+        errors=[
+            {
+                "field": "raw_text",
+                "message": "raw submission storage schema is not compatible with this database",
+            }
+        ],
+    )
+
+
 def _resolve_track_id(db: Session, track_name: str) -> UUID:
     columns = _table_columns(db, "tracks")
     identifier_column = next((column for column in ("track_id", "id") if column in columns), None)
@@ -627,7 +667,7 @@ def _upsert_tire_inventory(
 
 @dataclass(slots=True)
 class RawCurrentSchemaPersistResult:
-    submission_input_id: UUID | None = None
+    submission_input_id: UUID | int | None = None
     seance_id: UUID | None = None
     id_seance: str | None = None
     status: str = "skipped"
@@ -654,6 +694,26 @@ def persist_raw_submission_current_schema(
     result = RawCurrentSchemaPersistResult(id_seance=id_seance)
     session_data = _dict_or_empty(payload.get("data"))
     if not session_data:
+        return result
+
+    storage_mode = _raw_storage_mode(db)
+    if storage_mode == "legacy":
+        from app.services.submission_ingest_service import persist_structured_submission
+
+        legacy_result = persist_structured_submission(
+            db,
+            submission=submission,
+            event=event,
+            run_group=run_group,
+            driver=driver,
+            vehicle=vehicle,
+            current_user=current_user,
+        )
+        result.submission_input_id = legacy_result.submission_input_id
+        result.status = legacy_result.status
+        result.warnings.extend(legacy_result.warnings)
+        result.saved_sections.extend(legacy_result.saved_sections)
+        result.skipped_sections.extend(legacy_result.skipped_sections)
         return result
 
     track_name = _clean_text(event.track)

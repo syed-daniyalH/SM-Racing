@@ -223,6 +223,28 @@ class RawSubmissionServiceTests(unittest.TestCase):
                 self.assertEqual(payload["data"]["time"], "00:00:00")
                 sample["assertions"](self, payload)
 
+    def test_raw_note_without_session_number_defaults_to_backend_session_one(self) -> None:
+        parsed = parse_raw_note("30min nico gt4 Y-S3 pf 27 wb 2450")
+        self.assertIsNone(parsed.session_number)
+
+        driver = resolve_driver_alias(self.drivers, parsed.driver_alias)
+        driver_vehicles = [vehicle for vehicle in self.vehicles if vehicle.driver_id == driver.driver_id]
+        vehicle = resolve_vehicle_alias(driver_vehicles, parsed.vehicle_alias)
+        payload, analysis_result, id_seance = build_raw_submission_payload(
+            parsed,
+            driver_id=driver.driver_id,
+            vehicle_id=vehicle.vehicle_id,
+            track="Sebring International Raceway",
+            run_group="RED",
+            created_by="Alexandre",
+            captured_at=self.captured_at,
+            confidence=0.93,
+        )
+
+        self.assertEqual(payload["data"]["session_number"], 1)
+        self.assertEqual(id_seance, "20260430-NG-S01")
+        self.assertEqual(analysis_result["confidence"], 0.93)
+
     def test_vehicle_alias_must_belong_to_driver(self) -> None:
         parsed = parse_raw_note("s1 20min jean gt4 Y-S3 pf 27")
         driver = resolve_driver_alias(self.drivers, parsed.driver_alias)

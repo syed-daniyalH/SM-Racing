@@ -32,7 +32,7 @@ class RawSubmissionValidationError(ValueError):
 
 @dataclass(slots=True)
 class ParsedRawNote:
-    session_number: int
+    session_number: int | None
     duration_min: int
     driver_alias: str
     vehicle_alias: str
@@ -307,7 +307,52 @@ def parse_raw_note(raw_text: str) -> ParsedRawNote:
         )
 
     tokens = normalized_raw_text.split(" ")
-    if len(tokens) < 5:
+    session_number: int | None = None
+    token_offset = 0
+
+    session_match = SESSION_TOKEN_PATTERN.fullmatch(tokens[0])
+    if session_match:
+        if len(tokens) < 5:
+            raise RawSubmissionValidationError(
+                "raw_text must include session, duration, driver, vehicle, and tire set",
+                errors=[
+                    {
+                        "field": "raw_text",
+                        "message": "raw_text must include session, duration, driver, vehicle, and tire set",
+                    }
+                ],
+            )
+        session_number = int(session_match.group("number"))
+        token_offset = 1
+    else:
+        duration_token = tokens[0]
+        if not DURATION_TOKEN_PATTERN.fullmatch(duration_token):
+            raise RawSubmissionValidationError(
+                "session number must start with s[number]",
+                errors=[{"field": "session_number", "message": "session number must start with s[number]"}],
+            )
+        if len(tokens) < 4:
+            raise RawSubmissionValidationError(
+                "raw_text must include duration, driver, vehicle, and tire set when session number is omitted",
+                errors=[
+                    {
+                        "field": "raw_text",
+                        "message": "raw_text must include duration, driver, vehicle, and tire set when session number is omitted",
+                    }
+                ],
+            )
+
+    duration_match = DURATION_TOKEN_PATTERN.fullmatch(tokens[token_offset])
+    if not duration_match:
+        raise RawSubmissionValidationError(
+            "duration must use the shorthand [number]min",
+            errors=[{"field": "duration_min", "message": "duration must use the shorthand [number]min"}],
+        )
+
+    driver_index = token_offset + 1
+    vehicle_index = token_offset + 2
+    tire_index = token_offset + 3
+    if len(tokens) <= tire_index:
         raise RawSubmissionValidationError(
             "raw_text must include session, duration, driver, vehicle, and tire set",
             errors=[
@@ -318,21 +363,7 @@ def parse_raw_note(raw_text: str) -> ParsedRawNote:
             ],
         )
 
-    session_match = SESSION_TOKEN_PATTERN.fullmatch(tokens[0])
-    if not session_match:
-        raise RawSubmissionValidationError(
-            "session number must start with s[number]",
-            errors=[{"field": "session_number", "message": "session number must start with s[number]"}],
-        )
-
-    duration_match = DURATION_TOKEN_PATTERN.fullmatch(tokens[1])
-    if not duration_match:
-        raise RawSubmissionValidationError(
-            "duration must use the shorthand [number]min",
-            errors=[{"field": "duration_min", "message": "duration must use the shorthand [number]min"}],
-        )
-
-    tire_set_token = tokens[4].upper()
+    tire_set_token = tokens[tire_index].upper()
     if not TIRE_SET_PATTERN.fullmatch(tire_set_token):
         raise RawSubmissionValidationError(
             "tire_set must match [Y|M|P]-S[number]",
@@ -340,14 +371,14 @@ def parse_raw_note(raw_text: str) -> ParsedRawNote:
         )
 
     parsed = ParsedRawNote(
-        session_number=int(session_match.group("number")),
+        session_number=session_number,
         duration_min=int(duration_match.group("minutes")),
-        driver_alias=tokens[2],
-        vehicle_alias=tokens[3],
+        driver_alias=tokens[driver_index],
+        vehicle_alias=tokens[vehicle_index],
         tire_set=tire_set_token,
     )
 
-    index = 5
+    index = tire_index + 1
     while index < len(tokens):
         key = tokens[index].lower()
         if index + 1 >= len(tokens):
@@ -399,11 +430,12 @@ def build_backend_seance_id(
     *,
     captured_at: datetime,
     driver_id: str,
-    session_number: int,
+    session_number: int | None,
 ) -> str:
     # Raw-note ingestion owns id generation so AI and clients never supply id_seance.
     session_date = captured_at.astimezone(timezone.utc).strftime("%Y%m%d")
-    return f"{session_date}-{driver_id.upper()}-S{session_number:02d}"
+    normalized_session_number = 1 if session_number is None else int(session_number)
+    return f"{session_date}-{driver_id.upper()}-S{normalized_session_number:02d}"
 
 
 def build_raw_submission_payload(
@@ -419,10 +451,11 @@ def build_raw_submission_payload(
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     timestamp = captured_at or datetime.now(timezone.utc)
     normalized_confidence = float(confidence)
+    session_number = 1 if parsed.session_number is None else parsed.session_number
     id_seance = build_backend_seance_id(
         captured_at=timestamp,
         driver_id=driver_id,
-        session_number=parsed.session_number,
+        session_number=session_number,
     )
     session_data: dict[str, Any] = {
         "date": timestamp.astimezone(timezone.utc).date().isoformat(),
@@ -433,7 +466,7 @@ def build_raw_submission_payload(
         "driver_id": driver_id,
         "vehicle_id": vehicle_id,
         "session_type": RAW_SESSION_TYPE,
-        "session_number": parsed.session_number,
+        "session_number": session_number,
         "duration_min": parsed.duration_min,
         "tire_set": parsed.tire_set,
         "pressures": {

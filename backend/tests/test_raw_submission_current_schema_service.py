@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+import app.services.submission_ingest_service as ingest_service
 from app.services.raw_submission_current_schema_service import (
     RawCurrentSchemaPersistResult,
     lookup_raw_duplicate_current_schema,
@@ -43,7 +44,7 @@ class _FakeResult:
 
 
 class _FakeSession:
-    def __init__(self, *, track_schema_variant: str = "current"):
+    def __init__(self, *, track_schema_variant: str = "current", seance_schema_variant: str = "current"):
         self.executed: list[tuple[str, dict]] = []
         self.track_id = uuid4()
         self.vehicle_assignment_id = uuid4()
@@ -51,6 +52,7 @@ class _FakeSession:
         self.submission_input_id = uuid4()
         self.duplicate_id_seance: str | None = None
         self.track_schema_variant = track_schema_variant
+        self.seance_schema_variant = seance_schema_variant
 
     def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
@@ -68,12 +70,54 @@ class _FakeSession:
                         {"column_name": "archived_at"},
                     ]
                 )
+            if self.track_schema_variant == "name_only":
+                return _FakeResult(
+                    rows=[
+                        {"column_name": "name"},
+                        {"column_name": "active"},
+                        {"column_name": "created_at"},
+                        {"column_name": "updated_at"},
+                    ]
+                )
             return _FakeResult(
                 rows=[
                     {"column_name": "track_id"},
                     {"column_name": "track_name"},
                     {"column_name": "status"},
                     {"column_name": "archived_at"},
+                ]
+            )
+        if "information_schema.columns" in normalized and params.get("table_name") == "seances":
+            if self.seance_schema_variant == "legacy":
+                return _FakeResult(
+                    rows=[
+                        {"column_name": "id_seance"},
+                        {"column_name": "session_date"},
+                        {"column_name": "session_time"},
+                        {"column_name": "track"},
+                        {"column_name": "driver_id"},
+                        {"column_name": "vehicle_id"},
+                        {"column_name": "session_type"},
+                        {"column_name": "session_number"},
+                        {"column_name": "duration_min"},
+                        {"column_name": "tire_set"},
+                        {"column_name": "notes"},
+                        {"column_name": "created_by"},
+                    ]
+                )
+            return _FakeResult(
+                rows=[
+                    {"column_name": "seance_id"},
+                    {"column_name": "id_seance"},
+                    {"column_name": "track_id"},
+                    {"column_name": "vehicle_assignment_id"},
+                    {"column_name": "session_started_at"},
+                    {"column_name": "session_date"},
+                    {"column_name": "session_type"},
+                    {"column_name": "session_number"},
+                    {"column_name": "duration_min"},
+                    {"column_name": "notes"},
+                    {"column_name": "created_by_user_id"},
                 ]
             )
         if "select track_id" in normalized and "from sm2racing.tracks" in normalized:
@@ -238,6 +282,48 @@ def test_raw_persistence_supports_legacy_track_columns():
     assert result.status == "saved"
     track_select = next(sql for sql, _ in db.executed if "from sm2racing.tracks" in sql.lower())
     assert "select id as track_id" in track_select.lower()
+
+
+def test_raw_persistence_falls_back_to_legacy_structured_ingest(monkeypatch):
+    db = _FakeSession(track_schema_variant="name_only", seance_schema_variant="legacy")
+    raw_text = "s1 30min nico gt4 Y-S3 pf 27 wb 2450"
+    submission, event, run_group, driver, vehicle, current_user, payload, analysis_result, id_seance, captured_at = _build_submission(raw_text)
+
+    called = {}
+
+    def _fake_persist_structured_submission(*args, **kwargs):
+        called["args"] = args
+        called["kwargs"] = kwargs
+        return SimpleNamespace(
+            submission_input_id=777,
+            status="saved",
+            warnings=[{"section": "session", "code": "LEGACY_ROUTE"}],
+            saved_sections=["seances", "submission_inputs"],
+            skipped_sections=[],
+        )
+
+    monkeypatch.setattr(ingest_service, "persist_structured_submission", _fake_persist_structured_submission)
+
+    result = persist_raw_submission_current_schema(
+        db,
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        current_user=current_user,
+        source="pwa",
+        payload=payload,
+        analysis_result=analysis_result,
+        id_seance=id_seance,
+        captured_at=captured_at,
+    )
+
+    assert result.status == "saved"
+    assert result.submission_input_id == 777
+    assert result.saved_sections == ["seances", "submission_inputs"]
+    assert called["kwargs"]["submission"] == submission
+    assert called["kwargs"]["current_user"] == current_user
 
 
 def test_raw_persistence_preserves_wheelbase_when_alignment_is_also_present():

@@ -287,7 +287,7 @@ def _normalize_openai_payload(payload: dict[str, Any]) -> RawNoteLLMParseResult 
     vehicle_alias = _clean_text(root.get("vehicle_alias") or root.get("vehicle_id"))
     tire_set = _normalize_tire_set(root.get("tire_set"))
 
-    if session_number is None or duration_min is None or not driver_alias or not vehicle_alias or not tire_set:
+    if duration_min is None or not driver_alias or not vehicle_alias or not tire_set:
         return None
 
     parsed_note = ParsedRawNote(
