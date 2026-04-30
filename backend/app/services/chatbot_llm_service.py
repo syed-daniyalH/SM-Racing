@@ -51,6 +51,8 @@ SUMMARY_RESPONSE_TYPES = [
     "setup_summary",
     "latest_submissions",
     "latest_sessions",
+    "recommendation_summary",
+    "coaching_summary",
 ]
 
 SUMMARY_RESPONSE_SCHEMA = {
@@ -350,6 +352,7 @@ def build_openai_context_from_backend_result(
         "data_found": bool(backend_response.data_found),
         "summary": _normalize_summary_text(backend_response.summary),
         "no_data_message": _normalize_summary_text(backend_response.no_data_message),
+        "data": backend_response.data if isinstance(backend_response.data, (dict, list)) else None,
         "records_used": records_used,
         "record_count": len(backend_response.records_used or []),
         "follow_up": _dedupe_follow_up(backend_response.follow_up, limit=4),
@@ -378,6 +381,10 @@ def _default_response_type(response: ChatbotResponse) -> str:
         return "latest_submissions"
     if response.kind == "sessions":
         return "latest_sessions"
+    if response.kind == "recommendation":
+        return "recommendation_summary"
+    if response.kind == "coaching":
+        return "coaching_summary"
     if response.intent in {"greeting", "help"}:
         return "greeting"
     return "query_success"
@@ -401,6 +408,10 @@ def fallback_plain_response(*, user_query: str, backend_response: ChatbotRespons
         summary = summary or "Here is the session comparison, with the most important differences highlighted first."
     elif response_type == "setup_summary":
         summary = summary or "Here is the session setup summary from the SM2 Racing database."
+    elif response_type == "recommendation_summary":
+        summary = summary or "Based on the available evidence, here is the strongest option."
+    elif response_type == "coaching_summary":
+        summary = summary or "Based on the available evidence, here are the main improvement areas."
     elif response_type == "needs_more_context":
         summary = summary or "I need one more detail before I can return the correct SM2 Racing result."
     elif response_type == "not_found":
@@ -444,6 +455,7 @@ def generate_summary_response(
             "Do not guess missing data. "
             "Do not claim a session exists unless it is present in the provided backend result. "
             "Do not calculate values that were not already computed by backend logic. "
+            "If the backend response is a recommendation or coaching response, keep the answer evidence-based and do not invent performance metrics. "
             "Keep responses concise, professional, practical, and client-friendly. "
             "Prioritize the most important answer first. "
             "If the backend response indicates ambiguity or missing context, explain that clearly and ask for only the missing detail."

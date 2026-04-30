@@ -1,4 +1,5 @@
 from app.models.driver import Driver
+from app.models.chatbot_conversation import ChatbotConversation
 from app.models.event import Event
 from app.models.revoked_token import RevokedToken
 from app.models.run_group import RunGroup

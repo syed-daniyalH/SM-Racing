@@ -153,6 +153,24 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         self.assertEqual(_intent_from_query("hello"), "greeting")
         self.assertEqual(_intent_from_query("what changed from the last session?"), "compare")
         self.assertEqual(_intent_from_query("compare previous session with current"), "compare")
+        self.assertEqual(_intent_from_query("which one is better"), "recommendation")
+        self.assertEqual(_intent_from_query("how can I improve?"), "coaching")
+
+    def test_fallback_response_types_cover_recommendation_and_coaching(self) -> None:
+        recommendation_response = _response(kind="recommendation", intent="recommendation")
+        coaching_response = _response(kind="coaching", intent="coaching")
+
+        recommendation_fallback = chatbot_llm_service.fallback_plain_response(
+            user_query="which one is better",
+            backend_response=recommendation_response,
+        )
+        coaching_fallback = chatbot_llm_service.fallback_plain_response(
+            user_query="how can I improve",
+            backend_response=coaching_response,
+        )
+
+        self.assertEqual(recommendation_fallback.response_type, "recommendation_summary")
+        self.assertEqual(coaching_fallback.response_type, "coaching_summary")
 
 
 if __name__ == "__main__":

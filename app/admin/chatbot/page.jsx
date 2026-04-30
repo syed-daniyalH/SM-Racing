@@ -117,6 +117,31 @@ const createMessage = (role, text, extra = {}) => ({
   ...extra,
 })
 
+const CHATBOT_CONVERSATION_STORAGE_KEY = "sm2_chatbot_conversation_id"
+
+const createConversationId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const readStoredConversationId = () => {
+  if (typeof window === "undefined") {
+    return createConversationId()
+  }
+
+  try {
+    const stored = window.localStorage.getItem(CHATBOT_CONVERSATION_STORAGE_KEY)
+    if (stored) {
+      return stored
+    }
+    const nextId = createConversationId()
+    window.localStorage.setItem(CHATBOT_CONVERSATION_STORAGE_KEY, nextId)
+    return nextId
+  } catch {
+    return createConversationId()
+  }
+}
+
 const getSectionIcon = (iconKey) => SECTION_ICON_MAP[iconKey] || SECTION_ICON_MAP.default
 
 const getMessageIcon = (role) => MESSAGE_ICON_MAP[role] || MESSAGE_ICON_MAP.system
@@ -542,6 +567,7 @@ export default function ChatbotPage() {
   const [isSending, setIsSending] = useState(false)
   const [notice, setNotice] = useState("")
   const [lastUserQuery, setLastUserQuery] = useState("")
+  const [conversationId, setConversationId] = useState(() => readStoredConversationId())
   const listRef = useRef(null)
   const composerRef = useRef(null)
 
@@ -599,6 +625,14 @@ export default function ChatbotPage() {
     const timeout = window.setTimeout(() => setNotice(""), 4000)
     return () => window.clearTimeout(timeout)
   }, [notice])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHATBOT_CONVERSATION_STORAGE_KEY, conversationId)
+    } catch {
+      // Ignore storage failures and keep the in-memory conversation id.
+    }
+  }, [conversationId])
 
   const selectedEvent = useMemo(
     () => context.events.find((event) => event.value === selectedEventId) || null,
@@ -722,6 +756,7 @@ export default function ChatbotPage() {
       const response = await sendChatbotQuery({
         message: trimmed,
         query: trimmed,
+        conversation_id: conversationId,
         event_id: selectedEventId || null,
         session_id: selectedSessionId || null,
         driver_id: selectedDriverId || null,
@@ -802,6 +837,7 @@ export default function ChatbotPage() {
     setLastUserQuery("")
     setDraft("")
     setNotice("Conversation cleared.")
+    setConversationId(createConversationId())
     composerRef.current?.focus()
   }
 

@@ -43,6 +43,8 @@ const RESPONSE_KIND_LABELS = {
   compare: "Comparison",
   fleet: "Fleet",
   submissions: "Submissions",
+  recommendation: "Recommendation",
+  coaching: "Improvement Areas",
 }
 
 const humanizeLabel = (value) => {
@@ -346,6 +348,22 @@ export const buildResponseInsights = ({ response, scope = {}, recordCount }) => 
     insights.push({ label: "Intent", value: intentLabel, tone: "info" })
   }
 
+  if (response?.kind === "recommendation" && response?.data?.best_session_label && insights.length < 5) {
+    insights.push({
+      label: "Best option",
+      value: response.data.best_session_label,
+      tone: "accent",
+    })
+  }
+
+  if (response?.kind === "coaching" && response?.data?.session_label && insights.length < 5) {
+    insights.push({
+      label: "Focus session",
+      value: response.data.session_label,
+      tone: "accent",
+    })
+  }
+
   if (response?.data?.missing_sections_count && insights.length < 5) {
     insights.push({
       label: "Missing sections",
@@ -421,6 +439,36 @@ const buildSuggestedNextSteps = (response, scope, messageText) => {
       "Show latest sessions",
       "Show setup for latest session",
       "Show all events",
+    ])
+  } else if (response?.kind === "recommendation") {
+    add([
+      "Explain why",
+      "Show weak points only",
+      "Compare with previous session",
+      "Show setup differences",
+    ])
+  } else if (response?.kind === "coaching") {
+    add([
+      "Show weak points only",
+      "Suggest priority changes",
+      "Compare with previous session",
+      "Show setup differences",
+    ])
+  }
+
+  if (/best one|which one is better|strongest option|best session|best setup/.test(text)) {
+    add([
+      "Explain why",
+      "Compare with previous session",
+      "Show setup differences",
+    ])
+  }
+
+  if (/how can i improve|what should i improve|what should i change next|weak points|improve/.test(text)) {
+    add([
+      "Show weak points only",
+      "Suggest priority changes",
+      "Compare with previous session",
     ])
   }
 

@@ -210,6 +210,18 @@ const COMPARISON_REFINE_PROMPTS = [
   createPrompt("Show changes from baseline", { mode: "send" }),
 ]
 
+const RECOMMENDATION_REFINE_PROMPTS = [
+  createPrompt("Which one is better?", { mode: "send" }),
+  createPrompt("Show the strongest option", { mode: "send" }),
+  createPrompt("Explain why", { mode: "send" }),
+]
+
+const COACHING_REFINE_PROMPTS = [
+  createPrompt("How can I improve?", { mode: "send" }),
+  createPrompt("Show weak points only", { mode: "send" }),
+  createPrompt("Suggest priority changes", { mode: "send" }),
+]
+
 const SUBMISSION_REFINE_PROMPTS = [
   createPrompt("Show latest submissions", { mode: "send" }),
   createPrompt("Show latest submissions in list form", { mode: "send" }),
@@ -247,11 +259,17 @@ export const buildSupportPromptSuggestions = ({
   const hasComparison = hasKeyword(query, /compare|difference|delta/)
   const hasSubmission = hasKeyword(query, /submission/)
   const hasFleet = hasKeyword(query, /driver|vehicle|car/)
+  const hasRecommendation = hasKeyword(query, /best one|which one is better|strongest option|best setup|best session/)
+  const hasCoaching = hasKeyword(query, /how can i improve|what should i improve|what should i change next|weak points|improve/)
   const vague = isPromptVague(query)
   const needsGeneralFallback =
     kind === "not_found" || kind === "unsupported" || kind === "needs_context" || kind === "error"
 
-  if (hasComparison || kind === "compare") {
+  if (hasRecommendation || kind === "recommendation") {
+    add(RECOMMENDATION_REFINE_PROMPTS)
+  } else if (hasCoaching || kind === "coaching") {
+    add(COACHING_REFINE_PROMPTS)
+  } else if (hasComparison || kind === "compare") {
     add(COMPARISON_REFINE_PROMPTS)
   } else if (hasSetup || kind === "setup") {
     add(SETUP_REFINE_PROMPTS)
@@ -277,6 +295,10 @@ export const buildSupportPromptSuggestions = ({
 
   if (response?.kind === "compare") {
     add(COMPARISON_REFINE_PROMPTS)
+  } else if (response?.kind === "recommendation") {
+    add(RECOMMENDATION_REFINE_PROMPTS)
+  } else if (response?.kind === "coaching") {
+    add(COACHING_REFINE_PROMPTS)
   }
 
   return dedupePromptItems(prompts).slice(0, limit)

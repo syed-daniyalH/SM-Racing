@@ -9,7 +9,11 @@ from app.core.enums import UserRole
 from app.models.user import User
 from app.schemas.chatbot import ChatbotContextResponse, ChatbotQuery, ChatbotResponse
 from app.services.chatbot_llm_service import finalize_chatbot_response
-from app.services.chatbot_service import build_chatbot_context, build_chatbot_response
+from app.services.chatbot_service import (
+    _save_chatbot_conversation_state,
+    build_chatbot_context,
+    build_chatbot_response,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -53,4 +57,15 @@ def query_chatbot(
         finalized.summary_result.used_openai,
         finalized.summary_result.fallback_used,
     )
+    try:
+        _save_chatbot_conversation_state(
+            db,
+            current_user=current_user,
+            query_in=query_in,
+            response=finalized.response,
+        )
+        db.commit()
+    except Exception:
+        logger.exception("Admin chatbot conversation memory save failed")
+        db.rollback()
     return finalized.response

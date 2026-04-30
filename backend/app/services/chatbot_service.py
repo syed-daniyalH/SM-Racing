@@ -15,6 +15,7 @@ from sqlalchemy.orm import Load, Session
 from app.core.config import get_settings
 from app.core.db_schema import SM2RACING_SCHEMA
 from app.models.driver import Driver
+from app.models.chatbot_conversation import ChatbotConversation
 from app.models.event import Event
 from app.models.run_group import RunGroup
 from app.models.structured_notes import (
@@ -69,12 +70,16 @@ DEFAULT_FOLLOW_UPS = [
     "Show driver and vehicle data",
     "Show changes from baseline",
     "Compare sessions",
+    "Which one is better?",
+    "How can I improve?",
+    "What should I change next?",
+    "What are my weak points?",
 ]
 
 UNSUPPORTED_MESSAGE = (
     "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
     "alignment, tire temperatures, tire history, chat-based notes, setup updates, submissions, "
-    "drivers, and vehicles. Please ask one of those questions."
+    "drivers, vehicles, recommendations, and improvement coaching. Please ask one of those questions."
 )
 PLEASE_SELECT_EVENT_MESSAGE = "Please select an event or include the event name so I can show its sessions."
 NO_EVENTS_MESSAGE = "No events were found in the SM2 Racing database."
@@ -106,6 +111,8 @@ VEHICLE_SCOPED_INTENTS = {
     "latest_submissions",
     "driver_vehicle_data",
     "compare",
+    "recommendation",
+    "coaching",
 }
 
 NLP_ALLOWED_INTENTS = [
@@ -126,6 +133,8 @@ NLP_ALLOWED_INTENTS = [
     "latest_submissions",
     "driver_vehicle_data",
     "compare",
+    "recommendation",
+    "coaching",
     "unsupported",
 ]
 
@@ -898,6 +907,180 @@ def _response_data(
             data[key] = value
 
     return data
+
+
+def _conversation_key(query_in: ChatbotQuery | None) -> str:
+    key = getattr(query_in, "conversation_id", None)
+    if isinstance(key, str):
+        cleaned = key.strip()
+        if cleaned:
+            return cleaned[:64]
+    return "default"
+
+
+def _conversation_memory(conversation: ChatbotConversation | None) -> dict[str, Any]:
+    if conversation is None or not isinstance(conversation.memory, dict):
+        return {}
+    return conversation.memory
+
+
+def _unique_limited(values: Iterable[str], *, limit: int = 6) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = str(value).strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        unique.append(cleaned)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def _response_record_payload(records_used: list[ChatbotRecordReference]) -> list[dict[str, Any]]:
+    return [record.model_dump(mode="json") for record in records_used[:12]]
+
+
+def _response_record_ids(records_used: list[ChatbotRecordReference], *, kind: str) -> list[str]:
+    return _unique_limited(record.value for record in records_used if record.kind == kind)
+
+
+def _session_record_payloads(response: ChatbotResponse) -> list[dict[str, Any]]:
+    records = []
+    for record in response.records_used:
+        if record.kind != "session":
+            continue
+        records.append(record.model_dump(mode="json"))
+    return records[:6]
+
+
+def _build_chatbot_memory_payload(
+    *,
+    query_in: ChatbotQuery,
+    response: ChatbotResponse,
+) -> dict[str, Any]:
+    records_used = response.records_used or []
+    recent_session_ids = _response_record_ids(records_used, kind="session")
+    recent_event_ids = _response_record_ids(records_used, kind="event")
+    recent_driver_ids = _response_record_ids(records_used, kind="driver")
+    recent_vehicle_ids = _response_record_ids(records_used, kind="vehicle")
+
+    payload: dict[str, Any] = {
+        "selected_scope": {
+            "event_id": str(query_in.event_id) if query_in.event_id else None,
+            "session_id": query_in.session_id,
+            "driver_id": query_in.driver_id,
+            "vehicle_id": query_in.vehicle_id,
+            "car_number": query_in.car_number,
+        },
+        "last_query": query_in.message,
+        "last_intent": response.intent,
+        "last_response_kind": response.kind,
+        "last_response_status": response.status,
+        "last_summary": {
+            "title": response.title,
+            "summary": response.summary,
+            "intent": response.intent,
+            "status": response.status,
+            "kind": response.kind,
+            "record_count": len(records_used),
+        },
+        "recent_record_refs": _response_record_payload(records_used),
+        "recent_session_ids": recent_session_ids,
+        "recent_event_ids": recent_event_ids,
+        "recent_driver_ids": recent_driver_ids,
+        "recent_vehicle_ids": recent_vehicle_ids,
+    }
+
+    if isinstance(response.data, dict):
+        payload["last_payload"] = response.data
+    elif isinstance(response.data, list):
+        payload["last_payload"] = response.data[:12]
+
+    if response.kind == "compare":
+        comparison_session_ids = recent_session_ids[:2]
+        payload["last_comparison"] = {
+            "session_ids": comparison_session_ids,
+            "highlight_count": len(response.data.get("highlights") or []) if isinstance(response.data, dict) else 0,
+            "metric_row_count": len(response.sections[2].table_rows) if len(response.sections) > 2 and response.sections[2].variant == "table" else 0,
+            "records_used": _response_record_payload(records_used),
+        }
+
+    if response.kind == "recommendation":
+        payload["last_recommendation"] = {
+            "session_ids": recent_session_ids,
+            "focus": response.data.get("focus") if isinstance(response.data, dict) else None,
+            "best_session_id": response.data.get("best_session_id") if isinstance(response.data, dict) else None,
+            "context_source": response.data.get("context_source") if isinstance(response.data, dict) else None,
+        }
+
+    if response.kind == "coaching":
+        payload["last_coaching"] = {
+            "session_ids": recent_session_ids,
+            "focus": response.data.get("focus") if isinstance(response.data, dict) else None,
+            "session_id": response.data.get("session_id") if isinstance(response.data, dict) else None,
+        }
+
+    if response.kind in {"sessions", "submissions"}:
+        payload["recent_historical_sessions"] = _session_record_payloads(response)
+
+    return payload
+
+
+def _save_chatbot_conversation_state(
+    db: Session,
+    *,
+    current_user: User | None,
+    query_in: ChatbotQuery,
+    response: ChatbotResponse,
+) -> None:
+    if current_user is None:
+        return
+
+    conversation_key = _conversation_key(query_in)
+    memory_payload = _build_chatbot_memory_payload(query_in=query_in, response=response)
+    conversation = db.scalar(
+        select(ChatbotConversation).where(
+            ChatbotConversation.user_id == current_user.id,
+            ChatbotConversation.conversation_id == conversation_key,
+        )
+    )
+    if conversation is None:
+        conversation = ChatbotConversation(
+            user_id=current_user.id,
+            conversation_id=conversation_key,
+            memory=memory_payload,
+            last_query=query_in.message,
+            last_intent=response.intent,
+            last_response_kind=response.kind,
+            last_response_status=response.status,
+        )
+        db.add(conversation)
+    else:
+        conversation.last_query = query_in.message
+        conversation.last_intent = response.intent
+        conversation.last_response_kind = response.kind
+        conversation.last_response_status = response.status
+        conversation.memory = memory_payload
+
+
+def _load_chatbot_conversation_state(
+    db: Session,
+    *,
+    current_user: User | None,
+    query_in: ChatbotQuery,
+) -> ChatbotConversation | None:
+    if current_user is None:
+        return None
+
+    conversation_key = _conversation_key(query_in)
+    return db.scalar(
+        select(ChatbotConversation).where(
+            ChatbotConversation.user_id == current_user.id,
+            ChatbotConversation.conversation_id == conversation_key,
+        )
+    )
 
 
 def _query_tokens(query: str) -> list[str]:
@@ -3003,6 +3186,689 @@ def _submissions_response(
     )
 
 
+def _numeric_values(values: Iterable[object | None]) -> list[float]:
+    numeric_values: list[float] = []
+    for value in values:
+        if value is None:
+            continue
+        try:
+            numeric_values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return numeric_values
+
+
+def _value_spread(values: Iterable[object | None]) -> float | None:
+    numeric_values = _numeric_values(values)
+    if not numeric_values:
+        return None
+    return round(max(numeric_values) - min(numeric_values), 2)
+
+
+def _session_temp_spread(temperature: TireTemperature | None) -> float | None:
+    if temperature is None:
+        return None
+    values = [
+        temperature.fl_in,
+        temperature.fl_mid,
+        temperature.fl_out,
+        temperature.fr_in,
+        temperature.fr_mid,
+        temperature.fr_out,
+        temperature.rl_in,
+        temperature.rl_mid,
+        temperature.rl_out,
+        temperature.rr_in,
+        temperature.rr_mid,
+        temperature.rr_out,
+    ]
+    return _value_spread(values)
+
+
+def _session_alignment_gap(alignment: Alignment | None) -> float | None:
+    if alignment is None:
+        return None
+    values = [
+        alignment.camber_fl,
+        alignment.camber_fr,
+        alignment.camber_rl,
+        alignment.camber_rr,
+        alignment.toe_fl,
+        alignment.toe_fr,
+        alignment.toe_rl,
+        alignment.toe_rr,
+    ]
+    return _value_spread(values)
+
+
+def _session_note_flags(notes: str | None) -> list[str]:
+    if not notes:
+        return []
+    text = notes.lower()
+    flags: list[str] = []
+    for keyword, label in (
+        ("loose", "loose"),
+        ("tight", "tight"),
+        ("understeer", "understeer"),
+        ("oversteer", "oversteer"),
+        ("push", "push"),
+        ("grip", "grip"),
+        ("vibration", "vibration"),
+        ("noise", "noise"),
+    ):
+        if keyword in text:
+            flags.append(label)
+    return _unique_limited(flags, limit=4)
+
+
+def _session_snapshot(bundle: SessionBundle) -> dict[str, str]:
+    session = bundle.session
+    return {
+        "session_id": session.id_seance,
+        "session_label": _session_heading(session),
+        "session_number": str(session.session_number),
+        "date": _date_text(session.session_date),
+        "time": _time_text(session.session_time),
+        "track": session.track,
+        "driver": _driver_name(bundle.driver, session.driver_id),
+        "vehicle": _vehicle_name(bundle.vehicle, session.vehicle_id),
+        "duration": _duration_text(session.duration_min),
+        "status": _humanize_enum(_session_status_value(session)),
+    }
+
+
+def _session_quality_snapshot(db: Session, bundle: SessionBundle) -> dict[str, Any]:
+    session = bundle.session
+    pressure = db.scalar(select(Pressure).where(Pressure.id_seance == session.id_seance))
+    suspension = db.scalar(select(Suspension).where(Suspension.id_seance == session.id_seance))
+    alignment = db.scalar(select(Alignment).where(Alignment.id_seance == session.id_seance))
+    temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == session.id_seance))
+    history_count, tire_ids, compounds, heat_cycles, tire_status = _tire_history_summary(db, session.id_seance)
+
+    cold_values = [pressure.cold_fl, pressure.cold_fr, pressure.cold_rl, pressure.cold_rr] if pressure is not None else []
+    hot_values = [pressure.hot_fl, pressure.hot_fr, pressure.hot_rl, pressure.hot_rr] if pressure is not None else []
+
+    section_presence = {
+        "pressures": pressure is not None,
+        "suspension": suspension is not None,
+        "alignment": alignment is not None,
+        "temperatures": temperature is not None,
+        "history": history_count > 0,
+    }
+    missing_sections = [label for label, present in section_presence.items() if not present]
+
+    pressure_cold_spread = _value_spread(cold_values)
+    pressure_hot_spread = _value_spread(hot_values)
+    temperature_spread = _session_temp_spread(temperature)
+    alignment_gap = _session_alignment_gap(alignment)
+
+    score = 0.0
+    strengths: list[str] = []
+    weak_points: list[str] = []
+
+    if pressure is not None:
+        score += 2.0
+        strengths.append("pressure data is captured")
+    if suspension is not None:
+        score += 1.0
+        strengths.append("suspension data is captured")
+    if alignment is not None:
+        score += 2.0
+        strengths.append("alignment data is captured")
+    if temperature is not None:
+        score += 2.0
+        strengths.append("tire temperatures are captured")
+    if history_count > 0:
+        score += 0.5
+        strengths.append("tire history is captured")
+
+    score += len(section_presence) * 0.25
+
+    if pressure_cold_spread is not None:
+        score -= pressure_cold_spread * 0.35
+        if pressure_cold_spread > 1.0:
+            weak_points.append("cold pressure balance is uneven")
+        else:
+            strengths.append("cold pressure balance is consistent")
+    if pressure_hot_spread is not None:
+        score -= pressure_hot_spread * 0.2
+        if pressure_hot_spread > 1.0:
+            weak_points.append("hot pressure balance is uneven")
+    if temperature_spread is not None:
+        score -= temperature_spread * 0.12
+        if temperature_spread > 10.0:
+            weak_points.append("tire temperature balance is uneven")
+        else:
+            strengths.append("tire temperature balance is reasonable")
+    if alignment_gap is not None:
+        score -= alignment_gap * 0.2
+        if alignment_gap > 1.0:
+            weak_points.append("alignment balance is uneven")
+        else:
+            strengths.append("alignment balance is stable")
+
+    if missing_sections:
+        score -= len(missing_sections) * 0.75
+        weak_points.append(f"missing sections: {', '.join(missing_sections)}")
+
+    note_flags = _session_note_flags(session.notes)
+    if note_flags:
+        score -= 0.5
+        weak_points.append(f"note flags: {', '.join(dict.fromkeys(note_flags))}")
+
+    strengths = _unique_limited(strengths, limit=4)
+    weak_points = _unique_limited(weak_points, limit=4)
+
+    score = round(max(score, 0.0), 2)
+
+    return {
+        "session": _session_snapshot(bundle),
+        "score": score,
+        "strengths": strengths,
+        "weak_points": weak_points,
+        "metrics": {
+            "pressure_cold_spread": round(pressure_cold_spread, 2) if pressure_cold_spread is not None else None,
+            "pressure_hot_spread": round(pressure_hot_spread, 2) if pressure_hot_spread is not None else None,
+            "temperature_spread": round(temperature_spread, 2) if temperature_spread is not None else None,
+            "alignment_gap": round(alignment_gap, 2) if alignment_gap is not None else None,
+            "history_count": history_count,
+            "missing_sections": missing_sections,
+            "note_flags": note_flags,
+            "tire_ids": tire_ids,
+            "compounds": compounds,
+            "heat_cycles": heat_cycles,
+            "tire_status": tire_status,
+        },
+    }
+
+
+def _candidate_session_rows_from_memory(
+    db: Session,
+    *,
+    memory: dict[str, Any],
+    session_bundle: SessionBundle | None,
+    event: Event | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+    session_date: date | None,
+    time_window: str | None,
+    limit: int,
+) -> list[tuple[Seance, Driver | None, Vehicle | None]]:
+    candidate_ids: list[str] = []
+    selected_scope = memory.get("selected_scope") if isinstance(memory.get("selected_scope"), dict) else {}
+    comparison = memory.get("last_comparison") if isinstance(memory.get("last_comparison"), dict) else {}
+    recommendation = memory.get("last_recommendation") if isinstance(memory.get("last_recommendation"), dict) else {}
+    coaching = memory.get("last_coaching") if isinstance(memory.get("last_coaching"), dict) else {}
+
+    for source in (
+        selected_scope.get("session_id"),
+        *(comparison.get("session_ids") or []),
+        *(recommendation.get("session_ids") or []),
+        *(coaching.get("session_ids") or []),
+        *(memory.get("recent_session_ids") or []),
+    ):
+        if isinstance(source, str) and source.strip():
+            candidate_ids.append(source.strip())
+
+    rows: list[tuple[Seance, Driver | None, Vehicle | None]] = []
+    seen: set[str] = set()
+    for session_id in candidate_ids:
+        if session_id in seen:
+            continue
+        seen.add(session_id)
+        bundle = _load_session_bundle(db, session_id)
+        if bundle is None:
+            continue
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            continue
+        if driver_id and bundle.session.driver_id != driver_id:
+            continue
+        if vehicle_id and bundle.session.vehicle_id != vehicle_id:
+            continue
+        if session_date is not None and bundle.session.session_date != session_date:
+            continue
+        if time_window is not None and not _session_matches_time_window(bundle.session, time_window):
+            continue
+        rows.append((bundle.session, bundle.driver, bundle.vehicle))
+
+    effective_driver_id = driver_id or (session_bundle.session.driver_id if session_bundle is not None else None)
+    effective_vehicle_id = vehicle_id or (session_bundle.session.vehicle_id if session_bundle is not None else None)
+    has_fallback_scope = bool(
+        event is not None
+        or effective_driver_id is not None
+        or effective_vehicle_id is not None
+        or session_date is not None
+        or time_window is not None
+        or session_bundle is not None
+    )
+
+    if has_fallback_scope and len(rows) < limit:
+        fallback_rows = _load_session_rows(
+            db,
+            event=event,
+            driver_id=effective_driver_id,
+            vehicle_id=effective_vehicle_id,
+            session_date=session_date,
+            time_window=time_window,
+            limit=limit,
+        )
+        for session, driver, vehicle in fallback_rows:
+            if session.id_seance in seen:
+                continue
+            rows.append((session, driver, vehicle))
+            seen.add(session.id_seance)
+            if len(rows) >= limit:
+                break
+
+    if rows:
+        return rows[:limit]
+
+    return []
+
+
+def _recommendation_focus_from_query(query: str, memory: dict[str, Any] | None = None) -> str:
+    text = query.lower()
+    if any(term in text for term in ["lap time", "fastest", "time attack", "pace"]):
+        return "lap_time"
+    if any(term in text for term in ["pressure", "pressures", "psi"]):
+        return "pressures"
+    if any(term in text for term in ["alignment", "camber", "toe", "caster", "rake", "wheelbase"]):
+        return "alignment"
+    if any(term in text for term in ["suspension", "rebound", "bump", "wing", "sway", "damper"]):
+        return "suspension"
+    if any(term in text for term in ["consistency", "stable", "stability"]):
+        return "consistency"
+    if memory:
+        recommendation = memory.get("last_recommendation") if isinstance(memory.get("last_recommendation"), dict) else {}
+        focus = recommendation.get("focus")
+        if isinstance(focus, str) and focus.strip():
+            return focus.strip()
+    return "setup_balance"
+
+
+def _recommendation_follow_up_prompts(focus: str | None = None) -> list[str]:
+    prompts = [
+        "Explain why",
+        "Compare with previous session",
+        "Show weak points only",
+        "Suggest priority changes",
+    ]
+    if focus and focus != "setup_balance":
+        prompts.insert(2, "Show setup differences")
+    return prompts[:4]
+
+
+def _priority_actions_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    baseline: dict[str, Any] | None = None,
+) -> list[str]:
+    metrics = snapshot.get("metrics") if isinstance(snapshot.get("metrics"), dict) else {}
+    actions: list[str] = []
+
+    pressure_cold_spread = metrics.get("pressure_cold_spread")
+    pressure_hot_spread = metrics.get("pressure_hot_spread")
+    temperature_spread = metrics.get("temperature_spread")
+    alignment_gap = metrics.get("alignment_gap")
+    missing_sections = metrics.get("missing_sections") if isinstance(metrics.get("missing_sections"), list) else []
+    note_flags = metrics.get("note_flags") if isinstance(metrics.get("note_flags"), list) else []
+
+    if pressure_cold_spread is not None and float(pressure_cold_spread) > 1.0:
+        actions.append("Recheck cold pressure balance before the next run.")
+    elif pressure_hot_spread is not None and float(pressure_hot_spread) > 1.0:
+        actions.append("Review hot pressure balance after the next run.")
+
+    if temperature_spread is not None and float(temperature_spread) > 10.0:
+        actions.append("Review tire temperature balance after the next session.")
+
+    if alignment_gap is not None and float(alignment_gap) > 1.0:
+        actions.append("Inspect alignment balance before changing other setup areas.")
+
+    if missing_sections:
+        actions.append("Capture the missing setup sections so the next comparison is complete.")
+
+    if note_flags:
+        actions.append("Address the handling note before stacking on more setup changes.")
+
+    if baseline is not None and not actions:
+        baseline_metrics = baseline.get("metrics") if isinstance(baseline.get("metrics"), dict) else {}
+        if baseline_metrics.get("pressure_cold_spread") is not None:
+            actions.append("Use the better session as the baseline and validate the pressure balance again.")
+
+    if not actions:
+        actions.append("Keep the current strengths and validate them again on the next run.")
+
+    return _unique_limited(actions, limit=3)
+
+
+def _build_candidate_comparison_rows(snapshots: list[dict[str, Any]]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for snapshot in snapshots:
+        session = snapshot.get("session") if isinstance(snapshot.get("session"), dict) else {}
+        strengths = snapshot.get("strengths") if isinstance(snapshot.get("strengths"), list) else []
+        weak_points = snapshot.get("weak_points") if isinstance(snapshot.get("weak_points"), list) else []
+        rows.append(
+            [
+                _text(session.get("session_label")),
+                f"{snapshot.get('score', 0):.2f}" if isinstance(snapshot.get("score"), (int, float)) else _text(snapshot.get("score")),
+                _joined_text(strengths[:2]) if strengths else "Not available",
+                _joined_text(weak_points[:2]) if weak_points else "Not available",
+            ]
+        )
+    return rows
+
+
+def _build_recommendation_response(
+    db: Session,
+    *,
+    query: str,
+    query_in: ChatbotQuery,
+    memory: dict[str, Any],
+    event: Event | None,
+    session_bundle: SessionBundle | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+    session_date: date | None,
+    time_window: str | None,
+    intent: str = "recommendation",
+) -> ChatbotResponse:
+    candidate_rows = _candidate_session_rows_from_memory(
+        db,
+        memory=memory,
+        session_bundle=session_bundle,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=max(query_in.limit, 3),
+    )
+    if len(candidate_rows) < 2:
+        return _needs_context_response(
+            "Recommendation",
+            "I can help with that, but I need at least two sessions or a recent comparison context before I can choose the stronger option.",
+            intent=intent,
+            follow_up=[
+                "Compare Session 1 vs Session 2",
+                "Show latest sessions",
+                "Show setup for the latest session",
+            ],
+        )
+
+    bundles = [_bundle_from_row(row) for row in candidate_rows]
+    snapshots = [_session_quality_snapshot(db, bundle) for bundle in bundles]
+    snapshots.sort(key=lambda item: (float(item.get("score", 0.0)), item["session"].get("session_number", 0)), reverse=True)
+
+    best_snapshot = snapshots[0]
+    runner_up = snapshots[1] if len(snapshots) > 1 else None
+    score_gap = (
+        round(float(best_snapshot.get("score", 0.0)) - float(runner_up.get("score", 0.0)), 2)
+        if runner_up is not None
+        else None
+    )
+
+    focus = _recommendation_focus_from_query(query, memory)
+    comparison_context = memory.get("last_comparison") if isinstance(memory.get("last_comparison"), dict) else {}
+    context_source = "previous comparison" if comparison_context.get("session_ids") else "recent session history"
+
+    if score_gap is not None and score_gap < 0.5 and focus == "setup_balance":
+        return _needs_context_response(
+            "Recommendation",
+            "I can compare these sessions, but the setup evidence is too close to call a clear winner. Tell me what you want to optimize for: lap time, setup balance, tire pressures, overall data quality, or consistency.",
+            intent=intent,
+            follow_up=[
+                "Optimize lap time",
+                "Optimize setup balance",
+                "Optimize tire pressures",
+                "Optimize consistency",
+            ],
+        )
+
+    records_used = [
+        _record_reference(
+            "session",
+            snapshot["session"]["session_id"],
+            snapshot["session"]["session_label"],
+            details=f"{snapshot['session']['driver']} | {snapshot['session']['vehicle']}",
+        )
+        for snapshot in snapshots
+    ]
+
+    sections = [
+        _section(
+            "Recommendation",
+            subtitle="Best option with the strongest setup evidence currently available.",
+            variant="fields",
+            icon_key="compare",
+            fields=[
+                _field("Best option", best_snapshot["session"]["session_label"]),
+                _field(
+                    "Why",
+                    " ".join(
+                        part
+                        for part in [
+                            "It has the highest setup-quality score from the current evidence.",
+                            f"Better signals: {_joined_text(best_snapshot.get('strengths', [])[:2])}." if best_snapshot.get("strengths") else None,
+                            f"Score gap vs next best: {score_gap:.2f}." if score_gap is not None else None,
+                        ]
+                        if part
+                    ),
+                ),
+                _field("Evidence source", context_source),
+                _field("Focus", _humanize_enum(focus)),
+            ],
+        ),
+        _section(
+            "Candidate comparison",
+            subtitle="Scored candidates with the strongest and weakest signals called out first.",
+            variant="table",
+            icon_key="compare",
+            table_headers=["Session", "Score", "Strongest signal", "Weakest signal"],
+            table_rows=_build_candidate_comparison_rows(snapshots),
+        ),
+        _section(
+            "Suggested focus",
+            subtitle="Practical next steps grounded in the current evidence.",
+            variant="fields",
+            icon_key="default",
+            fields=[
+                _field("Priority 1", _priority_actions_from_snapshot(best_snapshot)[0]),
+                _field(
+                    "Priority 2",
+                    _priority_actions_from_snapshot(best_snapshot)[1] if len(_priority_actions_from_snapshot(best_snapshot)) > 1 else "Not available",
+                ),
+                _field(
+                    "Priority 3",
+                    _priority_actions_from_snapshot(best_snapshot)[2] if len(_priority_actions_from_snapshot(best_snapshot)) > 2 else "Not available",
+                ),
+            ],
+        ),
+    ]
+
+    summary = (
+        f"{best_snapshot['session']['session_label']} looks like the strongest option from the current evidence."
+        if best_snapshot.get("session")
+        else "I found the strongest option from the current evidence."
+    )
+    if focus != "setup_balance":
+        summary += f" I used {focus.replace('_', ' ')} as the main check."
+    if score_gap is not None:
+        summary += f" The setup-quality gap to the next candidate is {score_gap:.2f}."
+
+    response = ChatbotResponse(
+        kind="recommendation",
+        title="Recommendation",
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent=intent,
+        data={
+            "focus": focus,
+            "context_source": context_source,
+            "best_session_id": best_snapshot["session"]["session_id"],
+            "best_session_label": best_snapshot["session"]["session_label"],
+            "score_gap": score_gap,
+            "candidate_sessions": snapshots,
+            "priority_actions": _priority_actions_from_snapshot(best_snapshot),
+            "evidence_scope": "setup_only",
+        },
+        sections=sections,
+        follow_up=_recommendation_follow_up_prompts(focus),
+        generated_at=datetime.utcnow(),
+    )
+    return _finalize_recommendation_response(
+        query=query,
+        backend_response=response,
+        request_scope=query_in,
+    )
+
+
+def _build_coaching_response(
+    db: Session,
+    *,
+    query: str,
+    query_in: ChatbotQuery,
+    memory: dict[str, Any],
+    event: Event | None,
+    session_bundle: SessionBundle | None,
+    driver_id: str | None,
+    vehicle_id: str | None,
+    session_date: date | None,
+    time_window: str | None,
+    intent: str = "coaching",
+) -> ChatbotResponse:
+    candidate_rows = _candidate_session_rows_from_memory(
+        db,
+        memory=memory,
+        session_bundle=session_bundle,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=max(query_in.limit, 3),
+    )
+    if not candidate_rows:
+        return _needs_context_response(
+            "Improvement Areas",
+            "I need a session or recent history to review before I can coach the next change.",
+            intent=intent,
+            follow_up=[
+                "Show latest sessions",
+                "Show setup for the latest session",
+                "Compare Session 1 vs Session 2",
+            ],
+        )
+
+    bundles = [_bundle_from_row(row) for row in candidate_rows]
+    snapshots = [_session_quality_snapshot(db, bundle) for bundle in bundles]
+    snapshots.sort(key=lambda item: (float(item.get("score", 0.0)), item["session"].get("session_number", 0)), reverse=True)
+
+    focus_snapshot = snapshots[0]
+    baseline_snapshot = snapshots[1] if len(snapshots) > 1 else None
+    focus = _recommendation_focus_from_query(query, memory)
+    priority_actions = _priority_actions_from_snapshot(focus_snapshot, baseline=baseline_snapshot)
+    weak_points = focus_snapshot.get("weak_points") if isinstance(focus_snapshot.get("weak_points"), list) else []
+    best_strengths = focus_snapshot.get("strengths") if isinstance(focus_snapshot.get("strengths"), list) else []
+
+    records_used = [
+        _record_reference(
+            "session",
+            snapshot["session"]["session_id"],
+            snapshot["session"]["session_label"],
+            details=f"{snapshot['session']['driver']} | {snapshot['session']['vehicle']}",
+        )
+        for snapshot in snapshots
+    ]
+
+    sections = [
+        _section(
+            "Improvement areas",
+            subtitle="What to improve first based on the current evidence.",
+            variant="fields",
+            icon_key="default",
+            fields=[
+                _field("Primary focus", _humanize_enum(focus)),
+                _field("Why", _joined_text(best_strengths[:2]) if best_strengths else "The current session has limited balance signals."),
+                _field("Weak points", _joined_text(weak_points[:2]) if weak_points else "Not available"),
+                _field("Evidence source", "Current session plus recent history"),
+            ],
+        ),
+        _section(
+            "Weak points",
+            subtitle="The highest-priority gaps surfaced by the backend evidence.",
+            variant="table",
+            icon_key="compare",
+            table_headers=["Area", "Evidence", "Priority"],
+            table_rows=[
+                [item, item, "High" if index == 0 else "Medium"]
+                for index, item in enumerate(weak_points[:3])
+            ]
+            or [["Setup balance", "No major weak points were detected.", "Low"]],
+        ),
+        _section(
+            "Next actions",
+            subtitle="Practical follow-up changes to test next.",
+            variant="fields",
+            icon_key="default",
+            fields=[
+                _field("Priority 1", priority_actions[0] if priority_actions else "Not available"),
+                _field("Priority 2", priority_actions[1] if len(priority_actions) > 1 else "Not available"),
+                _field("Priority 3", priority_actions[2] if len(priority_actions) > 2 else "Not available"),
+            ],
+        ),
+    ]
+
+    summary = (
+        f"Based on the available setup evidence, the main improvement areas for {_session_heading(focus_snapshot['session'])} are "
+        f"{_joined_text(weak_points[:2]) if weak_points else 'setup balance and consistency'}."
+    )
+
+    response = ChatbotResponse(
+        kind="coaching",
+        title="Improvement Areas",
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent=intent,
+        data={
+            "focus": focus,
+            "session_id": focus_snapshot["session"]["session_id"],
+            "session_label": focus_snapshot["session"]["session_label"],
+            "candidate_sessions": snapshots,
+            "weak_points": weak_points,
+            "priority_actions": priority_actions,
+            "evidence_scope": "setup_only",
+        },
+        sections=sections,
+        follow_up=[
+            "Show weak points only",
+            "Compare with previous session",
+            "Show setup differences",
+            "Suggest priority changes",
+        ],
+        generated_at=datetime.utcnow(),
+    )
+    return _finalize_recommendation_response(
+        query=query,
+        backend_response=response,
+        request_scope=query_in,
+    )
+
+
+def _finalize_recommendation_response(
+    *,
+    query: str,
+    backend_response: ChatbotResponse,
+    request_scope: ChatbotQuery | None = None,
+) -> ChatbotResponse:
+    return backend_response
+
+
 def _metric_average(values: Iterable[object | None]) -> str:
     numbers = [float(value) for value in values if value is not None]
     if not numbers:
@@ -3456,6 +4322,36 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     ):
         return "greeting"
 
+    if any(
+        keyword in text
+        for keyword in [
+            "how can i improve",
+            "what should i improve",
+            "what should i change next",
+            "where are the weak points",
+            "what are my weak points",
+            "focus on next",
+            "need improvement",
+        ]
+    ):
+        return "coaching"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "best one",
+            "which one is better",
+            "which one should i use",
+            "strongest option",
+            "what is the best session here",
+            "which setup looks better",
+            "best session",
+            "best setup",
+            "better option",
+        ]
+    ):
+        return "recommendation"
+
     if any(keyword in text for keyword in ["compare", "versus", "vs", "difference"]) and has_session_term:
         return "compare"
 
@@ -3769,6 +4665,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
             "No vehicle matching the selected vehicle was found in the database.",
             intent=intent,
         )
+
+    conversation = _load_chatbot_conversation_state(db, current_user=current_user, query_in=query_in)
+    memory = _conversation_memory(conversation)
 
     driver_query = _extract_driver_query(query) or nlp_filters.get("driver_query") or None
     event_query = _extract_event_query(query) or nlp_filters.get("event_query") or None
@@ -4697,6 +5596,48 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
             len([record for record in response.records_used or [] if record.kind == "driver"]),
             len([record for record in response.records_used or [] if record.kind == "vehicle"]),
             session_bundle is not None,
+        )
+        return response
+
+    if intent == "recommendation":
+        response = _build_recommendation_response(
+            db,
+            query=query,
+            query_in=query_in,
+            memory=memory,
+            event=event,
+            session_bundle=session_bundle,
+            driver_id=query_in.driver_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            intent="recommendation",
+        )
+        logger.info(
+            "Admin chatbot records found: intent=recommendation status=%s count=%s",
+            response.status,
+            len(response.records_used or []),
+        )
+        return response
+
+    if intent == "coaching":
+        response = _build_coaching_response(
+            db,
+            query=query,
+            query_in=query_in,
+            memory=memory,
+            event=event,
+            session_bundle=session_bundle,
+            driver_id=query_in.driver_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            intent="coaching",
+        )
+        logger.info(
+            "Admin chatbot records found: intent=coaching status=%s count=%s",
+            response.status,
+            len(response.records_used or []),
         )
         return response
 

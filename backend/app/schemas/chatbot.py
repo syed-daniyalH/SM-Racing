@@ -29,6 +29,7 @@ class ChatbotRecordReference(ORMModel):
 class ChatbotQuery(ORMModel):
     message: str | None = Field(default=None, min_length=1, max_length=500)
     query: str | None = Field(default=None, min_length=1, max_length=500)
+    conversation_id: str | None = Field(default=None, max_length=64)
     event_id: UUID | None = None
     session_id: str | None = Field(default=None, max_length=120)
     driver_id: str | None = Field(default=None, max_length=64)
@@ -114,7 +115,18 @@ class ChatbotContextResponse(ORMModel):
 
 
 class ChatbotResponse(ORMModel):
-    kind: Literal["message", "empty", "events", "sessions", "setup", "compare", "fleet", "submissions"]
+    kind: Literal[
+        "message",
+        "empty",
+        "events",
+        "sessions",
+        "setup",
+        "compare",
+        "fleet",
+        "submissions",
+        "recommendation",
+        "coaching",
+    ]
     title: str
     summary: str
     answer: str | None = None
