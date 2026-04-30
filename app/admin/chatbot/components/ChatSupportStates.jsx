@@ -163,9 +163,6 @@ export function ChatEmptyState({
 export function ChatNotFoundState({
   title = "No matching data was found in the SM2 Racing database.",
   message = "Try narrowing the event, session, driver, or vehicle, then ask again.",
-  actions = [],
-  onAction,
-  loading = false,
 }) {
   return (
     <SupportStateCard
@@ -174,18 +171,13 @@ export function ChatNotFoundState({
       message={message}
       tone="warning"
       icon={AssistantIcon}
-    >
-      <ActionChipGroup items={actions} onAction={onAction} loading={loading} />
-    </SupportStateCard>
+    />
   )
 }
 
 export function ChatUnsupportedState({
   title = "I can help with sessions, events, setup data, comparisons, and summaries.",
   message = "Use one of the supported race-data queries to stay within the current scope.",
-  actions = [],
-  onAction,
-  loading = false,
 }) {
   return (
     <SupportStateCard
@@ -194,18 +186,13 @@ export function ChatUnsupportedState({
       message={message}
       tone="neutral"
       icon={AssistantIcon}
-    >
-      <ActionChipGroup items={actions} onAction={onAction} loading={loading} />
-    </SupportStateCard>
+    />
   )
 }
 
 export function ChatValidationState({
   title = "I need a more specific filter before I can continue.",
   message = "Select an event, session, driver, or vehicle, then try the request again.",
-  actions = [],
-  onAction,
-  loading = false,
 }) {
   return (
     <SupportStateCard
@@ -214,9 +201,7 @@ export function ChatValidationState({
       message={message}
       tone="warning"
       icon={AssistantIcon}
-    >
-      <ActionChipGroup items={actions} onAction={onAction} loading={loading} />
-    </SupportStateCard>
+    />
   )
 }
 
@@ -227,9 +212,6 @@ export function NeedsContextState(props) {
 export function ChatErrorState({
   title = "The assistant could not reach the live database.",
   message = "Try again in a moment or refresh the context from the sidebar.",
-  actions = [],
-  onAction,
-  loading = false,
 }) {
   return (
     <SupportStateCard
@@ -238,8 +220,6 @@ export function ChatErrorState({
       message={message}
       tone="danger"
       icon={AssistantIcon}
-    >
-      <ActionChipGroup items={actions} onAction={onAction} loading={loading} />
-    </SupportStateCard>
+    />
   )
 }

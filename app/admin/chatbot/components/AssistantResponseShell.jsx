@@ -711,29 +711,12 @@ export function SuggestedNextSteps({ suggestions = [], onFollowUp, loading = fal
 export default function AssistantResponseShell({
   response,
   message,
-  scope = {},
   onCopy,
-  onFollowUp,
   children = null,
   loading = false,
 }) {
   const state = getResponseState(response, loading)
   const summary = buildAssistantSummary(response, message?.text || "")
-  const metaItems = buildResponseMetaItems({
-    response,
-    scope: scope || message?.scope || {},
-    recordCount: getRecordCount(response),
-  })
-  const insights = buildResponseInsights({
-    response,
-    scope: scope || message?.scope || {},
-    recordCount: getRecordCount(response),
-  })
-  const nextSteps = getSuggestedNextSteps(
-    response,
-    scope || message?.scope || {},
-    message?.text || "",
-  )
   const hasSections = Array.isArray(response?.sections) && response.sections.length > 0
   const isLightReply =
     !loading &&
@@ -757,8 +740,6 @@ export default function AssistantResponseShell({
         ) : (
           <>
             <ResponseSummary summary={summary} state={state} />
-            <ResponseMetaRow items={metaItems} />
-            <ResponseInsightsRow items={insights} />
           </>
         )}
 
@@ -772,12 +753,6 @@ export default function AssistantResponseShell({
         ) : (
           <ResponseContentSlot>{children}</ResponseContentSlot>
         )}
-
-        <SuggestedNextSteps
-          suggestions={nextSteps}
-          onFollowUp={onFollowUp}
-          loading={loading}
-        />
       </div>
     </div>
   )
