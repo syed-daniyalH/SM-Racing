@@ -35,6 +35,11 @@ from app.services.raw_submission_service import (
     resolve_vehicle_alias,
     validate_raw_submission_payload,
 )
+from app.services.raw_submission_current_schema_service import (
+    lookup_raw_duplicate_current_schema,
+    persist_raw_submission_current_schema,
+    write_raw_audit_log_current_schema,
+)
 from app.services.run_group_service import normalize_run_group
 from app.services.submission_delivery_service import (
     enqueue_submission_delivery,
@@ -830,29 +835,32 @@ def create_raw_submission(
                 errors=validation_errors,
             )
 
-        duplicate_session = _raw_duplicate_lookup(
+        duplicate_session_id = lookup_raw_duplicate_current_schema(
             db,
-            session_data=payload["data"],
+            id_seance=id_seance,
             raw_text=submission_in.raw_text,
         )
-        if duplicate_session is not None:
-            _write_audit_log(
+        if duplicate_session_id is not None:
+            write_raw_audit_log_current_schema(
                 db,
                 action="submission.ingest.raw",
                 status="SUCCESS",
-                message=f"Duplicate raw submission ignored for {duplicate_session.id_seance}",
+                entity_type="seance",
+                entity_id=duplicate_session_id,
+                message=f"Duplicate raw submission ignored for {duplicate_session_id}",
                 payload={
                     **request_payload,
-                    "id_seance": duplicate_session.id_seance,
+                    "id_seance": duplicate_session_id,
                     "duplicate": True,
                 },
-                user=request_user_label,
+                actor_user_id=current_user.id,
+                correlation_id=None,
             )
             db.commit()
             return _raw_submission_response(
                 status_code=status.HTTP_200_OK,
                 status_value="SUCCESS",
-                id_seance=duplicate_session.id_seance,
+                id_seance=duplicate_session_id,
                 message="Duplicate session ignored",
             )
 
@@ -882,8 +890,8 @@ def create_raw_submission(
         db.add(raw_submission)
         db.flush()
 
-        # Stage the canonical raw request before normalized tables are applied.
-        submission_input_id = stage_submission_input(
+        # Persist the normalized raw submission against the current sm2racing schema.
+        persist_result = persist_raw_submission_current_schema(
             db,
             submission=raw_submission,
             event=event,
@@ -892,48 +900,42 @@ def create_raw_submission(
             vehicle=vehicle,
             current_user=created_by_user,
             source=(normalize_optional_text(submission_in.source) or "pwa").lower(),
+            payload=payload,
+            analysis_result=analysis_result,
+            id_seance=id_seance,
+            captured_at=captured_at,
         )
-
-        # Persist the normalized session rows with backend-generated id_seance.
-        structured_result = persist_structured_submission(
-            db,
-            submission=raw_submission,
-            event=event,
-            run_group=run_group,
-            driver=driver,
-            vehicle=vehicle,
-            current_user=created_by_user,
-        )
-        raw_submission.structured_ingest_status = structured_result.status
-        raw_submission.structured_ingest_warnings = structured_result.warnings
+        raw_submission.structured_ingest_status = persist_result.status
+        raw_submission.structured_ingest_warnings = persist_result.warnings
         raw_submission.status = SubmissionStatus.SENT
         raw_submission.error_message = None
 
-        if not structured_result.saved_sections:
+        if not persist_result.saved_sections:
             raise RuntimeError("Raw submission did not persist any structured sections")
 
-        stored_session = _raw_duplicate_lookup(
-            db,
-            session_data=payload["data"],
-            raw_text=submission_in.raw_text,
-        )
-        stored_session_id = stored_session.id_seance if stored_session is not None else id_seance
+        stored_session_id = persist_result.id_seance or id_seance
 
-        _write_audit_log(
+        write_raw_audit_log_current_schema(
             db,
             action="submission.ingest.raw",
             status="SUCCESS",
+            entity_type="seance",
+            entity_id=stored_session_id,
             message=f"Raw submission stored successfully for {stored_session_id}",
             payload={
                 **request_payload,
                 "submission_ref": raw_submission.submission_ref,
                 "correlation_id": raw_submission.correlation_id,
                 "id_seance": stored_session_id,
-                "submission_input_id": submission_input_id,
-                "structured_status": structured_result.status,
-                "structured_warnings": structured_result.warnings,
+                "submission_input_id": str(persist_result.submission_input_id) if persist_result.submission_input_id else None,
+                "seance_db_id": str(persist_result.seance_id) if persist_result.seance_id else None,
+                "structured_status": persist_result.status,
+                "structured_warnings": persist_result.warnings,
+                "saved_sections": persist_result.saved_sections,
+                "skipped_sections": persist_result.skipped_sections,
             },
-            user=request_user_label,
+            actor_user_id=current_user.id,
+            correlation_id=raw_submission.correlation_id,
         )
         db.commit()
 
@@ -945,16 +947,19 @@ def create_raw_submission(
         )
     except RawSubmissionValidationError as exc:
         db.rollback()
-        _write_audit_log(
+        write_raw_audit_log_current_schema(
             db,
             action="submission.ingest.raw",
             status="VALIDATION_FAILED",
+            entity_type="submission",
+            entity_id=str(request_payload.get("raw_text") or submission_in.event_id),
             message=exc.message,
             payload={
                 **request_payload,
                 "errors": exc.errors,
             },
-            user=request_user_label,
+            actor_user_id=current_user.id,
+            correlation_id=None,
         )
         db.commit()
         return _raw_submission_response(
@@ -966,13 +971,16 @@ def create_raw_submission(
     except Exception:
         db.rollback()
         logger.exception("Raw submission ingest failed")
-        _write_audit_log(
+        write_raw_audit_log_current_schema(
             db,
             action="submission.ingest.raw",
             status="ERROR",
+            entity_type="submission",
+            entity_id=str(request_payload.get("raw_text") or submission_in.event_id),
             message="Raw submission ingest failed unexpectedly",
             payload=request_payload,
-            user=request_user_label,
+            actor_user_id=current_user.id,
+            correlation_id=None,
         )
         db.commit()
         return _raw_submission_response(
