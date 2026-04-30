@@ -198,7 +198,10 @@ def _normalize_pressures(source: Any) -> dict[str, dict[str, float]]:
     normalized: dict[str, dict[str, float]] = {}
 
     for phase in ("cold", "hot"):
-        phase_values = _normalize_corners(pressures.get(phase), field_name=phase, as_int=False)
+        phase_source = pressures.get(phase)
+        if not isinstance(phase_source, dict):
+            phase_source = pressures
+        phase_values = _normalize_corners(phase_source, field_name=phase, as_int=False)
         if phase_values:
             normalized[phase] = phase_values
 
