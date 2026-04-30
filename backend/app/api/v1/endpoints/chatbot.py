@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.enums import UserRole
 from app.models.user import User
 from app.schemas.chatbot import ChatbotContextResponse, ChatbotQuery, ChatbotResponse
+from app.services.chatbot_llm_service import finalize_chatbot_response
 from app.services.chatbot_service import build_chatbot_context, build_chatbot_response
 
 
@@ -38,4 +39,18 @@ def query_chatbot(
         query_in.driver_id,
         query_in.vehicle_id,
     )
-    return build_chatbot_response(db, query_in, current_user=current_user)
+    backend_response = build_chatbot_response(db, query_in, current_user=current_user)
+    finalized = finalize_chatbot_response(
+        user_query=query_in.message or query_in.query or "",
+        backend_response=backend_response,
+        request_scope=query_in,
+    )
+    logger.info(
+        "Admin chatbot response sent: intent=%s status=%s kind=%s openai_used=%s fallback_used=%s",
+        finalized.response.intent,
+        finalized.response.status,
+        finalized.response.kind,
+        finalized.summary_result.used_openai,
+        finalized.summary_result.fallback_used,
+    )
+    return finalized.response

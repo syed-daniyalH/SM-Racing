@@ -1,0 +1,159 @@
+import unittest
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from app.schemas.chatbot import ChatbotCard, ChatbotField, ChatbotQuery, ChatbotRecordReference, ChatbotResponse, ChatbotSection
+from app.services import chatbot_llm_service
+from app.services.chatbot_service import _intent_from_query
+
+
+def _response(**overrides):
+    payload = {
+        "kind": "sessions",
+        "title": "Latest Sessions",
+        "summary": "I found 2 recent sessions in the SM2 Racing database.",
+        "answer": "I found 2 recent sessions in the SM2 Racing database.",
+        "data_found": True,
+        "status": "success",
+        "intent": "latest_sessions",
+        "records_used": [
+            ChatbotRecordReference(kind="session", value="S1", label="Session 1"),
+            ChatbotRecordReference(kind="session", value="S2", label="Session 2"),
+        ],
+        "sections": [
+            ChatbotSection(
+                title="Latest sessions",
+                subtitle="Newest records first.",
+                variant="cards",
+                cards=[
+                    ChatbotCard(
+                        title="Session 1",
+                        subtitle="Apr 30, 3:30 PM",
+                        badge="Ready",
+                        fields=[
+                            ChatbotField(label="Driver", value="Nicolas Guigere"),
+                            ChatbotField(label="Vehicle", value="GT4"),
+                            ChatbotField(label="Session ID", value="20260430-NG-S01"),
+                        ],
+                    )
+                ],
+            )
+        ],
+        "follow_up": ["Show setup for latest session", "Compare session 1 vs session 2"],
+        "generated_at": datetime.now(timezone.utc),
+    }
+    payload.update(overrides)
+    return ChatbotResponse(**payload)
+
+
+class ChatbotLLMServiceTests(unittest.TestCase):
+    def test_build_openai_context_uses_safe_structured_backend_data(self) -> None:
+        backend_response = _response()
+        scope = {
+            "event_id": "event-001",
+            "session_id": "20260430-NG-S01",
+            "driver_id": "NG",
+            "vehicle_id": "NG-GT4-2025",
+            "ignored": "secret-value",
+        }
+
+        context = chatbot_llm_service.build_openai_context_from_backend_result(
+            backend_response=backend_response,
+            request_scope=scope,
+        )
+
+        self.assertEqual(context["kind"], "sessions")
+        self.assertEqual(context["status"], "success")
+        self.assertEqual(context["record_count"], 2)
+        self.assertEqual(context["scope"]["event_id"], "event-001")
+        self.assertNotIn("ignored", context["scope"])
+        self.assertEqual(context["sections"][0]["title"], "Latest sessions")
+        self.assertEqual(context["sections"][0]["cards"][0]["title"], "Session 1")
+        self.assertEqual(context["sections"][0]["cards"][0]["fields"][0]["label"], "Driver")
+        self.assertNotIn("generated_at", context)
+
+    def test_finalize_chatbot_response_falls_back_cleanly_when_openai_is_disabled(self) -> None:
+        backend_response = _response(
+            kind="message",
+            title="AI Race Assistant",
+            summary="I can help with recent sessions and setup data.",
+            answer="I can help with recent sessions and setup data.",
+            data_found=False,
+            intent="greeting",
+            records_used=[],
+            sections=[],
+            follow_up=["Show latest sessions", "Show latest submissions"],
+        )
+
+        settings = SimpleNamespace(
+            chatbot_nlp_enabled=False,
+            openai_api_key=None,
+            openai_model="gpt-4o-mini",
+            openai_request_timeout_seconds=8.0,
+            openai_intent_confidence_threshold=0.7,
+        )
+
+        with patch("app.services.chatbot_llm_service.get_settings", return_value=settings):
+            finalized = chatbot_llm_service.finalize_chatbot_response(
+                user_query="hi",
+                backend_response=backend_response,
+                request_scope=ChatbotQuery(message="hi"),
+            )
+
+        self.assertFalse(finalized.summary_result.used_openai)
+        self.assertTrue(finalized.summary_result.fallback_used)
+        self.assertEqual(finalized.response.summary, "I can help with recent sessions and setup data.")
+        self.assertEqual(finalized.response.follow_up[:2], ["Show latest sessions", "Show latest submissions"])
+
+    def test_finalize_chatbot_response_uses_openai_summary_when_available(self) -> None:
+        backend_response = _response(
+            kind="compare",
+            title="Session Comparison",
+            summary="Here is a comparison of Session 1 and Session 2.",
+            answer="Here is a comparison of Session 1 and Session 2.",
+            intent="compare",
+        )
+
+        settings = SimpleNamespace(
+            chatbot_nlp_enabled=True,
+            openai_api_key="test-key",
+            openai_model="gpt-4o-mini",
+            openai_request_timeout_seconds=8.0,
+            openai_intent_confidence_threshold=0.7,
+        )
+        openai_result = {
+            "summary": "Here is a comparison of Session 1 and Session 2, with the biggest setup changes highlighted first.",
+            "follow_up": ["Show tire pressures only", "Show full setup for latest session"],
+            "response_type": "comparison_summary",
+        }
+
+        with (
+            patch("app.services.chatbot_llm_service.get_settings", return_value=settings),
+            patch("app.services.chatbot_llm_service._call_openai_json", return_value=(openai_result, None)),
+        ):
+            finalized = chatbot_llm_service.finalize_chatbot_response(
+                user_query="compare session 1 vs session 2",
+                backend_response=backend_response,
+                request_scope=ChatbotQuery(message="compare session 1 vs session 2"),
+            )
+
+        self.assertTrue(finalized.summary_result.used_openai)
+        self.assertFalse(finalized.summary_result.fallback_used)
+        self.assertEqual(
+            finalized.response.summary,
+            "Here is a comparison of Session 1 and Session 2, with the biggest setup changes highlighted first.",
+        )
+        self.assertEqual(
+            finalized.response.follow_up,
+            ["Show tire pressures only", "Show full setup for latest session"],
+        )
+
+    def test_intent_from_query_recognizes_greeting_and_compare_variants(self) -> None:
+        self.assertEqual(_intent_from_query("hello"), "greeting")
+        self.assertEqual(_intent_from_query("what changed from the last session?"), "compare")
+        self.assertEqual(_intent_from_query("compare previous session with current"), "compare")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -4,6 +4,7 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined"
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import StatusBadge from "../../../components/Common/StatusBadge"
 import AssistantIcon from "./AssistantIcon"
+import AssistantLightReply from "./AssistantLightReply"
 import { ChatLoadingState } from "./ChatSupportStates"
 import {
   buildComparisonMetaItems,
@@ -15,6 +16,7 @@ const RESPONSE_STATUS_TONES = {
   not_found: "warning",
   error: "danger",
   unsupported: "neutral",
+  needs_context: "warning",
   validation: "warning",
   loading: "info",
   empty: "neutral",
@@ -24,7 +26,8 @@ const RESPONSE_STATUS_LABELS = {
   success: "Ready",
   not_found: "No match",
   error: "Error",
-  unsupported: "Needs detail",
+  unsupported: "Unsupported",
+  needs_context: "Needs detail",
   validation: "Needs context",
   loading: "Thinking",
   empty: "Empty",
@@ -223,6 +226,10 @@ export const buildAssistantSummary = (response, fallbackText = "") => {
 
   if (response.status === "not_found") {
     return "No matching data was found in the SM2 Racing database."
+  }
+
+  if (response.status === "needs_context") {
+    return summary || "I need one more detail before I can return the correct SM2 Racing result."
   }
 
   if (response.status === "unsupported") {
@@ -727,6 +734,13 @@ export default function AssistantResponseShell({
     scope || message?.scope || {},
     message?.text || "",
   )
+  const hasSections = Array.isArray(response?.sections) && response.sections.length > 0
+  const isLightReply =
+    !loading &&
+    state === "success" &&
+    response?.kind === "message" &&
+    !hasSections &&
+    getRecordCount(response) === 0
 
   return (
     <div className={`chatbot-response-shell chatbot-response-shell-${state}`}>
@@ -738,9 +752,15 @@ export default function AssistantResponseShell({
       />
 
       <div className="chatbot-response-shell-body">
-        <ResponseSummary summary={summary} state={state} />
-        <ResponseMetaRow items={metaItems} />
-        <ResponseInsightsRow items={insights} />
+        {isLightReply ? (
+          <AssistantLightReply summary={summary} />
+        ) : (
+          <>
+            <ResponseSummary summary={summary} state={state} />
+            <ResponseMetaRow items={metaItems} />
+            <ResponseInsightsRow items={insights} />
+          </>
+        )}
 
         {loading ? (
           <ResponseContentSlot>

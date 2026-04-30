@@ -220,6 +220,10 @@ export function ChatValidationState({
   )
 }
 
+export function NeedsContextState(props) {
+  return <ChatValidationState {...props} />
+}
+
 export function ChatErrorState({
   title = "The assistant could not reach the live database.",
   message = "Try again in a moment or refresh the context from the sidebar.",

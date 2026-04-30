@@ -33,11 +33,13 @@ import {
   ChatErrorState,
   ChatNotFoundState,
   ChatUnsupportedState,
-  ChatValidationState,
+  NeedsContextState,
 } from "./components/ChatSupportStates"
+import CompactSessionList from "./components/CompactSessionList"
 import ComparisonResponseSections from "./components/ComparisonResponseSections"
 import CompactResultSection from "./components/CompactResultCards"
 import SetupDetailSection from "./components/SetupDetailSections"
+import SubmissionList from "./components/SubmissionList"
 import AssistantResponseShell, {
   buildAssistantSummary,
   serializeAssistantResponse,
@@ -64,7 +66,7 @@ const SECTION_ICON_MAP = {
   default: DataObjectOutlinedIcon,
 }
 
-const COMPACT_RESPONSE_KINDS = new Set(["events", "sessions", "fleet", "submissions"])
+const COMPACT_RESPONSE_KINDS = new Set(["events", "fleet"])
 const VALIDATION_HINT_PATTERNS = [
   /please select/i,
   /include the event name/i,
@@ -127,7 +129,7 @@ const buildLoadingCopy = (queryText) => {
   }
 
   if (/setup|pressure|suspension|alignment|temperature|history/.test(text)) {
-    return "Reviewing setup data..."
+    return "Reviewing session data..."
   }
 
   if (/event/.test(text)) {
@@ -139,10 +141,18 @@ const buildLoadingCopy = (queryText) => {
   }
 
   if (/submission/.test(text)) {
-    return "Reviewing latest submissions..."
+    return "Checking recent submissions..."
   }
 
-  return "Checking the SM2 Racing database..."
+  if (/latest sessions/.test(text)) {
+    return "Reviewing recent sessions..."
+  }
+
+  if (/latest session|summary of this session|summarize this session/.test(text)) {
+    return "Summarizing the latest session..."
+  }
+
+  return "Checking live SM2 Racing data..."
 }
 
 const buildStarterActions = (context) => [
@@ -169,6 +179,11 @@ const buildStateActions = ({ kind, scope = {}, response }) => {
       { label: "Compare sessions", icon: CompareArrowsOutlinedIcon },
     ],
     validation: [
+      { label: "Show sessions for this event", icon: EventOutlinedIcon },
+      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
+      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
+    ],
+    needs_context: [
       { label: "Show sessions for this event", icon: EventOutlinedIcon },
       { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
       { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
@@ -258,14 +273,26 @@ const getSupportState = ({ message, response, scope }) => {
     }
   }
 
+  if (status === "needs_context") {
+    return {
+      variant: "needs_context",
+      component: NeedsContextState,
+      props: {
+        title: "I need one more detail before I can continue.",
+        message: supportText || "Select the missing event, session, driver, or vehicle and try again.",
+        actions: buildStateActions({ kind: "needs_context", scope, response }),
+      },
+    }
+  }
+
   if (isValidation) {
     return {
-      variant: "validation",
-      component: ChatValidationState,
+      variant: "needs_context",
+      component: NeedsContextState,
       props: {
-        title: "I need a more specific filter before I can continue.",
+        title: "I need one more detail before I can continue.",
         message: supportText || "Select an event, session, driver, or vehicle, then try again.",
-        actions: buildStateActions({ kind: "validation", scope, response }),
+        actions: buildStateActions({ kind: "needs_context", scope, response }),
       },
     }
   }
@@ -398,15 +425,18 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   })
   const SupportComponent = supportState?.component
   const useComparisonLayout = Boolean(response && response.kind === "compare")
+  const useSessionListLayout = Boolean(response && response.kind === "sessions")
+  const useSubmissionListLayout = Boolean(response && response.kind === "submissions")
   const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
   const useSetupLayout = isSetupLikeResponse(response)
   const responseSections = Array.isArray(response?.sections) ? response.sections : []
   const showSupportState = Boolean(supportState)
+  const showSupportStateBeforeResults = Boolean(
+    showSupportState && supportState?.variant === "needs_context" && responseSections.length,
+  )
 
   if (isAssistant || (isError && response)) {
-    const responseContent = showSupportState ? (
-      <SupportComponent {...supportState.props} onAction={onFollowUp} />
-    ) : responseSections.length ? (
+    const resultsContent = responseSections.length ? (
       <div
         className={`chatbot-response-sections ${
           useCompactResultLayout ? "chatbot-response-sections-compact" : ""
@@ -414,6 +444,30 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
       >
         {useComparisonLayout ? (
           <ComparisonResponseSections response={response} scope={message.scope} />
+        ) : useSessionListLayout ? (
+          responseSections.map((section) =>
+            normalizeSectionTitle(section?.title) === "latest sessions" ? (
+              <CompactSessionList key={`${message.id}-${section.title}`} section={section} />
+            ) : (
+              <CompactResultSection
+                key={`${message.id}-${section.title}`}
+                section={section}
+                responseKind={response?.kind}
+              />
+            ),
+          )
+        ) : useSubmissionListLayout ? (
+          responseSections.map((section) =>
+            normalizeSectionTitle(section?.title) === "submissions" ? (
+              <SubmissionList key={`${message.id}-${section.title}`} section={section} />
+            ) : (
+              <CompactResultSection
+                key={`${message.id}-${section.title}`}
+                section={section}
+                responseKind={response?.kind}
+              />
+            ),
+          )
         ) : (
           responseSections.map((section) =>
             useSetupLayout ? (
@@ -431,6 +485,17 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
         )}
       </div>
     ) : null
+
+    const responseContent = showSupportState && !showSupportStateBeforeResults ? (
+      <SupportComponent {...supportState.props} onAction={onFollowUp} />
+    ) : showSupportStateBeforeResults ? (
+      <div className="chatbot-response-stacked-state">
+        <SupportComponent {...supportState.props} onAction={onFollowUp} />
+        {resultsContent}
+      </div>
+    ) : (
+      resultsContent
+    )
 
     return (
       <article className="chatbot-message chatbot-message-assistant">

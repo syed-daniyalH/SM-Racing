@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import json
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import date, datetime, time, timedelta
@@ -43,6 +41,8 @@ from app.schemas.chatbot import (
     ChatbotSection,
     ChatbotSessionChoice,
 )
+from app.services.chatbot_llm_service import classify_chatbot_intent
+from app.services.submission_payload_service import get_session_payload
 
 
 NO_DATA_MESSAGE = "No matching data was found in the SM2 Racing database."
@@ -109,6 +109,8 @@ VEHICLE_SCOPED_INTENTS = {
 }
 
 NLP_ALLOWED_INTENTS = [
+    "greeting",
+    "help",
     "list_events",
     "latest_sessions",
     "sessions_by_event",
@@ -126,33 +128,6 @@ NLP_ALLOWED_INTENTS = [
     "compare",
     "unsupported",
 ]
-
-NLP_INTENT_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "intent": {"type": "string", "enum": NLP_ALLOWED_INTENTS},
-        "confidence": {"type": "number"},
-        "car_number": {"type": "string"},
-        "session_number": {"type": "string"},
-        "driver_query": {"type": "string"},
-        "event_query": {"type": "string"},
-        "date_filter": {"type": "string", "enum": ["", "today", "yesterday"]},
-        "time_window": {"type": "string", "enum": ["", "morning", "afternoon", "evening", "night"]},
-        "explanation": {"type": "string"},
-    },
-    "required": [
-        "intent",
-        "confidence",
-        "car_number",
-        "session_number",
-        "driver_query",
-        "event_query",
-        "date_filter",
-        "time_window",
-        "explanation",
-    ],
-}
 
 
 @dataclass(slots=True)
@@ -966,123 +941,22 @@ def _query_phrase_matches(haystack: str, query: str) -> bool:
     return all(token in normalized_haystack for token in tokens)
 
 
-def _response_output_text(response_payload: dict[str, Any]) -> str:
-    output_text = response_payload.get("output_text")
-    if isinstance(output_text, str):
-        return output_text
-
-    pieces: list[str] = []
-    for item in response_payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            text_value = content.get("text")
-            if isinstance(text_value, str):
-                pieces.append(text_value)
-    return "".join(pieces)
-
-
-def _clean_nlp_filter(value: object | None) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
 def _nlp_intent_from_query(query: str, deterministic_intent: str) -> NLPIntentResult | None:
     settings = get_settings()
-    if not settings.chatbot_nlp_enabled or not settings.openai_api_key:
-        return None
-
-    payload = {
-        "model": settings.openai_model,
-        "input": [
-            {
-                "role": "system",
-                "content": (
-                    "You classify SM Racing admin chatbot requests. Return only JSON that matches the schema. "
-                    "Choose one allowed intent. Extract only explicit filters from the user's text. "
-                    "Do not invent session IDs, car numbers, driver names, event names, dates, or times."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"User query: {query}\n"
-                    f"Deterministic fallback intent: {deterministic_intent}\n"
-                    "Allowed intents: "
-                    + ", ".join(NLP_ALLOWED_INTENTS)
-                    + "\nUse empty strings for unknown filters."
-                ),
-            },
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "sm_racing_chatbot_intent",
-                "schema": NLP_INTENT_SCHEMA,
-                "strict": True,
-            }
-        },
-    }
-
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+    result = classify_chatbot_intent(
+        query=query,
+        deterministic_intent=deterministic_intent,
+        allowed_intents=NLP_ALLOWED_INTENTS,
+        confidence_threshold=settings.openai_intent_confidence_threshold,
     )
-
-    try:
-        with urllib.request.urlopen(request, timeout=settings.openai_request_timeout_seconds) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        logger.warning("OpenAI NLP intent lookup failed: status=%s", error.code)
+    if result is None:
         return None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
-        logger.warning("OpenAI NLP intent lookup failed: %s", error)
-        return None
-
-    raw_text = _response_output_text(response_payload).strip()
-    if not raw_text:
-        logger.warning("OpenAI NLP intent lookup returned no output text")
-        return None
-
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError:
-        logger.warning("OpenAI NLP intent lookup returned invalid JSON")
-        return None
-
-    intent = _clean_nlp_filter(parsed.get("intent"))
-    if intent not in NLP_ALLOWED_INTENTS:
-        logger.warning("OpenAI NLP intent lookup returned unsupported intent: %s", intent)
-        return None
-
-    try:
-        confidence = float(parsed.get("confidence", 0))
-    except (TypeError, ValueError):
-        confidence = 0.0
-    confidence = max(0.0, min(confidence, 1.0))
-
-    filters = {
-        "car_number": _clean_nlp_filter(parsed.get("car_number")),
-        "session_number": _clean_nlp_filter(parsed.get("session_number")),
-        "driver_query": _clean_nlp_filter(parsed.get("driver_query")),
-        "event_query": _clean_nlp_filter(parsed.get("event_query")),
-        "date_filter": _clean_nlp_filter(parsed.get("date_filter")),
-        "time_window": _clean_nlp_filter(parsed.get("time_window")),
-    }
 
     return NLPIntentResult(
-        intent=intent,
-        confidence=confidence,
-        filters=filters,
-        explanation=_clean_nlp_filter(parsed.get("explanation")),
+        intent=result.intent,
+        confidence=result.confidence,
+        filters=result.filters,
+        explanation=result.explanation,
     )
 
 
@@ -1359,11 +1233,11 @@ def _selection_response(
         source_label=SOURCE_LABEL,
         data_found=bool(records_used or section.table_rows or section.cards or section.fields),
         intent=intent,
-        status="unsupported",
+        status="needs_context",
         data=_response_data(sections=[section], records_used=records_used, message=message),
         records_used=records_used,
         sections=[section],
-        follow_up=follow_up or DEFAULT_FOLLOW_UPS,
+        follow_up=follow_up or ["Show latest sessions", "Show all events", "Show driver and vehicle data"],
         generated_at=datetime.utcnow(),
     )
 
@@ -1415,6 +1289,57 @@ def _unsupported_response(
         sections=sections or [],
         records_used=records_used or [],
         follow_up=follow_up or DEFAULT_FOLLOW_UPS,
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _needs_context_response(
+    title: str,
+    message: str,
+    *,
+    intent: str,
+    sections: list[ChatbotSection] | None = None,
+    records_used: list[ChatbotRecordReference] | None = None,
+    follow_up: list[str] | None = None,
+    data: dict[str, Any] | list[Any] | None = None,
+) -> ChatbotResponse:
+    return ChatbotResponse(
+        kind="message",
+        title=title,
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=bool(sections or records_used),
+        intent=intent,
+        status="needs_context",
+        data=data or _response_data(sections=sections, records_used=records_used, message=message),
+        sections=sections or [],
+        records_used=records_used or [],
+        follow_up=follow_up or ["Show latest sessions", "Show all events", "Show driver and vehicle data"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _greeting_response() -> ChatbotResponse:
+    message = (
+        "I can help with recent sessions, setup data, comparisons, submissions, and driver or vehicle lookups."
+    )
+    return ChatbotResponse(
+        kind="message",
+        title="AI Race Assistant",
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=False,
+        intent="greeting",
+        status="success",
+        data={"message": message},
+        follow_up=[
+            "Show latest sessions",
+            "Show latest submissions",
+            "Compare session 1 vs session 2",
+            "Show setup for latest session",
+        ],
         generated_at=datetime.utcnow(),
     )
 
@@ -2073,7 +1998,7 @@ def _session_metadata_section(
 def _session_summary(bundle: SessionBundle, *, scope_note: str | None = None) -> str:
     session = bundle.session
     lines = [
-        f"Loaded {_session_heading(session)} from the SM2 Racing Database.",
+        f"Here is {_session_heading(session)} from the SM2 Racing database.",
         f"{_driver_name(bundle.driver, session.driver_id)} in {_vehicle_name(bundle.vehicle, session.vehicle_id)} at {session.track}.",
     ]
     if scope_note:
@@ -2125,9 +2050,9 @@ def _setup_response(
     summary = _session_summary(
         bundle,
         scope_note=(
-            "Review the pressure section below for the latest cold and hot readings."
+            "The pressure summary is shown first, followed by the recorded setup detail."
             if pressure_focus_only
-            else "Review the setup sections below for pressures, suspension, alignment, tire temperatures, and tire history."
+            else "The key setup sections below cover pressures, suspension, alignment, tire temperatures, and tire history."
         ),
     )
 
@@ -2621,8 +2546,8 @@ def _sessions_response(
     follow_up: list[str] | None = None,
 ) -> ChatbotResponse:
     summary_lines = [
-        f"Found {len(rows)} session(s) in the SM2 Racing Database.",
-        "Showing the most recent records first.",
+        f"I found {len(rows)} recent session{'s' if len(rows) != 1 else ''} in the SM2 Racing database.",
+        "The newest records are listed first.",
     ]
     if scope_note:
         summary_lines.append(scope_note)
@@ -2705,8 +2630,8 @@ def _events_response(rows: list[tuple[Event, RunGroup | None]]) -> ChatbotRespon
     return ChatbotResponse(
         kind="events",
         title="Events",
-        summary=f"Found {len(rows)} event(s) in the SM2 Racing Database.",
-        answer=f"Found {len(rows)} event(s) in the SM2 Racing Database.",
+        summary=f"I found {len(rows)} event{'s' if len(rows) != 1 else ''} in the SM2 Racing database.",
+        answer=f"I found {len(rows)} event{'s' if len(rows) != 1 else ''} in the SM2 Racing database.",
         source_label=SOURCE_LABEL,
         data_found=bool(rows),
         records_used=records_used,
@@ -2884,6 +2809,39 @@ def _submission_type_text(submission: Submission) -> str:
     return _text(submission.structured_ingest_status)
 
 
+def _submission_session_data(submission: Submission) -> dict[str, Any]:
+    payload = submission.payload if isinstance(submission.payload, dict) else {}
+    return get_session_payload(payload)
+
+
+def _submission_session_label(submission: Submission) -> str:
+    session_data = _submission_session_data(submission)
+    session_number = session_data.get("session_number")
+    if session_number not in (None, ""):
+        return f"Session {session_number}"
+
+    session_type = _text(session_data.get("session_type"), "")
+    if session_type and session_type != "Not available":
+        return session_type
+
+    return "Not available"
+
+
+def _submission_session_window(submission: Submission) -> str:
+    session_data = _submission_session_data(submission)
+    parts = [
+        _clean_blank(session_data.get("date")),
+        _clean_blank(session_data.get("time")),
+    ]
+    joined = " ".join(part for part in parts if part)
+    return joined or "Not available"
+
+
+def _submission_track_text(submission: Submission) -> str:
+    session_data = _submission_session_data(submission)
+    return _text(session_data.get("track"))
+
+
 def _submission_note_text(submission: Submission) -> str:
     analysis = submission.analysis_result if isinstance(submission.analysis_result, dict) else {}
     payload = submission.payload if isinstance(submission.payload, dict) else {}
@@ -2972,6 +2930,9 @@ def _submissions_response(
                 fields=[
                     _field("Submission ref", submission.submission_ref),
                     _field("Submission type", _submission_type_text(submission)),
+                    _field("Session", _submission_session_label(submission)),
+                    _field("Session window", _submission_session_window(submission)),
+                    _field("Track", _submission_track_text(submission)),
                     _field("Event", submission_event.name),
                     _field("Run group", _enum_text(run_group.normalized)),
                     _field("Driver", driver_label),
@@ -2995,8 +2956,8 @@ def _submissions_response(
         )
 
     summary = [
-        f"Found {len(rows)} submission(s) in the SM2 Racing Database.",
-        "Showing the most recent submissions first.",
+        f"I found {len(rows)} recent submission{'s' if len(rows) != 1 else ''} in the SM2 Racing database.",
+        "The newest records are listed first.",
     ]
 
     if event is not None:
@@ -3420,8 +3381,8 @@ def _compare_response(
     )
 
     summary_parts = [
-        f"Compared {_session_heading(left.session)} and {_session_heading(right.session)}.",
-        "Review the side-by-side cards and comparison table below.",
+        f"Here is a comparison of {_session_heading(left.session)} and {_session_heading(right.session)}.",
+        "The most important differences are highlighted first, with the full side-by-side breakdown below.",
         "\n".join(f"- {highlight}" for highlight in highlights),
     ]
 
@@ -3484,10 +3445,35 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     text = query.lower().strip()
     has_session_term = _has_session_term(text)
 
+    if text in {"hi", "hello", "hey", "thanks", "thank you", "help"} or any(
+        phrase in text
+        for phrase in [
+            "what can you do",
+            "how can you help",
+            "show help",
+            "need help",
+        ]
+    ):
+        return "greeting"
+
     if any(keyword in text for keyword in ["compare", "versus", "vs", "difference"]) and has_session_term:
         return "compare"
 
-    if any(keyword in text for keyword in ["baseline", "delta", "deltas", "changes from baseline"]):
+    if any(
+        keyword in text
+        for keyword in [
+            "baseline",
+            "delta",
+            "deltas",
+            "changes from baseline",
+            "what changed",
+            "changed from the last session",
+            "compare previous session with current",
+            "compare previous session",
+            "previous session with current",
+            "previous session",
+        ]
+    ):
         return "compare"
 
     if _looks_like_note_log_query(text):
@@ -3537,6 +3523,10 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
         for keyword in [
             "show setup for latest session",
             "latest setup",
+            "quick summary of this session",
+            "summary of this session",
+            "summarize this session",
+            "summarize latest session",
             "show full setup for latest session",
             "full setup sheet",
             "complete setup sheet",
@@ -3808,6 +3798,10 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         query_in.limit,
     )
 
+    if intent in {"greeting", "help"}:
+        logger.info("Admin chatbot greeting/help response selected")
+        return _greeting_response()
+
     if intent == "unsupported":
         logger.info("Admin chatbot unsupported query: %s", query)
         return _unsupported_response("AI Race Assistant", UNSUPPORTED_MESSAGE, intent="unsupported")
@@ -3958,7 +3952,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
 
         if resolved_event is None:
             logger.info("Admin chatbot missing data: intent=sessions_by_event no event selected")
-            return _unsupported_response(
+            return _needs_context_response(
                 "Sessions",
                 PLEASE_SELECT_EVENT_MESSAGE,
                 intent="sessions_by_event",
@@ -4009,7 +4003,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         resolved_driver = selected_driver
         if resolved_driver is None:
             if not driver_query:
-                return _unsupported_response(
+                return _needs_context_response(
                     "Sessions",
                     "Please include a driver name so I can show that driver's sessions.",
                     intent="sessions_by_driver",
@@ -4101,7 +4095,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
     if intent == "log_session_note":
         note = _extract_session_note_text(query)
         if note is None:
-            return _unsupported_response(
+            return _needs_context_response(
                 "Session Note",
                 "Please include the note text. Example: 'Log note: car felt loose on corner exit for Session 2.'",
                 intent="log_session_note",

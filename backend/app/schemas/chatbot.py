@@ -124,7 +124,7 @@ class ChatbotResponse(ORMModel):
     no_data_message: str | None = None
     records_used: list[ChatbotRecordReference] = Field(default_factory=list)
     intent: str | None = None
-    status: Literal["success", "not_found", "error", "unsupported"] = "success"
+    status: Literal["success", "not_found", "error", "unsupported", "needs_context"] = "success"
     data: dict[str, Any] | list[Any] | None = None
     error: str | None = None
     error_message: str | None = None
