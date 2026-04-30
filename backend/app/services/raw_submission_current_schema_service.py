@@ -738,6 +738,9 @@ def persist_raw_submission_current_schema(
         result.saved_sections.append("suspensions")
 
     alignment = _dict_or_empty(session_data.get("alignment"))
+    wheelbase_mm = session_data.get("wheelbase_mm")
+    if not alignment and wheelbase_mm is not None:
+        alignment = {"wheelbase_mm": wheelbase_mm}
     if isinstance(alignment, dict) and alignment:
         _upsert_numeric_section(
             db,
