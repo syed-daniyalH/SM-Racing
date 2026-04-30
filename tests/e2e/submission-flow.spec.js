@@ -502,7 +502,7 @@ test.describe("submission flow", () => {
     expect(body.payload.session_type).toBe("Practice");
   });
 
-  test("quick shorthand submissions route to the raw endpoint and surface raw validation errors", async ({
+  test("quick shorthand submissions route to the raw endpoint even when session number is empty", async ({
     page,
   }) => {
     const requests = await mockSubmissionApp(page, {
@@ -524,6 +524,7 @@ test.describe("submission flow", () => {
     await page.getByTestId("submission-driver-select").selectOption("NG");
     await page.getByTestId("submission-vehicle-select").selectOption("NG-GT4-2025");
     await page.getByTestId("submission-session-type").selectOption("Practice");
+    await page.getByTestId("submission-session-number").fill("");
 
     await page.getByRole("button", { name: "Submit Notes" }).click();
     await expect.poll(() => requests.rawSubmissionRequests.length).toBe(1);

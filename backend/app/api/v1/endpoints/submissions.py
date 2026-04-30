@@ -31,6 +31,7 @@ from app.services.raw_note_llm_service import extract_raw_note_via_openai
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,
     build_raw_submission_payload,
+    describe_raw_exception,
     parse_raw_note,
     resolve_driver_alias,
     resolve_vehicle_alias,
@@ -993,17 +994,25 @@ def create_raw_submission(
             message=exc.message,
             errors=exc.errors,
         )
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        logger.exception("Raw submission ingest failed")
+        error_context = describe_raw_exception(exc)
+        unexpected_message = (
+            f"Raw submission ingest failed unexpectedly: {error_context['display_message']}"
+        )
+        logger.exception("Raw submission ingest failed (%s)", error_context["display_message"])
         write_raw_audit_log_current_schema(
             db,
             action="submission.ingest.raw",
             status="ERROR",
             entity_type="submission",
             entity_id=str(request_payload.get("raw_text") or submission_in.event_id),
-            message="Raw submission ingest failed unexpectedly",
-            payload=request_payload,
+            message=unexpected_message,
+            payload={
+                **request_payload,
+                "parser_mode": parser_mode,
+                **error_context,
+            },
             actor_user_id=current_user.id,
             correlation_id=None,
         )
@@ -1011,7 +1020,8 @@ def create_raw_submission(
         return _raw_submission_response(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             status_value="ERROR",
-            message="Raw submission ingest failed unexpectedly",
+            message=unexpected_message,
+            errors=[{"field": "raw_text", "message": unexpected_message, **error_context}],
         )
 
 

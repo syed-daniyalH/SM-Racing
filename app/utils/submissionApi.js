@@ -151,7 +151,7 @@ const looksLikeRawRaceNote = (rawText) => {
   return RAW_NOTE_CUE_PATTERNS.some((pattern) => pattern.test(text));
 };
 
-const shouldUseRawSubmissionRoute = (submissionData) => {
+export const shouldUseRawSubmissionRoute = (submissionData) => {
   if (getSubmissionMode(submissionData) !== "quick") {
     return false;
   }

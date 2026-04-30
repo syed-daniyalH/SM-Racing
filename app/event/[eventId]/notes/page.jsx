@@ -8,7 +8,7 @@ import ScreenBackButton from "../../../components/Common/ScreenBackButton";
 import VoiceInputControl from "../../../components/Common/VoiceInputControl";
 import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
-import { createSubmission } from "../../../utils/submissionApi";
+import { createSubmission, shouldUseRawSubmissionRoute } from "../../../utils/submissionApi";
 import { getTrackCatalog } from "../../../utils/trackCatalogApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
@@ -146,6 +146,7 @@ const validateSubmissionFields = ({
   runGroupValue,
   driverOptions,
   vehicleOptions,
+  isRawQuickSubmission = false,
 }) => {
   const errors = {};
   const validDriverIds = new Set(
@@ -159,57 +160,59 @@ const validateSubmissionFields = ({
       .filter(Boolean),
   );
 
-  if (!isValidDateValue(formState.date)) {
-    errors.date = "Please enter a valid date.";
-  }
-
-  if (!isValidTimeValue(formState.time)) {
-    errors.time = "Please enter a valid time.";
-  }
-
-  if (!String(formState.session_type || "").trim()) {
-    errors.session_type = "Session type is required.";
-  }
-
-  const sessionNumberValue = String(formState.session_number ?? "").trim();
-  if (!sessionNumberValue) {
-    errors.session_number = "Session number is required.";
-  } else {
-    const parsedSessionNumber = Number(sessionNumberValue);
-    if (!Number.isInteger(parsedSessionNumber) || parsedSessionNumber <= 0) {
-      errors.session_number = "Session number must be a whole number greater than 0.";
+  if (!isRawQuickSubmission) {
+    if (!isValidDateValue(formState.date)) {
+      errors.date = "Please enter a valid date.";
     }
-  }
 
-  if (!isValidSessionId(formState.session_id)) {
-    errors.session_id =
-      "Session ID must use the generated format or a legacy session reference.";
-  }
-
-  const wheelbaseValue = String(formState.wheelbase_mm ?? "").trim();
-  if (wheelbaseValue) {
-    const parsedWheelbase = Number(wheelbaseValue);
-    if (!Number.isFinite(parsedWheelbase) || parsedWheelbase <= 0) {
-      errors.wheelbase_mm = "Wheelbase must be greater than 0.";
+    if (!isValidTimeValue(formState.time)) {
+      errors.time = "Please enter a valid time.";
     }
-  }
 
-  if (!String(trackValue || "").trim()) {
-    errors.track = "Please select a track.";
-  }
+    if (!String(formState.session_type || "").trim()) {
+      errors.session_type = "Session type is required.";
+    }
 
-  if (!String(runGroupValue || "").trim()) {
-    errors.run_group = "Run group is required before notes can be submitted.";
-  }
+    const sessionNumberValue = String(formState.session_number ?? "").trim();
+    if (!sessionNumberValue) {
+      errors.session_number = "Session number is required.";
+    } else {
+      const parsedSessionNumber = Number(sessionNumberValue);
+      if (!Number.isInteger(parsedSessionNumber) || parsedSessionNumber <= 0) {
+        errors.session_number = "Session number must be a whole number greater than 0.";
+      }
+    }
 
-  const driverId = String(formState.driver_id || "").trim();
-  if (!driverId || !validDriverIds.has(driverId)) {
-    errors.driver_id = "Please select a driver.";
-  }
+    if (!isValidSessionId(formState.session_id)) {
+      errors.session_id =
+        "Session ID must use the generated format or a legacy session reference.";
+    }
 
-  const vehicleId = String(formState.vehicle_id || "").trim();
-  if (!vehicleId || !validVehicleIds.has(vehicleId)) {
-    errors.vehicle_id = "Please select a vehicle.";
+    const wheelbaseValue = String(formState.wheelbase_mm ?? "").trim();
+    if (wheelbaseValue) {
+      const parsedWheelbase = Number(wheelbaseValue);
+      if (!Number.isFinite(parsedWheelbase) || parsedWheelbase <= 0) {
+        errors.wheelbase_mm = "Wheelbase must be greater than 0.";
+      }
+    }
+
+    if (!String(trackValue || "").trim()) {
+      errors.track = "Please select a track.";
+    }
+
+    if (!String(runGroupValue || "").trim()) {
+      errors.run_group = "Run group is required before notes can be submitted.";
+    }
+
+    const driverId = String(formState.driver_id || "").trim();
+    if (!driverId || !validDriverIds.has(driverId)) {
+      errors.driver_id = "Please select a driver.";
+    }
+
+    const vehicleId = String(formState.vehicle_id || "").trim();
+    if (!vehicleId || !validVehicleIds.has(vehicleId)) {
+      errors.vehicle_id = "Please select a vehicle.";
+    }
   }
 
   return errors;
@@ -1058,6 +1061,7 @@ export default function NotesSubmission() {
       runGroupValue: eventRunGroup,
       driverOptions,
       vehicleOptions: vehicleOptionsForDriver,
+      isRawQuickSubmission: isQuick && quickRawRoute,
     });
 
     if (Object.keys(submissionErrors).length > 0) {
@@ -1311,6 +1315,21 @@ export default function NotesSubmission() {
   const pressureWarnings = useMemo(
     () => getPressureWarnings(formState.pressures),
     [formState.pressures],
+  );
+  const quickRawRoute = useMemo(
+    () =>
+      shouldUseRawSubmissionRoute({
+        analysis_result: {
+          submission_mode: "quick",
+          ...(quickVoiceInputUsed !== undefined
+            ? { voice_input_used: quickVoiceInputUsed }
+            : {}),
+        },
+        raw_text: quickRawText,
+        image_url: quickImage,
+        ...(quickImage ? { payload: { image_url: quickImage } } : {}),
+      }),
+    [quickImage, quickRawText, quickVoiceInputUsed],
   );
 
   useEffect(() => {

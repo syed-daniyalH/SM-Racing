@@ -534,3 +534,29 @@ def validate_raw_submission_payload(
         errors.append({"field": "wheelbase_mm", "message": "wheelbase_mm must be numeric if provided"})
 
     return errors
+
+
+def describe_raw_exception(exc: Exception) -> dict[str, str]:
+    """Build a compact, safe exception summary for raw-note error logging."""
+
+    exception_type = exc.__class__.__name__
+    original_exc = getattr(exc, "orig", None)
+    if original_exc is not None:
+        original_exception_type = original_exc.__class__.__name__
+        original_exception_message = _normalized_text(str(original_exc)) or original_exception_type
+        return {
+            "exception_type": exception_type,
+            "original_exception_type": original_exception_type,
+            "original_exception_message": original_exception_message,
+            "display_message": (
+                f"{exception_type}: {original_exception_type}: {original_exception_message}"
+            ),
+        }
+
+    exception_message = _normalized_text(str(exc)) or exception_type
+    return {
+        "exception_type": exception_type,
+        "original_exception_type": "",
+        "original_exception_message": "",
+        "display_message": f"{exception_type}: {exception_message}",
+    }

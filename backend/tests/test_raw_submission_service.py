@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,
     build_raw_submission_payload,
+    describe_raw_exception,
     parse_raw_note,
     resolve_driver_alias,
     resolve_vehicle_alias,
@@ -231,6 +232,21 @@ class RawSubmissionServiceTests(unittest.TestCase):
             resolve_vehicle_alias(driver_vehicles, parsed.vehicle_alias)
 
         self.assertEqual(context.exception.errors[0]["message"], "vehicle_id does not belong to driver_id")
+
+    def test_describe_raw_exception_prefers_original_db_error(self) -> None:
+        class FakeIntegrityError(Exception):
+            def __init__(self) -> None:
+                super().__init__("SQLAlchemy wrapper")
+                self.orig = RuntimeError("duplicate key value violates unique constraint")
+
+        context = describe_raw_exception(FakeIntegrityError())
+
+        self.assertEqual(context["exception_type"], "FakeIntegrityError")
+        self.assertEqual(context["original_exception_type"], "RuntimeError")
+        self.assertEqual(
+            context["display_message"],
+            "FakeIntegrityError: RuntimeError: duplicate key value violates unique constraint",
+        )
 
 
 if __name__ == "__main__":
