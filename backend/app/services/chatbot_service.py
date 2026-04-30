@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from decimal import Decimal
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Load, Session
 
+from app.core.config import get_settings
 from app.core.db_schema import SM2RACING_SCHEMA
 from app.models.driver import Driver
 from app.models.event import Event
@@ -45,22 +50,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_FOLLOW_UPS = [
     "Show all events",
     "Show latest sessions",
+    "Summarize today's runs for Car 12",
     "Show sessions for this event",
     "Show sessions for driver Alex",
     "Show setup for latest session",
     "Show tire pressures",
+    "What were the tire pressures in the morning session?",
     "Show tire pressures for Session 2",
     "Show suspension data",
     "Show alignment data",
     "Show alignment for Car 12",
+    "Show tire temperatures",
+    "Show tire history",
     "Show latest submissions",
     "Show driver and vehicle data",
+    "Show changes from baseline",
     "Compare sessions",
 ]
 
 UNSUPPORTED_MESSAGE = (
     "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
-    "alignment, submissions, drivers, and vehicles. Please ask one of those questions."
+    "alignment, tire temperatures, tire history, submissions, drivers, and vehicles. "
+    "Please ask one of those questions."
 )
 PLEASE_SELECT_EVENT_MESSAGE = "Please select an event or include the event name so I can show its sessions."
 NO_EVENTS_MESSAGE = "No events were found in the SM2 Racing database."
@@ -70,12 +81,86 @@ MULTIPLE_DRIVER_MATCH_MESSAGE = "I found multiple drivers matching '{term}'. Ple
 MULTIPLE_VEHICLE_MATCH_MESSAGE = "I found multiple vehicles matching Car {term}. Please choose the correct vehicle."
 MULTIPLE_SESSION_MATCH_MESSAGE = "I found multiple Session {number} records. Please select an event or provide more details."
 
+SESSION_TIME_WINDOWS = {
+    "morning": (time(0, 0), time(12, 0), "morning"),
+    "afternoon": (time(12, 0), time(17, 0), "afternoon"),
+    "evening": (time(17, 0), time(21, 0), "evening"),
+    "night": (time(21, 0), None, "night"),
+}
+
+VEHICLE_SCOPED_INTENTS = {
+    "latest_sessions",
+    "sessions_by_event",
+    "sessions_by_driver",
+    "setup_latest_session",
+    "tire_pressures_by_session",
+    "tire_temperatures_by_session",
+    "tire_history_by_session",
+    "suspension_data",
+    "alignment_by_car",
+    "latest_submissions",
+    "driver_vehicle_data",
+    "compare",
+}
+
+NLP_ALLOWED_INTENTS = [
+    "list_events",
+    "latest_sessions",
+    "sessions_by_event",
+    "sessions_by_driver",
+    "setup_latest_session",
+    "tire_pressures_by_session",
+    "tire_temperatures_by_session",
+    "tire_history_by_session",
+    "suspension_data",
+    "alignment_by_car",
+    "latest_submissions",
+    "driver_vehicle_data",
+    "compare",
+    "unsupported",
+]
+
+NLP_INTENT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "intent": {"type": "string", "enum": NLP_ALLOWED_INTENTS},
+        "confidence": {"type": "number"},
+        "car_number": {"type": "string"},
+        "session_number": {"type": "string"},
+        "driver_query": {"type": "string"},
+        "event_query": {"type": "string"},
+        "date_filter": {"type": "string", "enum": ["", "today", "yesterday"]},
+        "time_window": {"type": "string", "enum": ["", "morning", "afternoon", "evening", "night"]},
+        "explanation": {"type": "string"},
+    },
+    "required": [
+        "intent",
+        "confidence",
+        "car_number",
+        "session_number",
+        "driver_query",
+        "event_query",
+        "date_filter",
+        "time_window",
+        "explanation",
+    ],
+}
+
 
 @dataclass(slots=True)
 class SessionBundle:
     session: Seance
     driver: Driver | None
     vehicle: Vehicle | None
+
+
+@dataclass(slots=True)
+class NLPIntentResult:
+    intent: str
+    confidence: float
+    filters: dict[str, str]
+    explanation: str = ""
 
 
 def _table(name: str) -> str:
@@ -457,6 +542,126 @@ def _query_phrase_matches(haystack: str, query: str) -> bool:
     return all(token in normalized_haystack for token in tokens)
 
 
+def _response_output_text(response_payload: dict[str, Any]) -> str:
+    output_text = response_payload.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
+
+    pieces: list[str] = []
+    for item in response_payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            text_value = content.get("text")
+            if isinstance(text_value, str):
+                pieces.append(text_value)
+    return "".join(pieces)
+
+
+def _clean_nlp_filter(value: object | None) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _nlp_intent_from_query(query: str, deterministic_intent: str) -> NLPIntentResult | None:
+    settings = get_settings()
+    if not settings.chatbot_nlp_enabled or not settings.openai_api_key:
+        return None
+
+    payload = {
+        "model": settings.openai_model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You classify SM Racing admin chatbot requests. Return only JSON that matches the schema. "
+                    "Choose one allowed intent. Extract only explicit filters from the user's text. "
+                    "Do not invent session IDs, car numbers, driver names, event names, dates, or times."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"User query: {query}\n"
+                    f"Deterministic fallback intent: {deterministic_intent}\n"
+                    "Allowed intents: "
+                    + ", ".join(NLP_ALLOWED_INTENTS)
+                    + "\nUse empty strings for unknown filters."
+                ),
+            },
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "sm_racing_chatbot_intent",
+                "schema": NLP_INTENT_SCHEMA,
+                "strict": True,
+            }
+        },
+    }
+
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=settings.openai_request_timeout_seconds) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        logger.warning("OpenAI NLP intent lookup failed: status=%s", error.code)
+        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
+        logger.warning("OpenAI NLP intent lookup failed: %s", error)
+        return None
+
+    raw_text = _response_output_text(response_payload).strip()
+    if not raw_text:
+        logger.warning("OpenAI NLP intent lookup returned no output text")
+        return None
+
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        logger.warning("OpenAI NLP intent lookup returned invalid JSON")
+        return None
+
+    intent = _clean_nlp_filter(parsed.get("intent"))
+    if intent not in NLP_ALLOWED_INTENTS:
+        logger.warning("OpenAI NLP intent lookup returned unsupported intent: %s", intent)
+        return None
+
+    try:
+        confidence = float(parsed.get("confidence", 0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(confidence, 1.0))
+
+    filters = {
+        "car_number": _clean_nlp_filter(parsed.get("car_number")),
+        "session_number": _clean_nlp_filter(parsed.get("session_number")),
+        "driver_query": _clean_nlp_filter(parsed.get("driver_query")),
+        "event_query": _clean_nlp_filter(parsed.get("event_query")),
+        "date_filter": _clean_nlp_filter(parsed.get("date_filter")),
+        "time_window": _clean_nlp_filter(parsed.get("time_window")),
+    }
+
+    return NLPIntentResult(
+        intent=intent,
+        confidence=confidence,
+        filters=filters,
+        explanation=_clean_nlp_filter(parsed.get("explanation")),
+    )
+
+
 def _event_match_text(event: Event, run_group: RunGroup | None) -> str:
     return " ".join(
         part
@@ -631,6 +836,61 @@ def _extract_car_number(query: str) -> str | None:
     return None
 
 
+def _has_session_term(text: str) -> bool:
+    if "session" in text or "seance" in text:
+        return True
+    if "run group" in text:
+        return False
+    return re.search(r"\bruns?\b", text) is not None
+
+
+def _extract_session_date_filter(query: str, *, today: date | None = None) -> tuple[date | None, str | None]:
+    text_value = query.lower()
+    reference = today or date.today()
+    if re.search(r"\btoday(?:['’]s)?\b", text_value):
+        return reference, "today"
+    if re.search(r"\byesterday(?:['’]s)?\b", text_value):
+        return reference - timedelta(days=1), "yesterday"
+    return None, None
+
+
+def _extract_time_window(query: str) -> str | None:
+    text_value = query.lower()
+    for key in SESSION_TIME_WINDOWS:
+        if re.search(rf"\b{key}\b", text_value):
+            return key
+    return None
+
+
+def _session_matches_time_window(session: Seance, time_window: str | None) -> bool:
+    if not time_window:
+        return True
+
+    session_time = session.session_time
+    if session_time is None:
+        return False
+
+    start, end, _ = SESSION_TIME_WINDOWS[time_window]
+    if session_time < start:
+        return False
+    return end is None or session_time < end
+
+
+def _session_scope_note(
+    *,
+    session_date: date | None = None,
+    session_date_label: str | None = None,
+    time_window: str | None = None,
+) -> str | None:
+    notes: list[str] = []
+    if session_date is not None:
+        label = session_date_label or _date_text(session_date)
+        notes.append(f"Scoped to {label} ({_date_text(session_date)}).")
+    if time_window:
+        notes.append(f"Scoped to the {SESSION_TIME_WINDOWS[time_window][2]} session window.")
+    return " ".join(notes) if notes else None
+
+
 def _session_event_match(session: Seance, event_rows: list[tuple[Event, RunGroup | None]]) -> tuple[Event | None, RunGroup | None]:
     for event, run_group in event_rows:
         if event.start_date.date() <= session.session_date <= event.end_date.date():
@@ -783,6 +1043,7 @@ def _session_stmt(
     event: Event | None = None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    session_date: date | None = None,
 ) -> object:
     stmt = (
         select(Seance, Driver, Vehicle)
@@ -805,6 +1066,9 @@ def _session_stmt(
     if vehicle_id:
         stmt = stmt.where(Seance.vehicle_id == vehicle_id)
 
+    if session_date is not None:
+        stmt = stmt.where(Seance.session_date == session_date)
+
     return stmt.order_by(
         Seance.session_date.desc(),
         Seance.session_time.desc().nullslast(),
@@ -818,12 +1082,20 @@ def _load_session_rows(
     event: Event | None = None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    session_date: date | None = None,
+    time_window: str | None = None,
     limit: int | None = 10,
 ) -> list[tuple[Seance, Driver | None, Vehicle | None]]:
-    stmt = _session_stmt(event=event, driver_id=driver_id, vehicle_id=vehicle_id)
-    if limit is not None:
+    stmt = _session_stmt(event=event, driver_id=driver_id, vehicle_id=vehicle_id, session_date=session_date)
+    needs_post_filter = time_window is not None
+    if limit is not None and not needs_post_filter:
         stmt = stmt.limit(limit)
-    return list(db.execute(stmt).all())
+    rows = list(db.execute(stmt).all())
+    if needs_post_filter:
+        rows = [row for row in rows if _session_matches_time_window(row[0], time_window)]
+        if limit is not None:
+            rows = rows[:limit]
+    return rows
 
 
 def _load_session_bundle(db: Session, session_id: str) -> SessionBundle | None:
@@ -853,6 +1125,8 @@ def _select_anchor_session(
     session_id: str | None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    session_date: date | None = None,
+    time_window: str | None = None,
 ) -> SessionBundle | None:
     if session_id:
         bundle = _load_session_bundle(db, session_id)
@@ -866,7 +1140,15 @@ def _select_anchor_session(
             return None
         return bundle
 
-    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=1)
+    rows = _load_session_rows(
+        db,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=1,
+    )
     if not rows:
         return None
 
@@ -886,8 +1168,18 @@ def _load_session_rows_by_number(
     event: Event | None = None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    session_date: date | None = None,
+    time_window: str | None = None,
 ) -> list[tuple[Seance, Driver | None, Vehicle | None]]:
-    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    rows = _load_session_rows(
+        db,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=None,
+    )
     return [row for row in rows if row[0].session_number == session_number]
 
 
@@ -898,12 +1190,81 @@ def _latest_bundle_with_record(
     event: Event | None = None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    session_date: date | None = None,
+    time_window: str | None = None,
 ) -> SessionBundle | None:
-    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    rows = _load_session_rows(
+        db,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=None,
+    )
     for session, driver, vehicle in rows:
         if db.scalar(select(model).where(model.id_seance == session.id_seance)) is not None:
             return SessionBundle(session=session, driver=driver, vehicle=vehicle)
     return None
+
+
+def _setup_focus_scope_note(
+    *,
+    session_date: date | None = None,
+    session_date_label: str | None = None,
+    time_window: str | None = None,
+    focus_note: str,
+) -> str:
+    return " ".join(
+        item
+        for item in [
+            _session_scope_note(
+                session_date=session_date,
+                session_date_label=session_date_label,
+                time_window=time_window,
+            ),
+            focus_note,
+        ]
+        if item
+    )
+
+
+def _resolve_setup_section_bundle(
+    db: Session,
+    *,
+    event: Event | None,
+    session_bundle: SessionBundle | None,
+    query_in: ChatbotQuery,
+    session_number: int | None,
+    vehicle_filter_id: str | None,
+    session_date: date | None,
+    time_window: str | None,
+    model: type[Any],
+) -> SessionBundle | None:
+    if query_in.session_id:
+        return session_bundle
+
+    if session_number is not None:
+        rows = _load_session_rows_by_number(
+            db,
+            session_number=session_number,
+            event=event,
+            driver_id=query_in.driver_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+        )
+        return _bundle_from_row(rows[0]) if rows else None
+
+    return _latest_bundle_with_record(
+        db,
+        model=model,
+        event=event,
+        driver_id=query_in.driver_id,
+        vehicle_id=vehicle_filter_id,
+        session_date=session_date,
+        time_window=time_window,
+    )
 
 
 def _event_cards(rows: list[tuple[Event, RunGroup | None]]) -> list[ChatbotCard]:
@@ -1407,6 +1768,33 @@ def _session_focus_response(
     )
 
 
+def _session_rollup_section(rows: list[tuple[Seance, Driver | None, Vehicle | None]]) -> ChatbotSection:
+    drivers = {_driver_name(driver, session.driver_id) for session, driver, _ in rows}
+    vehicles = {_vehicle_name(vehicle, session.vehicle_id) for session, _, vehicle in rows}
+    tracks = {session.track for session, _, _ in rows if session.track}
+    dates = sorted({session.session_date for session, _, _ in rows})
+    durations = [session.duration_min for session, _, _ in rows if session.duration_min is not None]
+    total_duration = sum(durations) if durations else None
+    date_range = "Not available"
+    if dates:
+        date_range = _date_text(dates[0]) if len(dates) == 1 else f"{_date_text(dates[0])} - {_date_text(dates[-1])}"
+
+    return _section(
+        "Session summary",
+        subtitle="Quick rollup of the matched race-weekend records.",
+        variant="fields",
+        icon_key="session",
+        fields=[
+            _field("Sessions found", len(rows)),
+            _field("Drivers", _joined_text(sorted(drivers))),
+            _field("Vehicles", _joined_text(sorted(vehicles))),
+            _field("Tracks", _joined_text(sorted(tracks))),
+            _field("Date range", date_range),
+            _field("Total duration", _duration_text(total_duration)),
+        ],
+    )
+
+
 def _sessions_response(
     rows: list[tuple[Seance, Driver | None, Vehicle | None]],
     *,
@@ -1444,6 +1832,7 @@ def _sessions_response(
         )
 
     sections = [
+        _session_rollup_section(rows),
         _section(
             "Latest sessions",
             subtitle="Compact session cards with event, driver, vehicle, run group, and status details.",
@@ -1832,12 +2221,99 @@ def _metric_average(values: Iterable[object | None]) -> str:
     return _decimal_text(sum(numbers) / len(numbers))
 
 
+def _compare_value(value: object | None, *, digits: int = 2) -> str:
+    if value is None:
+        return "Not available"
+    if isinstance(value, (Decimal, int, float)):
+        return _decimal_text(value, digits)
+    return _text(value)
+
+
+def _append_compare_row(
+    rows: list[list[str]],
+    metric: str,
+    left_value: object | None,
+    right_value: object | None,
+    context: str,
+    *,
+    digits: int = 2,
+) -> None:
+    rows.append(
+        [
+            metric,
+            _compare_value(left_value, digits=digits),
+            _compare_value(right_value, digits=digits),
+            context,
+        ]
+    )
+
+
+def _append_compare_fields(
+    rows: list[list[str]],
+    *,
+    left_record: object | None,
+    right_record: object | None,
+    definitions: Iterable[tuple[str, str, str, int]],
+) -> None:
+    for metric, attribute, context, digits in definitions:
+        _append_compare_row(
+            rows,
+            metric,
+            getattr(left_record, attribute, None) if left_record is not None else None,
+            getattr(right_record, attribute, None) if right_record is not None else None,
+            context,
+            digits=digits,
+        )
+
+
+def _tire_history_summary(db: Session, session_id: str) -> tuple[int, str, str, str, str]:
+    rows = list(
+        db.execute(
+            select(TireHistory, TireInventory)
+            .join(TireInventory, TireInventory.tire_id == TireHistory.tire_id, isouter=True)
+            .where(TireHistory.id_seance == session_id)
+            .order_by(TireHistory.created_at.desc(), TireHistory.tire_id.asc())
+            .limit(12)
+    ).all()
+    )
+    if not rows:
+        return 0, "Not available", "Not available", "Not available", "Not available"
+
+    tire_ids = [history.tire_id for history, _ in rows]
+    compounds = [
+        " ".join(part for part in [inventory.manufacturer, inventory.model] if part).strip()
+        for _, inventory in rows
+        if inventory is not None
+    ]
+    heat_cycles = [
+        str(inventory.heat_cycles)
+        for _, inventory in rows
+        if inventory is not None and inventory.heat_cycles is not None
+    ]
+    statuses = [
+        _humanize_enum(inventory.status)
+        for _, inventory in rows
+        if inventory is not None and inventory.status is not None
+    ]
+
+    return (
+        len(rows),
+        _joined_text(tire_ids),
+        _joined_text(compounds),
+        _joined_text(heat_cycles),
+        _joined_text(statuses),
+    )
+
+
 def _compare_rows(
     left: SessionBundle,
     right: SessionBundle,
     *,
+    db: Session,
     left_pressure: Pressure | None,
     right_pressure: Pressure | None,
+    left_suspension: Suspension | None,
+    right_suspension: Suspension | None,
     left_temperature: TireTemperature | None,
     right_temperature: TireTemperature | None,
     left_alignment: Alignment | None,
@@ -1887,67 +2363,122 @@ def _compare_rows(
             return []
         return [alignment.ride_height_f, alignment.ride_height_r]
 
-    rows = [
-        [
-            "Session",
-            _session_heading(left.session),
-            _session_heading(right.session),
-            "Selected comparison",
+    rows: list[list[str]] = []
+    _append_compare_row(rows, "Session", _session_heading(left.session), _session_heading(right.session), "Session info")
+    _append_compare_row(
+        rows,
+        "Date",
+        f"{_date_text(left.session.session_date)} {_time_text(left.session.session_time)}",
+        f"{_date_text(right.session.session_date)} {_time_text(right.session.session_time)}",
+        "Session window",
+    )
+    _append_compare_row(rows, "Track", left.session.track, right.session.track, "Track selection")
+    _append_compare_row(rows, "Driver", _driver_name(left.driver, left.session.driver_id), _driver_name(right.driver, right.session.driver_id), "Driver pairing")
+    _append_compare_row(rows, "Vehicle", _vehicle_name(left.vehicle, left.session.vehicle_id), _vehicle_name(right.vehicle, right.session.vehicle_id), "Vehicle pairing")
+    _append_compare_row(rows, "Session type", left.session.session_type, right.session.session_type, "Session info")
+    _append_compare_row(rows, "Duration", _duration_text(left.session.duration_min), _duration_text(right.session.duration_min), "Session length")
+    _append_compare_row(rows, "Tire set", left.session.tire_set, right.session.tire_set, "Tire history and session tire set")
+    _append_compare_row(rows, "Status", _humanize_enum(_session_status_value(left.session)), _humanize_enum(_session_status_value(right.session)), "Session metadata")
+
+    _append_compare_row(rows, "Cold pressure avg", _metric_average(left_cold), _metric_average(right_cold), "Pressures - average cold pressure")
+    _append_compare_row(rows, "Hot pressure avg", _metric_average(left_hot), _metric_average(right_hot), "Pressures - average hot pressure")
+    _append_compare_fields(
+        rows,
+        left_record=left_pressure,
+        right_record=right_pressure,
+        definitions=[
+            ("Cold pressure FL", "cold_fl", "Pressures - front left cold psi", 2),
+            ("Cold pressure FR", "cold_fr", "Pressures - front right cold psi", 2),
+            ("Cold pressure RL", "cold_rl", "Pressures - rear left cold psi", 2),
+            ("Cold pressure RR", "cold_rr", "Pressures - rear right cold psi", 2),
+            ("Hot pressure FL", "hot_fl", "Pressures - front left hot psi", 2),
+            ("Hot pressure FR", "hot_fr", "Pressures - front right hot psi", 2),
+            ("Hot pressure RL", "hot_rl", "Pressures - rear left hot psi", 2),
+            ("Hot pressure RR", "hot_rr", "Pressures - rear right hot psi", 2),
         ],
-        [
-            "Date",
-            f"{_date_text(left.session.session_date)} {_time_text(left.session.session_time)}",
-            f"{_date_text(right.session.session_date)} {_time_text(right.session.session_time)}",
-            "Session window",
+    )
+
+    _append_compare_fields(
+        rows,
+        left_record=left_suspension,
+        right_record=right_suspension,
+        definitions=[
+            ("Rebound FL", "rebound_fl", "Suspension - front left rebound", 0),
+            ("Rebound FR", "rebound_fr", "Suspension - front right rebound", 0),
+            ("Rebound RL", "rebound_rl", "Suspension - rear left rebound", 0),
+            ("Rebound RR", "rebound_rr", "Suspension - rear right rebound", 0),
+            ("Bump FL", "bump_fl", "Suspension - front left bump", 0),
+            ("Bump FR", "bump_fr", "Suspension - front right bump", 0),
+            ("Bump RL", "bump_rl", "Suspension - rear left bump", 0),
+            ("Bump RR", "bump_rr", "Suspension - rear right bump", 0),
+            ("Sway bar front", "sway_bar_f", "Suspension - front sway bar", 2),
+            ("Sway bar rear", "sway_bar_r", "Suspension - rear sway bar", 2),
+            ("Wing angle", "wing_angle_deg", "Suspension - aero wing angle", 2),
         ],
-        [
-            "Driver",
-            _driver_name(left.driver, left.session.driver_id),
-            _driver_name(right.driver, right.session.driver_id),
-            "Driver pairing",
+    )
+
+    _append_compare_row(rows, "Ride height avg", _metric_average(ride_height_values(left_alignment)), _metric_average(ride_height_values(right_alignment)), "Alignment - average ride height")
+    _append_compare_fields(
+        rows,
+        left_record=left_alignment,
+        right_record=right_alignment,
+        definitions=[
+            ("Camber FL", "camber_fl", "Alignment - front left camber", 2),
+            ("Camber FR", "camber_fr", "Alignment - front right camber", 2),
+            ("Camber RL", "camber_rl", "Alignment - rear left camber", 2),
+            ("Camber RR", "camber_rr", "Alignment - rear right camber", 2),
+            ("Toe front", "toe_front", "Alignment - front toe", 2),
+            ("Toe rear", "toe_rear", "Alignment - rear toe", 2),
+            ("Caster L", "caster_l", "Alignment - left caster", 2),
+            ("Caster R", "caster_r", "Alignment - right caster", 2),
+            ("Ride height front", "ride_height_f", "Alignment - front ride height", 2),
+            ("Ride height rear", "ride_height_r", "Alignment - rear ride height", 2),
+            ("Corner weight FL", "corner_weight_fl", "Alignment - front left corner weight", 2),
+            ("Corner weight FR", "corner_weight_fr", "Alignment - front right corner weight", 2),
+            ("Corner weight RL", "corner_weight_rl", "Alignment - rear left corner weight", 2),
+            ("Corner weight RR", "corner_weight_rr", "Alignment - rear right corner weight", 2),
+            ("Cross weight", "cross_weight_pct", "Alignment - cross weight percent", 2),
+            ("Rake", "rake_mm", "Alignment - rake", 2),
+            ("Wheelbase", "wheelbase_mm", "Alignment - wheelbase", 2),
         ],
-        [
-            "Vehicle",
-            _vehicle_name(left.vehicle, left.session.vehicle_id),
-            _vehicle_name(right.vehicle, right.session.vehicle_id),
-            "Vehicle pairing",
+    )
+
+    _append_compare_row(rows, "Tire temperature avg", _metric_average(temp_values(left_temperature)), _metric_average(temp_values(right_temperature)), "Tire temperatures - overall average")
+    _append_compare_fields(
+        rows,
+        left_record=left_temperature,
+        right_record=right_temperature,
+        definitions=[
+            ("Temperature FL inner", "fl_in", "Tire temperatures - front left inner", 2),
+            ("Temperature FL middle", "fl_mid", "Tire temperatures - front left middle", 2),
+            ("Temperature FL outer", "fl_out", "Tire temperatures - front left outer", 2),
+            ("Temperature FR inner", "fr_in", "Tire temperatures - front right inner", 2),
+            ("Temperature FR middle", "fr_mid", "Tire temperatures - front right middle", 2),
+            ("Temperature FR outer", "fr_out", "Tire temperatures - front right outer", 2),
+            ("Temperature RL inner", "rl_in", "Tire temperatures - rear left inner", 2),
+            ("Temperature RL middle", "rl_mid", "Tire temperatures - rear left middle", 2),
+            ("Temperature RL outer", "rl_out", "Tire temperatures - rear left outer", 2),
+            ("Temperature RR inner", "rr_in", "Tire temperatures - rear right inner", 2),
+            ("Temperature RR middle", "rr_mid", "Tire temperatures - rear right middle", 2),
+            ("Temperature RR outer", "rr_out", "Tire temperatures - rear right outer", 2),
         ],
-        [
-            "Duration",
-            _duration_text(left.session.duration_min),
-            _duration_text(right.session.duration_min),
-            "Session length",
-        ],
-        [
-            "Cold pressure avg",
-            _metric_average(left_cold),
-            _metric_average(right_cold),
-            "Average cold pressure",
-        ],
-        [
-            "Hot pressure avg",
-            _metric_average(left_hot),
-            _metric_average(right_hot),
-            "Average hot pressure",
-        ],
-        [
-            "Tire temperature avg",
-            _metric_average(temp_values(left_temperature)),
-            _metric_average(temp_values(right_temperature)),
-            "Overall tire temperature",
-        ],
-        [
-            "Ride height avg",
-            _metric_average(ride_height_values(left_alignment)),
-            _metric_average(ride_height_values(right_alignment)),
-            "Average ride height",
-        ],
-        ["Track", left.session.track, right.session.track, "Track selection"],
-    ]
+    )
+
+    left_history_count, left_tires, left_compounds, left_heat_cycles, left_tire_status = _tire_history_summary(db, left.session.id_seance)
+    right_history_count, right_tires, right_compounds, right_heat_cycles, right_tire_status = _tire_history_summary(db, right.session.id_seance)
+    _append_compare_row(rows, "Tire history count", left_history_count, right_history_count, "Tire history - rows attached to session", digits=0)
+    _append_compare_row(rows, "Tire IDs", left_tires, right_tires, "Tire history - tire set IDs")
+    _append_compare_row(rows, "Tire compounds", left_compounds, right_compounds, "Tire history - manufacturer and model")
+    _append_compare_row(rows, "Heat cycles", left_heat_cycles, right_heat_cycles, "Tire history - heat cycles")
+    _append_compare_row(rows, "Tire status", left_tire_status, right_tire_status, "Tire history - inventory status")
 
     highlights = [
         f"Session {right.session.session_number} is being compared against Session {left.session.session_number}.",
     ]
+
+    changed_count = sum(1 for _, left_value, right_value, _ in rows if left_value != right_value)
+    unchanged_count = len(rows) - changed_count
+    highlights.append(f"{changed_count} field(s) changed and {unchanged_count} stayed the same.")
 
     if left.session.duration_min is not None and right.session.duration_min is not None:
         diff = right.session.duration_min - left.session.duration_min
@@ -1968,8 +2499,18 @@ def _compare_response(
     driver_id: str | None,
     vehicle_id: str | None,
     query: str | None = None,
+    session_date: date | None = None,
+    time_window: str | None = None,
 ) -> ChatbotResponse | None:
-    rows = _load_session_rows(db, event=event, driver_id=driver_id, vehicle_id=vehicle_id, limit=None)
+    rows = _load_session_rows(
+        db,
+        event=event,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        session_date=session_date,
+        time_window=time_window,
+        limit=None,
+    )
     if len(rows) < 2:
         return None
 
@@ -1982,6 +2523,8 @@ def _compare_response(
             event=event,
             driver_id=driver_id,
             vehicle_id=vehicle_id,
+            session_date=session_date,
+            time_window=time_window,
         )
         second_matches = _load_session_rows_by_number(
             db,
@@ -1989,6 +2532,8 @@ def _compare_response(
             event=event,
             driver_id=driver_id,
             vehicle_id=vehicle_id,
+            session_date=session_date,
+            time_window=time_window,
         )
         if not first_matches or not second_matches:
             return None
@@ -2017,14 +2562,16 @@ def _compare_response(
         left_row = rows[anchor_index]
         right_row = rows[anchor_index + 1]
     else:
-        left_row = rows[0]
-        right_row = rows[1]
+        left_row = rows[1]
+        right_row = rows[0]
 
     left = SessionBundle(*left_row)
     right = SessionBundle(*right_row)
 
     left_pressure = db.scalar(select(Pressure).where(Pressure.id_seance == left.session.id_seance))
     right_pressure = db.scalar(select(Pressure).where(Pressure.id_seance == right.session.id_seance))
+    left_suspension = db.scalar(select(Suspension).where(Suspension.id_seance == left.session.id_seance))
+    right_suspension = db.scalar(select(Suspension).where(Suspension.id_seance == right.session.id_seance))
     left_temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == left.session.id_seance))
     right_temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == right.session.id_seance))
     left_alignment = db.scalar(select(Alignment).where(Alignment.id_seance == left.session.id_seance))
@@ -2033,8 +2580,11 @@ def _compare_response(
     headers, table_rows, highlights = _compare_rows(
         left,
         right,
+        db=db,
         left_pressure=left_pressure,
         right_pressure=right_pressure,
+        left_suspension=left_suspension,
+        right_suspension=right_suspension,
         left_temperature=left_temperature,
         right_temperature=right_temperature,
         left_alignment=left_alignment,
@@ -2071,6 +2621,20 @@ def _compare_response(
             table_rows=table_rows,
         ),
     ]
+    records_used = [
+        _record_reference(
+            "session",
+            left.session.id_seance,
+            _session_heading(left.session),
+            details=f"{_driver_name(left.driver, left.session.driver_id)} | {_vehicle_name(left.vehicle, left.session.vehicle_id)}",
+        ),
+        _record_reference(
+            "session",
+            right.session.id_seance,
+            _session_heading(right.session),
+            details=f"{_driver_name(right.driver, right.session.driver_id)} | {_vehicle_name(right.vehicle, right.session.vehicle_id)}",
+        ),
+    ]
 
     return ChatbotResponse(
         kind="compare",
@@ -2080,7 +2644,8 @@ def _compare_response(
         source_label=SOURCE_LABEL,
         data_found=True,
         intent="compare",
-        data=_response_data(sections=sections, records_used=[]),
+        records_used=records_used,
+        data=_response_data(sections=sections, records_used=records_used),
         sections=sections,
         follow_up=["Show setup for latest session", "Show latest sessions", "Show tire pressures"],
         generated_at=datetime.utcnow(),
@@ -2089,14 +2654,34 @@ def _compare_response(
 
 def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     text = query.lower().strip()
+    has_session_term = _has_session_term(text)
 
-    if any(keyword in text for keyword in ["compare", "versus", "vs", "difference"]) and "session" in text:
+    if any(keyword in text for keyword in ["compare", "versus", "vs", "difference"]) and has_session_term:
+        return "compare"
+
+    if any(keyword in text for keyword in ["baseline", "delta", "deltas", "changes from baseline"]):
         return "compare"
 
     if any(keyword in text for keyword in ["show all events", "list events", "show events", "all events"]):
         return "list_events"
 
     if any(keyword in text for keyword in ["show latest sessions", "latest sessions", "recent sessions", "show recent sessions"]):
+        return "latest_sessions"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "today's runs",
+            "todays runs",
+            "today runs",
+            "summarize runs",
+            "summarize today's runs",
+            "summarize todays runs",
+            "latest runs",
+            "recent runs",
+            "show runs",
+        ]
+    ):
         return "latest_sessions"
 
     if any(keyword in text for keyword in ["show latest submissions", "recent submissions", "show submissions", "latest notes"]):
@@ -2119,7 +2704,12 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
             "show setup for latest session",
             "latest setup",
             "show full setup for latest session",
+            "full setup sheet",
+            "complete setup sheet",
             "setup sheet for latest session",
+            "setup sheet",
+            "setup values",
+            "setup data",
         ]
     ):
         return "setup_latest_session"
@@ -2131,7 +2721,9 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
             "pressure for session",
             "tire pressure session",
             "show tire pressures",
+            "tire pressures",
             "show pressures",
+            "pressures",
             "pressure data",
         ]
     ):
@@ -2139,7 +2731,57 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
 
     if any(
         keyword in text
-        for keyword in ["show suspension data", "show suspension", "suspension setup", "damper data", "bump rebound"]
+        for keyword in [
+            "tire temperatures",
+            "tire temperature",
+            "tire temp",
+            "tire temps",
+            "temperatures",
+            "temperature",
+            "temps",
+            "temperature readings",
+            "pyro",
+            "pyrometer",
+            "inner middle outer",
+            "outer middle inner",
+        ]
+    ):
+        return "tire_temperatures_by_session"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "tire history",
+            "tire set history",
+            "tire usage",
+            "heat cycle",
+            "heat cycles",
+            "tire compound",
+            "tire compounds",
+            "tire status",
+            "tire age",
+        ]
+    ):
+        return "tire_history_by_session"
+
+    if any(
+        keyword in text
+        for keyword in [
+            "show suspension data",
+            "show suspension",
+            "suspension setup",
+            "damper data",
+            "damper",
+            "dampers",
+            "bump rebound",
+            "rebound",
+            "bump",
+            "compression",
+            "sway bar",
+            "swaybar",
+            "wing angle",
+            "wing",
+        ]
     ):
         return "suspension_data"
 
@@ -2151,15 +2793,24 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
             "show toe/camber for car",
             "alignment data",
             "show alignment",
+            "camber",
+            "toe",
+            "caster",
+            "ride height",
+            "corner weight",
+            "cross weight",
+            "wheelbase",
+            "rake",
+            "geometry",
         ]
     ):
         return "alignment_by_car"
 
-    if "session" in text and "driver" in text and "vehicle" not in text:
+    if has_session_term and "driver" in text and "vehicle" not in text:
         return "sessions_by_driver"
 
     if (
-        "session" in text
+        has_session_term
         and (
             "event" in text
             or (query_in is not None and query_in.event_id is not None)
@@ -2171,7 +2822,7 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     if "event" in text and any(keyword in text for keyword in ["list", "show", "all", "latest"]):
         return "list_events"
 
-    if "session" in text:
+    if has_session_term:
         return "latest_sessions"
 
     if "driver" in text and "vehicle" in text:
@@ -2237,8 +2888,24 @@ def build_chatbot_context(db: Session, *, limit: int = 10) -> ChatbotContextResp
 def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotResponse:
     query = query_in.message.strip()
     logger.info("Admin chatbot raw message received: %s", query)
-    intent = _intent_from_query(query, query_in)
-    logger.info("Admin chatbot intent detected: intent=%s query=%s", intent, query)
+    deterministic_intent = _intent_from_query(query, query_in)
+    nlp_result = _nlp_intent_from_query(query, deterministic_intent)
+    settings = get_settings()
+    nlp_accepted = (
+        nlp_result is not None
+        and nlp_result.intent != "unsupported"
+        and nlp_result.confidence >= settings.openai_intent_confidence_threshold
+    )
+    intent = nlp_result.intent if nlp_accepted and nlp_result is not None else deterministic_intent
+    nlp_filters = nlp_result.filters if nlp_accepted and nlp_result is not None else {}
+    logger.info(
+        "Admin chatbot intent detected: intent=%s deterministic=%s nlp_intent=%s nlp_confidence=%s query=%s",
+        intent,
+        deterministic_intent,
+        nlp_result.intent if nlp_result else None,
+        nlp_result.confidence if nlp_result else None,
+        query,
+    )
 
     event_rows = _load_event_rows(db, limit=None)
     event = db.get(Event, query_in.event_id) if query_in.event_id else None
@@ -2279,12 +2946,21 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             intent=intent,
         )
 
-    driver_query = _extract_driver_query(query)
-    event_query = _extract_event_query(query)
-    car_number = (query_in.car_number or _extract_car_number(query) or "").strip() or None
+    driver_query = _extract_driver_query(query) or nlp_filters.get("driver_query") or None
+    event_query = _extract_event_query(query) or nlp_filters.get("event_query") or None
+    car_number = (query_in.car_number or _extract_car_number(query) or nlp_filters.get("car_number") or "").strip() or None
     session_number = _extract_session_number(query)
+    if session_number is None and nlp_filters.get("session_number"):
+        try:
+            session_number = int(nlp_filters["session_number"])
+        except ValueError:
+            session_number = None
+    session_date, session_date_label = _extract_session_date_filter(query)
+    if session_date is None and nlp_filters.get("date_filter"):
+        session_date, session_date_label = _extract_session_date_filter(nlp_filters["date_filter"])
+    time_window = _extract_time_window(query) or nlp_filters.get("time_window") or None
     logger.info(
-        "Admin chatbot extracted filters: event_id=%s session_id=%s driver_id=%s vehicle_id=%s driver_query=%s event_query=%s car_number=%s session_number=%s limit=%s",
+        "Admin chatbot extracted filters: event_id=%s session_id=%s driver_id=%s vehicle_id=%s driver_query=%s event_query=%s car_number=%s session_number=%s session_date=%s time_window=%s limit=%s",
         query_in.event_id,
         query_in.session_id,
         query_in.driver_id,
@@ -2293,12 +2969,62 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
         event_query,
         car_number,
         session_number,
+        session_date,
+        time_window,
         query_in.limit,
     )
 
     if intent == "unsupported":
         logger.info("Admin chatbot unsupported query: %s", query)
         return _unsupported_response("AI Race Assistant", UNSUPPORTED_MESSAGE, intent="unsupported")
+
+    if car_number and selected_vehicle is None and intent in VEHICLE_SCOPED_INTENTS:
+        matches = _find_vehicle_matches(db, car_number)
+        if not matches:
+            logger.info("Admin chatbot missing data: vehicle scope car_number=%s intent=%s", car_number, intent)
+            return _not_found_response(
+                "Vehicles",
+                NO_VEHICLE_MATCH_MESSAGE.format(term=car_number),
+                intent=intent,
+            )
+        if len(matches) > 1:
+            records_used = [
+                _record_reference(
+                    "vehicle",
+                    vehicle.vehicle_id,
+                    _vehicle_name(vehicle),
+                    details=vehicle.registration_number or vehicle.vehicle_class,
+                )
+                for vehicle in matches
+            ]
+            driver_lookup = {driver.driver_id: driver for driver in _load_driver_rows(db, limit=25)}
+            section = _build_candidate_table(
+                title="Matching vehicles",
+                subtitle="Choose the vehicle you want to inspect.",
+                headers=["Vehicle", "Car", "Driver", "Status"],
+                rows=[
+                    [
+                        _vehicle_name(vehicle),
+                        vehicle.vehicle_id,
+                        _driver_name(driver_lookup.get(vehicle.driver_id), vehicle.driver_id)
+                        if vehicle.driver_id
+                        else "Not available",
+                        "Active" if vehicle.is_active else "Inactive",
+                    ]
+                    for vehicle in matches
+                ],
+                icon_key="vehicle",
+            )
+            return _selection_response(
+                title="Choose a vehicle",
+                message=MULTIPLE_VEHICLE_MATCH_MESSAGE.format(term=car_number),
+                intent=intent,
+                section=section,
+                records_used=records_used,
+            )
+        selected_vehicle = matches[0]
+
+    vehicle_filter_id = selected_vehicle.vehicle_id if selected_vehicle is not None else query_in.vehicle_id
 
     if intent == "list_events":
         rows = event_rows
@@ -2313,7 +3039,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             db,
             event=event,
             driver_id=query_in.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
             limit=query_in.limit,
         )
         if not rows:
@@ -2321,11 +3049,18 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 "Admin chatbot missing data: intent=latest_sessions event_id=%s driver_id=%s vehicle_id=%s",
                 query_in.event_id,
                 query_in.driver_id,
-                query_in.vehicle_id,
+                vehicle_filter_id,
             )
             return _not_found_response("Latest Sessions", NO_DATA_MESSAGE, intent="latest_sessions")
 
         scope_notes: list[str] = []
+        filter_note = _session_scope_note(
+            session_date=session_date,
+            session_date_label=session_date_label,
+            time_window=time_window,
+        )
+        if filter_note:
+            scope_notes.append(filter_note)
         if event is not None:
             scope_notes.append(f"Scoped to event {event.name}.")
         if selected_driver is not None:
@@ -2400,7 +3135,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             db,
             event=resolved_event,
             driver_id=query_in.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
             limit=query_in.limit,
         )
         if not rows:
@@ -2412,6 +3149,13 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             )
 
         scope_notes = [f"Scoped to event {resolved_event.name}."]
+        filter_note = _session_scope_note(
+            session_date=session_date,
+            session_date_label=session_date_label,
+            time_window=time_window,
+        )
+        if filter_note:
+            scope_notes.append(filter_note)
         if selected_driver is not None:
             scope_notes.append(f"Scoped to driver {selected_driver.driver_name}.")
         if selected_vehicle is not None:
@@ -2479,7 +3223,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             db,
             event=event,
             driver_id=resolved_driver.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
             limit=query_in.limit,
         )
         if not rows:
@@ -2487,7 +3233,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 "Admin chatbot missing data: intent=sessions_by_driver driver_id=%s event_id=%s vehicle_id=%s",
                 resolved_driver.driver_id,
                 query_in.event_id,
-                query_in.vehicle_id,
+                vehicle_filter_id,
             )
             return _not_found_response(
                 "Sessions",
@@ -2496,6 +3242,13 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             )
 
         scope_notes = [f"Scoped to driver {resolved_driver.driver_name}."]
+        filter_note = _session_scope_note(
+            session_date=session_date,
+            session_date_label=session_date_label,
+            time_window=time_window,
+        )
+        if filter_note:
+            scope_notes.append(filter_note)
         if event is not None:
             scope_notes.append(f"Scoped to event {event.name}.")
         if selected_vehicle is not None:
@@ -2517,7 +3270,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             event=event,
             session_id=query_in.session_id,
             driver_id=query_in.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
         )
         if bundle is None:
             logger.info(
@@ -2525,7 +3280,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 query_in.event_id,
                 query_in.session_id,
                 query_in.driver_id,
-                query_in.vehicle_id,
+                vehicle_filter_id,
             )
             return _not_found_response(
                 "Setup Sheet",
@@ -2553,7 +3308,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 session_number=session_number,
                 event=event,
                 driver_id=query_in.driver_id,
-                vehicle_id=query_in.vehicle_id,
+                vehicle_id=vehicle_filter_id,
+                session_date=session_date,
+                time_window=time_window,
             )
             if not rows:
                 return _not_found_response("Tire Pressures", NO_DATA_MESSAGE, intent="tire_pressures_by_session")
@@ -2597,7 +3354,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 model=Pressure,
                 event=event,
                 driver_id=query_in.driver_id,
-                vehicle_id=query_in.vehicle_id,
+                vehicle_id=vehicle_filter_id,
+                session_date=session_date,
+                time_window=time_window,
             )
 
         if bundle is None:
@@ -2618,7 +3377,18 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
         resolved_event, _ = _session_event_match(bundle.session, event_rows)
         summary = _session_summary(
             bundle,
-            scope_note="Review the pressure section below for the latest cold and hot readings.",
+            scope_note=" ".join(
+                item
+                for item in [
+                    _session_scope_note(
+                        session_date=session_date,
+                        session_date_label=session_date_label,
+                        time_window=time_window,
+                    ),
+                    "Review the pressure section below for the latest cold and hot readings.",
+                ]
+                if item
+            ),
         )
         logger.info("Admin chatbot records found: intent=tire_pressures_by_session session=%s", bundle.session.id_seance)
         return _session_focus_response(
@@ -2632,6 +3402,114 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             follow_up=["Show suspension data", "Show alignment data", "Show setup for latest session"],
         )
 
+    if intent == "tire_temperatures_by_session":
+        bundle = _resolve_setup_section_bundle(
+            db,
+            event=event,
+            session_bundle=session_bundle,
+            query_in=query_in,
+            session_number=session_number,
+            vehicle_filter_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            model=TireTemperature,
+        )
+        if bundle is None:
+            logger.info("Admin chatbot missing data: intent=tire_temperatures_by_session")
+            return _not_found_response(
+                "Tire Temperatures",
+                NO_DATA_MESSAGE,
+                intent="tire_temperatures_by_session",
+            )
+
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            return _not_found_response(
+                "Tire Temperatures",
+                NO_DATA_MESSAGE,
+                intent="tire_temperatures_by_session",
+            )
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == bundle.session.id_seance))
+        if temperature is None:
+            return _not_found_response(
+                "Tire Temperatures",
+                NO_DATA_MESSAGE,
+                intent="tire_temperatures_by_session",
+            )
+
+        summary = _session_summary(
+            bundle,
+            scope_note=_setup_focus_scope_note(
+                session_date=session_date,
+                session_date_label=session_date_label,
+                time_window=time_window,
+                focus_note="Review the tire temperature section below for inner, middle, and outer readings by corner.",
+            ),
+        )
+        logger.info(
+            "Admin chatbot records found: intent=tire_temperatures_by_session session=%s",
+            bundle.session.id_seance,
+        )
+        return _session_focus_response(
+            db,
+            bundle=bundle,
+            detail_section=_temperature_section(temperature),
+            title="Tire Temperatures",
+            summary=summary,
+            intent="tire_temperatures_by_session",
+            event=event or resolved_event,
+            follow_up=["Show tire pressures", "Show tire history", "Show setup for latest session"],
+        )
+
+    if intent == "tire_history_by_session":
+        bundle = _resolve_setup_section_bundle(
+            db,
+            event=event,
+            session_bundle=session_bundle,
+            query_in=query_in,
+            session_number=session_number,
+            vehicle_filter_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            model=TireHistory,
+        )
+        if bundle is None:
+            logger.info("Admin chatbot missing data: intent=tire_history_by_session")
+            return _not_found_response("Tire History", NO_DATA_MESSAGE, intent="tire_history_by_session")
+
+        if event is not None and not _session_in_event_window(bundle.session, event):
+            return _not_found_response("Tire History", NO_DATA_MESSAGE, intent="tire_history_by_session")
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        history_section = _history_section(db, bundle.session)
+        if not history_section.cards:
+            return _not_found_response("Tire History", NO_DATA_MESSAGE, intent="tire_history_by_session")
+
+        summary = _session_summary(
+            bundle,
+            scope_note=_setup_focus_scope_note(
+                session_date=session_date,
+                session_date_label=session_date_label,
+                time_window=time_window,
+                focus_note="Review the tire history section below for tire IDs, compounds, heat cycles, duration, and status.",
+            ),
+        )
+        logger.info(
+            "Admin chatbot records found: intent=tire_history_by_session session=%s",
+            bundle.session.id_seance,
+        )
+        return _session_focus_response(
+            db,
+            bundle=bundle,
+            detail_section=history_section,
+            title="Tire History",
+            summary=summary,
+            intent="tire_history_by_session",
+            event=event or resolved_event,
+            follow_up=["Show tire temperatures", "Show tire pressures", "Show setup for latest session"],
+        )
+
     if intent == "suspension_data":
         bundle: SessionBundle | None = None
         if query_in.session_id:
@@ -2642,7 +3520,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 session_number=session_number,
                 event=event,
                 driver_id=query_in.driver_id,
-                vehicle_id=query_in.vehicle_id,
+                vehicle_id=vehicle_filter_id,
+                session_date=session_date,
+                time_window=time_window,
             )
             if rows:
                 bundle = _bundle_from_row(rows[0])
@@ -2652,7 +3532,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 model=Suspension,
                 event=event,
                 driver_id=query_in.driver_id,
-                vehicle_id=query_in.vehicle_id,
+                vehicle_id=vehicle_filter_id,
+                session_date=session_date,
+                time_window=time_window,
             )
 
         if bundle is None:
@@ -2669,7 +3551,18 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
 
         summary = _session_summary(
             bundle,
-            scope_note="Review the suspension section below for the latest damper and chassis settings.",
+            scope_note=" ".join(
+                item
+                for item in [
+                    _session_scope_note(
+                        session_date=session_date,
+                        session_date_label=session_date_label,
+                        time_window=time_window,
+                    ),
+                    "Review the suspension section below for the latest damper and chassis settings.",
+                ]
+                if item
+            ),
         )
         logger.info("Admin chatbot records found: intent=suspension_data session=%s", bundle.session.id_seance)
         return _session_focus_response(
@@ -2684,6 +3577,50 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
         )
 
     if intent == "alignment_by_car":
+        if query_in.session_id or session_number is not None:
+            bundle = _resolve_setup_section_bundle(
+                db,
+                event=event,
+                session_bundle=session_bundle,
+                query_in=query_in,
+                session_number=session_number,
+                vehicle_filter_id=vehicle_filter_id,
+                session_date=session_date,
+                time_window=time_window,
+                model=Alignment,
+            )
+            if bundle is None:
+                return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+
+            if event is not None and not _session_in_event_window(bundle.session, event):
+                return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+
+            resolved_event, _ = _session_event_match(bundle.session, event_rows)
+            alignment = db.scalar(select(Alignment).where(Alignment.id_seance == bundle.session.id_seance))
+            if alignment is None:
+                return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
+
+            summary = _session_summary(
+                bundle,
+                scope_note=_setup_focus_scope_note(
+                    session_date=session_date,
+                    session_date_label=session_date_label,
+                    time_window=time_window,
+                    focus_note="Review the alignment section below for toe, camber, caster, ride height, corner weight, cross weight, rake, and wheelbase values.",
+                ),
+            )
+            logger.info("Admin chatbot records found: intent=alignment_by_car session=%s", bundle.session.id_seance)
+            return _session_focus_response(
+                db,
+                bundle=bundle,
+                detail_section=_alignment_section(alignment),
+                title="Alignment Data",
+                summary=summary,
+                intent="alignment_by_car",
+                event=event or resolved_event,
+                follow_up=["Show tire pressures", "Show suspension data", "Show setup for latest session"],
+            )
+
         resolved_vehicle = selected_vehicle
         if resolved_vehicle is None:
             if car_number is None:
@@ -2692,7 +3629,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                     model=Alignment,
                     event=event,
                     driver_id=query_in.driver_id,
-                    vehicle_id=query_in.vehicle_id,
+                    vehicle_id=vehicle_filter_id,
+                    session_date=session_date,
+                    time_window=time_window,
                 )
                 if bundle is None:
                     return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
@@ -2702,7 +3641,18 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                     return _not_found_response("Alignment Data", NO_DATA_MESSAGE, intent="alignment_by_car")
                 summary = _session_summary(
                     bundle,
-                    scope_note="Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+                    scope_note=" ".join(
+                        item
+                        for item in [
+                            _session_scope_note(
+                                session_date=session_date,
+                                session_date_label=session_date_label,
+                                time_window=time_window,
+                            ),
+                            "Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+                        ]
+                        if item
+                    ),
                 )
                 logger.info("Admin chatbot records found: intent=alignment_by_car session=%s", bundle.session.id_seance)
                 return _session_focus_response(
@@ -2767,6 +3717,8 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             event=event,
             vehicle_id=resolved_vehicle.vehicle_id,
             driver_id=query_in.driver_id,
+            session_date=session_date,
+            time_window=time_window,
         )
         if bundle is None:
             logger.info(
@@ -2786,7 +3738,18 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
 
         summary = _session_summary(
             bundle,
-            scope_note="Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+            scope_note=" ".join(
+                item
+                for item in [
+                    _session_scope_note(
+                        session_date=session_date,
+                        session_date_label=session_date_label,
+                        time_window=time_window,
+                    ),
+                    "Review the alignment section below for the latest toe, camber, caster, and ride-height values.",
+                ]
+                if item
+            ),
         )
         logger.info("Admin chatbot records found: intent=alignment_by_car session=%s", bundle.session.id_seance)
         return _session_focus_response(
@@ -2805,7 +3768,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             db,
             event=event,
             driver_id=query_in.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
             limit=query_in.limit,
         )
         logger.info(
@@ -2823,7 +3786,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             db,
             session_bundle=session_bundle,
             driver_id=selected_driver.driver_id if selected_driver is not None else query_in.driver_id,
-            vehicle_id=selected_vehicle.vehicle_id if selected_vehicle is not None else query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
         )
         logger.info(
             "Admin chatbot records found: intent=driver_vehicle_data drivers=%s vehicles=%s session=%s",
@@ -2839,8 +3802,10 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             event=event,
             session_id=query_in.session_id,
             driver_id=query_in.driver_id,
-            vehicle_id=query_in.vehicle_id,
+            vehicle_id=vehicle_filter_id,
             query=query,
+            session_date=session_date,
+            time_window=time_window,
         )
         if response is None:
             logger.info(
@@ -2848,7 +3813,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
                 query_in.event_id,
                 query_in.session_id,
                 query_in.driver_id,
-                query_in.vehicle_id,
+                vehicle_filter_id,
             )
             return _not_found_response(
                 "Session Comparison",

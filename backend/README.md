@@ -85,9 +85,10 @@ app/
 1. Copy `.env.example` to `.env`
 2. Set `DATABASE_URL` to your Neon connection string and `JWT_SECRET_KEY`
 3. Optionally set `MAKE_WEBHOOK_URL` to forward each saved submission to Make.com
-4. Install dependencies with `pip install -r requirements.txt`
-5. Apply the PostgreSQL schema with `alembic upgrade head`
-6. Start the API with `uvicorn app.main:app --reload`
+4. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
+5. Install dependencies with `pip install -r requirements.txt`
+6. Apply the PostgreSQL schema with `alembic upgrade head`
+7. Start the API with `uvicorn app.main:app --reload`
 
 The API will be available at `http://127.0.0.1:8000`.
 
@@ -107,6 +108,9 @@ Set these environment variables on Render:
 - `ENVIRONMENT` - `production`
 - `CORS_ORIGIN_REGEX` - `^https://.*\.vercel\.app$`
 - `MAKE_WEBHOOK_URL` - optional Make.com custom webhook endpoint for structured submission forwarding
+- `CHATBOT_NLP_ENABLED` - optional; set to `true` to let OpenAI classify chatbot intent before deterministic fallback
+- `OPENAI_API_KEY` - optional; required only when `CHATBOT_NLP_ENABLED=true`
+- `OPENAI_MODEL` - optional; defaults to `gpt-4o-mini`
 
 If you prefer to lock CORS to a single frontend URL, set `CORS_ORIGINS` instead of `CORS_ORIGIN_REGEX`.
 
