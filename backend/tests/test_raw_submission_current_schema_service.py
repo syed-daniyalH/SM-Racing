@@ -24,9 +24,10 @@ from app.services.raw_submission_service import (
 
 
 class _FakeResult:
-    def __init__(self, *, scalar_value=None, row=None):
+    def __init__(self, *, scalar_value=None, row=None, rows=None):
         self._scalar_value = scalar_value
         self._row = row
+        self._rows = rows or []
 
     def scalar_one(self):
         return self._scalar_value
@@ -37,15 +38,19 @@ class _FakeResult:
     def mappings(self):
         return self
 
+    def all(self):
+        return self._rows
+
 
 class _FakeSession:
-    def __init__(self):
+    def __init__(self, *, track_schema_variant: str = "current"):
         self.executed: list[tuple[str, dict]] = []
         self.track_id = uuid4()
         self.vehicle_assignment_id = uuid4()
         self.seance_id = uuid4()
         self.submission_input_id = uuid4()
         self.duplicate_id_seance: str | None = None
+        self.track_schema_variant = track_schema_variant
 
     def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
@@ -53,7 +58,27 @@ class _FakeSession:
         params = params or {}
         self.executed.append((sql, params))
 
+        if "information_schema.columns" in normalized and params.get("table_name") == "tracks":
+            if self.track_schema_variant == "legacy":
+                return _FakeResult(
+                    rows=[
+                        {"column_name": "id"},
+                        {"column_name": "name"},
+                        {"column_name": "status"},
+                        {"column_name": "archived_at"},
+                    ]
+                )
+            return _FakeResult(
+                rows=[
+                    {"column_name": "track_id"},
+                    {"column_name": "track_name"},
+                    {"column_name": "status"},
+                    {"column_name": "archived_at"},
+                ]
+            )
         if "select track_id" in normalized and "from sm2racing.tracks" in normalized:
+            return _FakeResult(row={"track_id": self.track_id})
+        if "select id as track_id" in normalized and "from sm2racing.tracks" in normalized:
             return _FakeResult(row={"track_id": self.track_id})
         if "select vehicle_assignment_id" in normalized and "from sm2racing.vehicle_assignments" in normalized:
             return _FakeResult(row={"vehicle_assignment_id": self.vehicle_assignment_id})
@@ -188,6 +213,31 @@ def test_raw_persistence_uses_current_schema_columns():
     assert pressure_insert["seance_id"] == db.seance_id
     assert pressure_insert["cold_fl"] == 26.0
     assert pressure_insert["hot_rr"] == 32.0
+
+
+def test_raw_persistence_supports_legacy_track_columns():
+    db = _FakeSession(track_schema_variant="legacy")
+    raw_text = "s1 30min nico gt4 Y-S3 pf 27 wb 2450"
+    submission, event, run_group, driver, vehicle, current_user, payload, analysis_result, id_seance, captured_at = _build_submission(raw_text)
+
+    result = persist_raw_submission_current_schema(
+        db,
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        current_user=current_user,
+        source="pwa",
+        payload=payload,
+        analysis_result=analysis_result,
+        id_seance=id_seance,
+        captured_at=captured_at,
+    )
+
+    assert result.status == "saved"
+    track_select = next(sql for sql, _ in db.executed if "from sm2racing.tracks" in sql.lower())
+    assert "select id as track_id" in track_select.lower()
 
 
 def test_raw_persistence_preserves_wheelbase_when_alignment_is_also_present():

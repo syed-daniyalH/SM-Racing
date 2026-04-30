@@ -28,6 +28,21 @@ def _table(name: str) -> str:
     return f"{SM2RACING_SCHEMA}.{name}"
 
 
+def _table_columns(db: Session, table_name: str) -> set[str]:
+    rows = db.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema
+              AND table_name = :table_name
+            """
+        ),
+        {"schema": SM2RACING_SCHEMA, "table_name": table_name},
+    ).mappings().all()
+    return {str(row["column_name"]).lower() for row in rows}
+
+
 def _clean_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -192,12 +207,27 @@ def _raw_payload_hash(*, raw_text: str, payload: dict[str, Any]) -> str:
 
 
 def _resolve_track_id(db: Session, track_name: str) -> UUID:
+    columns = _table_columns(db, "tracks")
+    identifier_column = next((column for column in ("track_id", "id") if column in columns), None)
+    name_column = next((column for column in ("track_name", "name") if column in columns), None)
+
+    if identifier_column is None or name_column is None:
+        raise RawSubmissionValidationError(
+            "tracks table is missing the columns required for raw note persistence",
+            errors=[
+                {
+                    "field": "track",
+                    "message": "tracks table is missing the columns required for raw note persistence",
+                }
+            ],
+        )
+
     row = db.execute(
         text(
             f"""
-            SELECT track_id
+            SELECT {identifier_column} AS track_id
             FROM {_table("tracks")}
-            WHERE track_name = :track_name
+            WHERE lower({name_column}) = lower(:track_name)
               AND status = 'ACTIVE'
               AND archived_at IS NULL
             LIMIT 1
