@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
     chatbot_nlp_enabled: bool = False
+    chatbot_image_analysis_enabled: bool = False
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    openai_vision_model: str | None = None
     openai_request_timeout_seconds: float = 8.0
-    openai_intent_confidence_threshold: float = 0.65
+    openai_intent_confidence_threshold: float = 0.70
 
     @field_validator("cors_origins", mode="before")
     @classmethod

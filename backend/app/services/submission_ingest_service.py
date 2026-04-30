@@ -26,7 +26,9 @@ from app.services.submission_payload_service import get_session_payload
 
 
 DB_SCHEMA = get_settings().database_schema
-SESSION_ID_PATTERN = re.compile(r"^\d{8}-\d{4}-[A-Z0-9]+-S\d+$")
+# Accept both the legacy UI-generated format (YYYYMMDD-HHMM-DRIVERID-S1)
+# and the backend-owned raw-ingest format (YYYYMMDD-DRIVERID-S01).
+SESSION_ID_PATTERN = re.compile(r"^\d{8}-(?:\d{4}-)?[A-Z0-9]+-S\d+$")
 PRESSURE_LIMITS = {
     "cold": (5.0, 60.0),
     "hot": (5.0, 80.0),
@@ -1051,6 +1053,27 @@ def _insert_ocr_result(
             "review_status": normalized_review_status,
         },
     ).scalar_one()
+
+
+def record_image_analysis_result(
+    db: Session,
+    *,
+    submission_input_id: int | None,
+    image_analysis: dict[str, Any] | None,
+) -> int | None:
+    if submission_input_id is None or not image_analysis:
+        return None
+
+    return _insert_ocr_result(
+        db,
+        submission_input_id=submission_input_id,
+        raw_ocr_text=_clean_blank(image_analysis.get("extracted_text")),
+        cleaned_ocr_text=_clean_blank(image_analysis.get("extracted_text")),
+        extracted_json=image_analysis,
+        ocr_confidence=_normalize_confidence(image_analysis.get("confidence")),
+        parser_version=_clean_blank(image_analysis.get("parser_version")),
+        review_status=_clean_blank(image_analysis.get("recommended_review_status")) or "PENDING",
+    )
 
 
 def persist_structured_submission(

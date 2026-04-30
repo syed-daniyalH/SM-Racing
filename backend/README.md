@@ -27,6 +27,7 @@ the backend workspace.
 - Drivers
 - Vehicles
 - Submissions
+- Admin chatbot queries, comparisons, notes, and partial setup updates
 
 ## Architecture Goals
 
@@ -86,11 +87,34 @@ app/
 2. Set `DATABASE_URL` to your Neon connection string and `JWT_SECRET_KEY`
 3. Optionally set `MAKE_WEBHOOK_URL` to forward each saved submission to Make.com
 4. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
-5. Install dependencies with `pip install -r requirements.txt`
-6. Apply the PostgreSQL schema with `alembic upgrade head`
-7. Start the API with `uvicorn app.main:app --reload`
+5. Optionally enable photo/schedule review extraction with `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`
+6. Install dependencies with `pip install -r requirements.txt`
+7. Apply the PostgreSQL schema with `alembic upgrade head`
+8. Start the API with `uvicorn app.main:app --reload`
 
 The API will be available at `http://127.0.0.1:8000`.
+
+## Admin Chatbot Write Support
+
+The admin chatbot can query race data and can also apply narrow chat-driven
+writes to an existing session. Supported write examples include:
+
+- `Log note: car felt loose on corner exit for Session 2`
+- `Set LF cold pressure to 22.5 and RF cold pressure to 22.0 for Session 2`
+- `Set LF camber to -3.2 and wing angle to 7`
+
+Setup updates are partial patches. Only fields explicitly parsed from the chat
+message are changed; every other setup-sheet value is preserved. The service
+attempts to write an audit-log entry for each chat note or setup patch.
+
+## Image And Schedule Review
+
+When a submission includes `image_url`, the backend stages the photo in the
+structured intake tables so it can be reviewed later. If
+`CHATBOT_IMAGE_ANALYSIS_ENABLED=true`, the backend also asks OpenAI Vision for a
+structured draft covering schedule, setup-sheet, session-note, and unknown image
+types. The extracted draft is stored with `PENDING` review status and is not
+blindly applied to events, sessions, or setup values.
 
 ## Render Deployment
 
@@ -109,8 +133,10 @@ Set these environment variables on Render:
 - `CORS_ORIGIN_REGEX` - `^https://.*\.vercel\.app$`
 - `MAKE_WEBHOOK_URL` - optional Make.com custom webhook endpoint for structured submission forwarding
 - `CHATBOT_NLP_ENABLED` - optional; set to `true` to let OpenAI classify chatbot intent before deterministic fallback
+- `CHATBOT_IMAGE_ANALYSIS_ENABLED` - optional; set to `true` to stage image/schedule/setup photo extraction drafts for review
 - `OPENAI_API_KEY` - optional; required only when `CHATBOT_NLP_ENABLED=true`
 - `OPENAI_MODEL` - optional; defaults to `gpt-4o-mini`
+- `OPENAI_VISION_MODEL` - optional; defaults to `OPENAI_MODEL` when omitted
 
 If you prefer to lock CORS to a single frontend URL, set `CORS_ORIGINS` instead of `CORS_ORIGIN_REGEX`.
 

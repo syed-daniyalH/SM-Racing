@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.core.enums import SubmissionStatus
 from app.schemas.driver import DriverRead
@@ -22,6 +22,17 @@ class SubmissionCreate(ORMModel):
     image_url: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     analysis_result: dict[str, Any] | None = None
+
+
+class RawSubmissionCreate(ORMModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    source: str = Field(min_length=1, max_length=32)
+    created_by: str = Field(min_length=1, max_length=120)
+    event_id: str = Field(alias="eventId", min_length=1, max_length=120)
+    run_group: str = Field(alias="runGroup", min_length=1, max_length=32)
+    raw_text: str = Field(min_length=1)
+    confidence: float = Field(default=1.0, ge=0, le=1)
 
 
 class SubmissionUpdate(ORMModel):
@@ -61,3 +72,10 @@ class SubmissionRead(TimestampedModel):
     @classmethod
     def default_structured_ingest_warnings(cls, value: Any) -> list[dict[str, Any]]:
         return [] if value is None else value
+
+
+class RawSubmissionResult(ORMModel):
+    status: str
+    id_seance: str | None = None
+    message: str
+    errors: list[dict[str, Any]] = Field(default_factory=list)

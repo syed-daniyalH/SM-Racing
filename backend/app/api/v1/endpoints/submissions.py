@@ -1,10 +1,11 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_roles
@@ -14,16 +15,38 @@ from app.core.enums import SubmissionStatus, UserRole
 from app.models.driver import Driver
 from app.models.event import Event
 from app.models.run_group import RunGroup
+from app.models.structured_notes import Seance
 from app.models.submission import Submission
 from app.models.user import User
 from app.models.vehicle import Vehicle
-from app.schemas.submission import SubmissionCreate, SubmissionRead, SubmissionUpdate
+from app.schemas.submission import (
+    RawSubmissionCreate,
+    RawSubmissionResult,
+    SubmissionCreate,
+    SubmissionRead,
+    SubmissionUpdate,
+)
+from app.services.image_analysis_service import analyze_submission_image
+from app.services.raw_submission_service import (
+    RawSubmissionValidationError,
+    build_raw_submission_payload,
+    parse_raw_note,
+    resolve_driver_alias,
+    resolve_vehicle_alias,
+    validate_raw_submission_payload,
+)
+from app.services.run_group_service import normalize_run_group
 from app.services.submission_delivery_service import (
     enqueue_submission_delivery,
     process_submission_delivery,
     process_submission_delivery_task,
 )
-from app.services.submission_ingest_service import persist_structured_submission
+from app.services.submission_ingest_service import (
+    _write_audit_log,
+    persist_structured_submission,
+    record_image_analysis_result,
+    stage_submission_input,
+)
 from app.services.submission_payload_service import (
     get_session_payload,
     merge_submission_analysis,
@@ -252,6 +275,179 @@ def _build_submission_candidate(
     return submission
 
 
+def _raw_request_user_label(user: User | None, fallback: str) -> str:
+    if user is None:
+        return fallback
+    return normalize_optional_text(user.name) or normalize_optional_text(user.email) or fallback
+
+
+def _resolve_raw_created_by_user(
+    db: Session,
+    *,
+    created_by: str,
+    current_user: User,
+) -> User:
+    normalized_created_by = normalize_optional_text(created_by)
+    if not normalized_created_by:
+        raise RawSubmissionValidationError(
+            "created_by must exist",
+            errors=[{"field": "created_by", "message": "created_by must exist"}],
+        )
+
+    matched_user = db.scalar(
+        select(User).where(
+            or_(
+                func.lower(User.name) == normalized_created_by.lower(),
+                func.lower(User.email) == normalized_created_by.lower(),
+            )
+        )
+    )
+    if matched_user is None:
+        raise RawSubmissionValidationError(
+            "created_by does not exist",
+            errors=[{"field": "created_by", "message": "created_by does not exist"}],
+        )
+
+    if matched_user.id != current_user.id and current_user.role not in (UserRole.OWNER, UserRole.ADMIN):
+        raise RawSubmissionValidationError(
+            "created_by does not match the authenticated user",
+            errors=[
+                {
+                    "field": "created_by",
+                    "message": "created_by does not match the authenticated user",
+                }
+            ],
+        )
+
+    return matched_user
+
+
+def _resolve_raw_event(db: Session, event_identifier: str) -> Event:
+    normalized_identifier = normalize_optional_text(event_identifier)
+    if not normalized_identifier:
+        raise RawSubmissionValidationError(
+            "eventId is required",
+            errors=[{"field": "eventId", "message": "eventId is required"}],
+        )
+
+    event: Event | None = None
+    try:
+        event = db.get(Event, UUID(normalized_identifier))
+    except ValueError:
+        event = None
+
+    if event is None:
+        event = db.scalar(select(Event).where(func.lower(Event.name) == normalized_identifier.lower()))
+
+    if event is None:
+        raise RawSubmissionValidationError(
+            "eventId was not found",
+            errors=[{"field": "eventId", "message": "eventId was not found"}],
+        )
+    if not event.is_active:
+        raise RawSubmissionValidationError(
+            "event is archived",
+            errors=[{"field": "eventId", "message": "event is archived"}],
+        )
+
+    return event
+
+
+def _resolve_raw_run_group(
+    db: Session,
+    *,
+    event: Event,
+    requested_run_group: str,
+) -> RunGroup:
+    run_group = db.scalar(select(RunGroup).where(RunGroup.event_id == event.id))
+    if run_group is None:
+        raise RawSubmissionValidationError(
+            "runGroup is not configured for this event",
+            errors=[{"field": "runGroup", "message": "runGroup is not configured for this event"}],
+        )
+
+    normalized_requested_run_group = normalize_run_group(requested_run_group)
+    if normalized_requested_run_group is None:
+        raise RawSubmissionValidationError(
+            "runGroup is invalid",
+            errors=[{"field": "runGroup", "message": "runGroup is invalid"}],
+        )
+
+    if run_group.normalized != normalized_requested_run_group:
+        raise RawSubmissionValidationError(
+            "runGroup does not match the event run group",
+            errors=[{"field": "runGroup", "message": "runGroup does not match the event run group"}],
+        )
+
+    return run_group
+
+
+def _validate_raw_event_submission_window(event: Event) -> None:
+    now = datetime.now(timezone.utc)
+    event_start_date = _event_submission_start_to_utc(event)
+    event_end_date = _event_submission_end_to_utc(event)
+    if event_start_date is not None and now < event_start_date:
+        raise RawSubmissionValidationError(
+            "submission notes open when the event start date arrives",
+            errors=[
+                {
+                    "field": "eventId",
+                    "message": "submission notes open when the event start date arrives",
+                }
+            ],
+        )
+    if event_end_date is not None and now >= event_end_date:
+        raise RawSubmissionValidationError(
+            "submission notes close after the event end date passes",
+            errors=[
+                {
+                    "field": "eventId",
+                    "message": "submission notes close after the event end date passes",
+                }
+            ],
+        )
+
+
+def _raw_duplicate_lookup(
+    db: Session,
+    *,
+    session_data: dict[str, object],
+    raw_text: str,
+) -> Seance | None:
+    session_date = date.fromisoformat(str(session_data["date"]))
+    session_time = time.fromisoformat(str(session_data["time"]))
+    stmt = select(Seance).where(
+        Seance.session_date == session_date,
+        Seance.session_time == session_time,
+        Seance.track == str(session_data["track"]),
+        Seance.driver_id == str(session_data["driver_id"]),
+        Seance.vehicle_id == str(session_data["vehicle_id"]),
+        Seance.session_type == str(session_data["session_type"]),
+        Seance.session_number == int(session_data["session_number"]),
+        Seance.notes == raw_text,
+    )
+    return db.scalar(stmt)
+
+
+def _raw_submission_response(
+    *,
+    status_code: int,
+    status_value: str,
+    message: str,
+    id_seance: str | None = None,
+    errors: list[dict[str, object]] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": status_value,
+            "id_seance": id_seance,
+            "message": message,
+            "errors": errors or [],
+        },
+    )
+
+
 def _finalize_delivery(
     db: Session,
     submission: Submission,
@@ -431,6 +627,60 @@ def create_submission(
             submission.structured_ingest_status = "skipped"
             submission.structured_ingest_warnings = []
 
+        if submission.image_url and submission_input_id is None:
+            try:
+                image_analysis = analyze_submission_image(
+                    submission=submission,
+                    event=event,
+                    run_group=run_group,
+                    driver=driver,
+                    vehicle=vehicle,
+                )
+                if image_analysis:
+                    submission.analysis_result = {
+                        **(submission.analysis_result or {}),
+                        "has_image_analysis": True,
+                        "image_analysis_review_status": image_analysis.get("recommended_review_status") or "PENDING",
+                        "image_analysis": image_analysis,
+                    }
+                submission_input_id = stage_submission_input(
+                    db,
+                    submission=submission,
+                    event=event,
+                    run_group=run_group,
+                    driver=driver,
+                    vehicle=vehicle,
+                    current_user=current_user,
+                    source="photo",
+                )
+                record_image_analysis_result(
+                    db,
+                    submission_input_id=submission_input_id,
+                    image_analysis=image_analysis,
+                )
+                submission.structured_ingest_status = "pending_review"
+                submission.structured_ingest_warnings = [
+                    *submission.structured_ingest_warnings,
+                    {
+                        "section": "image_analysis",
+                        "code": "IMAGE_STAGED_FOR_REVIEW",
+                        "message": "Image input was staged for review before any structured event/session/setup data is applied.",
+                    },
+                ]
+            except Exception:
+                logger.exception(
+                    "Image submission staging failed; continuing with canonical submission only (%s)",
+                    submission_log_summary,
+                )
+                submission.structured_ingest_warnings = [
+                    *submission.structured_ingest_warnings,
+                    {
+                        "section": "image_analysis",
+                        "code": "IMAGE_STAGE_FAILED",
+                        "message": "Image analysis or staging failed unexpectedly. The canonical submission was still saved.",
+                    },
+                ]
+
         if settings.make_webhook_url:
             enqueue_submission_delivery(
                 db,
@@ -508,6 +758,228 @@ def create_submission(
         loaded_submission,
         submission_input_id=submission_input_id,
     )
+
+
+@router.post("/raw", response_model=RawSubmissionResult, status_code=status.HTTP_201_CREATED)
+def create_raw_submission(
+    submission_in: RawSubmissionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> JSONResponse:
+    request_payload = submission_in.model_dump(by_alias=True)
+    request_user_label = submission_in.created_by
+
+    try:
+        created_by_user = _resolve_raw_created_by_user(
+            db,
+            created_by=submission_in.created_by,
+            current_user=current_user,
+        )
+        request_user_label = _raw_request_user_label(created_by_user, submission_in.created_by)
+
+        event = _resolve_raw_event(db, submission_in.event_id)
+        _validate_raw_event_submission_window(event)
+        run_group = _resolve_raw_run_group(
+            db,
+            event=event,
+            requested_run_group=submission_in.run_group,
+        )
+
+        # Parse the shorthand note into deterministic structured session data.
+        parsed_note = parse_raw_note(submission_in.raw_text)
+        driver = resolve_driver_alias(
+            db.scalars(select(Driver).where(Driver.is_active.is_(True))).all(),
+            parsed_note.driver_alias,
+        )
+        vehicle = resolve_vehicle_alias(
+            db.scalars(
+                select(Vehicle).where(
+                    Vehicle.is_active.is_(True),
+                    Vehicle.driver_id == driver.driver_id,
+                )
+            ).all(),
+            parsed_note.vehicle_alias,
+        )
+
+        captured_at = datetime.now(timezone.utc)
+        payload, analysis_result, id_seance = build_raw_submission_payload(
+            parsed_note,
+            driver_id=driver.driver_id,
+            vehicle_id=vehicle.vehicle_id,
+            track=event.track,
+            run_group=run_group.normalized.value,
+            created_by=request_user_label,
+            captured_at=captured_at,
+            confidence=submission_in.confidence,
+        )
+
+        # Validate the backend-owned structured payload before any database write.
+        validation_errors = validate_raw_submission_payload(
+            created_by=request_user_label,
+            raw_text=submission_in.raw_text,
+            payload=payload,
+            analysis_result=analysis_result,
+        )
+        if vehicle.driver_id != driver.driver_id:
+            validation_errors.append(
+                {"field": "vehicle_id", "message": "vehicle_id does not belong to driver_id"}
+            )
+        if validation_errors:
+            raise RawSubmissionValidationError(
+                validation_errors[0]["message"],
+                errors=validation_errors,
+            )
+
+        duplicate_session = _raw_duplicate_lookup(
+            db,
+            session_data=payload["data"],
+            raw_text=submission_in.raw_text,
+        )
+        if duplicate_session is not None:
+            _write_audit_log(
+                db,
+                action="submission.ingest.raw",
+                status="SUCCESS",
+                message=f"Duplicate raw submission ignored for {duplicate_session.id_seance}",
+                payload={
+                    **request_payload,
+                    "id_seance": duplicate_session.id_seance,
+                    "duplicate": True,
+                },
+                user=request_user_label,
+            )
+            db.commit()
+            return _raw_submission_response(
+                status_code=status.HTTP_200_OK,
+                status_value="SUCCESS",
+                id_seance=duplicate_session.id_seance,
+                message="Duplicate session ignored",
+            )
+
+        submission_ref = _ensure_unique_submission_ref(db, f"RAW-{id_seance}")
+        correlation_id = _ensure_unique_correlation_id(db, str(uuid4()))
+        submission_payload = SubmissionCreate(
+            submission_ref=submission_ref,
+            correlation_id=correlation_id,
+            event_id=event.id,
+            run_group_id=run_group.id,
+            driver_id=driver.driver_id,
+            vehicle_id=vehicle.vehicle_id,
+            raw_text=submission_in.raw_text,
+            payload=payload,
+            analysis_result=analysis_result,
+        )
+        raw_submission = _build_submission_candidate(
+            submission_payload,
+            created_by_user,
+            event,
+            run_group,
+            driver,
+            vehicle,
+            correlation_id,
+        )
+
+        db.add(raw_submission)
+        db.flush()
+
+        # Stage the canonical raw request before normalized tables are applied.
+        submission_input_id = stage_submission_input(
+            db,
+            submission=raw_submission,
+            event=event,
+            run_group=run_group,
+            driver=driver,
+            vehicle=vehicle,
+            current_user=created_by_user,
+            source=(normalize_optional_text(submission_in.source) or "pwa").lower(),
+        )
+
+        # Persist the normalized session rows with backend-generated id_seance.
+        structured_result = persist_structured_submission(
+            db,
+            submission=raw_submission,
+            event=event,
+            run_group=run_group,
+            driver=driver,
+            vehicle=vehicle,
+            current_user=created_by_user,
+        )
+        raw_submission.structured_ingest_status = structured_result.status
+        raw_submission.structured_ingest_warnings = structured_result.warnings
+        raw_submission.status = SubmissionStatus.SENT
+        raw_submission.error_message = None
+
+        if not structured_result.saved_sections:
+            raise RuntimeError("Raw submission did not persist any structured sections")
+
+        stored_session = _raw_duplicate_lookup(
+            db,
+            session_data=payload["data"],
+            raw_text=submission_in.raw_text,
+        )
+        stored_session_id = stored_session.id_seance if stored_session is not None else id_seance
+
+        _write_audit_log(
+            db,
+            action="submission.ingest.raw",
+            status="SUCCESS",
+            message=f"Raw submission stored successfully for {stored_session_id}",
+            payload={
+                **request_payload,
+                "submission_ref": raw_submission.submission_ref,
+                "correlation_id": raw_submission.correlation_id,
+                "id_seance": stored_session_id,
+                "submission_input_id": submission_input_id,
+                "structured_status": structured_result.status,
+                "structured_warnings": structured_result.warnings,
+            },
+            user=request_user_label,
+        )
+        db.commit()
+
+        return _raw_submission_response(
+            status_code=status.HTTP_201_CREATED,
+            status_value="SUCCESS",
+            id_seance=stored_session_id,
+            message="Session stored successfully",
+        )
+    except RawSubmissionValidationError as exc:
+        db.rollback()
+        _write_audit_log(
+            db,
+            action="submission.ingest.raw",
+            status="VALIDATION_FAILED",
+            message=exc.message,
+            payload={
+                **request_payload,
+                "errors": exc.errors,
+            },
+            user=request_user_label,
+        )
+        db.commit()
+        return _raw_submission_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            status_value="VALIDATION_FAILED",
+            message=exc.message,
+            errors=exc.errors,
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Raw submission ingest failed")
+        _write_audit_log(
+            db,
+            action="submission.ingest.raw",
+            status="ERROR",
+            message="Raw submission ingest failed unexpectedly",
+            payload=request_payload,
+            user=request_user_label,
+        )
+        db.commit()
+        return _raw_submission_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_value="ERROR",
+            message="Raw submission ingest failed unexpectedly",
+        )
 
 
 @router.get("/{submission_id}", response_model=SubmissionRead)

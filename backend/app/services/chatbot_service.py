@@ -29,6 +29,7 @@ from app.models.structured_notes import (
     Suspension,
 )
 from app.models.submission import Submission
+from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.chatbot import (
     ChatbotCard,
@@ -62,6 +63,8 @@ DEFAULT_FOLLOW_UPS = [
     "Show alignment for Car 12",
     "Show tire temperatures",
     "Show tire history",
+    "Log note: car felt loose on corner exit",
+    "Set LF cold pressure to 22.5 for Session 2",
     "Show latest submissions",
     "Show driver and vehicle data",
     "Show changes from baseline",
@@ -70,8 +73,8 @@ DEFAULT_FOLLOW_UPS = [
 
 UNSUPPORTED_MESSAGE = (
     "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
-    "alignment, tire temperatures, tire history, submissions, drivers, and vehicles. "
-    "Please ask one of those questions."
+    "alignment, tire temperatures, tire history, chat-based notes, setup updates, submissions, "
+    "drivers, and vehicles. Please ask one of those questions."
 )
 PLEASE_SELECT_EVENT_MESSAGE = "Please select an event or include the event name so I can show its sessions."
 NO_EVENTS_MESSAGE = "No events were found in the SM2 Racing database."
@@ -96,6 +99,8 @@ VEHICLE_SCOPED_INTENTS = {
     "tire_pressures_by_session",
     "tire_temperatures_by_session",
     "tire_history_by_session",
+    "log_session_note",
+    "update_setup_fields",
     "suspension_data",
     "alignment_by_car",
     "latest_submissions",
@@ -112,6 +117,8 @@ NLP_ALLOWED_INTENTS = [
     "tire_pressures_by_session",
     "tire_temperatures_by_session",
     "tire_history_by_session",
+    "log_session_note",
+    "update_setup_fields",
     "suspension_data",
     "alignment_by_car",
     "latest_submissions",
@@ -161,6 +168,279 @@ class NLPIntentResult:
     confidence: float
     filters: dict[str, str]
     explanation: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SetupFieldDefinition:
+    section: str
+    model: type[Any]
+    attribute: str
+    label: str
+    value_type: str
+    aliases: tuple[str, ...]
+    minimum: float | None = None
+    maximum: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedSetupChange:
+    definition: SetupFieldDefinition
+    value: Decimal | int | str
+    raw_value: str
+
+
+CORNER_ALIASES = {
+    "fl": ("fl", "lf", "front left", "left front"),
+    "fr": ("fr", "rf", "front right", "right front"),
+    "rl": ("rl", "lr", "rear left", "left rear"),
+    "rr": ("rr", "rear right", "right rear"),
+}
+
+AXLE_ALIASES = {
+    "f": ("front", "f"),
+    "r": ("rear", "r"),
+}
+
+SIDE_ALIASES = {
+    "l": ("left", "l"),
+    "r": ("right", "r"),
+}
+
+
+def _with_corner_aliases(corner: str, terms: Iterable[str]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for term in terms:
+        for corner_alias in CORNER_ALIASES[corner]:
+            aliases.append(f"{corner_alias} {term}")
+            aliases.append(f"{term} {corner_alias}")
+    return tuple(dict.fromkeys(aliases))
+
+
+def _with_axle_aliases(axle: str, terms: Iterable[str]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for term in terms:
+        for axle_alias in AXLE_ALIASES[axle]:
+            aliases.append(f"{axle_alias} {term}")
+            aliases.append(f"{term} {axle_alias}")
+    return tuple(dict.fromkeys(aliases))
+
+
+def _with_side_aliases(side: str, terms: Iterable[str]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for term in terms:
+        for side_alias in SIDE_ALIASES[side]:
+            aliases.append(f"{side_alias} {term}")
+            aliases.append(f"{term} {side_alias}")
+    return tuple(dict.fromkeys(aliases))
+
+
+def _setup_field_definitions() -> tuple[SetupFieldDefinition, ...]:
+    definitions: list[SetupFieldDefinition] = []
+    corner_labels = {
+        "fl": "FL",
+        "fr": "FR",
+        "rl": "RL",
+        "rr": "RR",
+    }
+
+    for pressure_type, minimum, maximum in (("cold", 5.0, 60.0), ("hot", 5.0, 80.0)):
+        for corner, corner_label in corner_labels.items():
+            definitions.append(
+                SetupFieldDefinition(
+                    section="pressures",
+                    model=Pressure,
+                    attribute=f"{pressure_type}_{corner}",
+                    label=f"{pressure_type.title()} pressure {corner_label}",
+                    value_type="decimal",
+                    aliases=_with_corner_aliases(
+                        corner,
+                        (
+                            f"{pressure_type} pressure",
+                            f"{pressure_type} tire pressure",
+                            f"{pressure_type} psi",
+                        ),
+                    ),
+                    minimum=minimum,
+                    maximum=maximum,
+                )
+            )
+
+    for field_name, label, terms in (
+        ("rebound", "Rebound", ("rebound", "rebound click", "rebound clicks")),
+        ("bump", "Bump", ("bump", "bump click", "bump clicks", "compression")),
+    ):
+        for corner, corner_label in corner_labels.items():
+            definitions.append(
+                SetupFieldDefinition(
+                    section="suspension",
+                    model=Suspension,
+                    attribute=f"{field_name}_{corner}",
+                    label=f"{label} {corner_label}",
+                    value_type="int",
+                    aliases=_with_corner_aliases(corner, terms),
+                    minimum=0,
+                )
+            )
+
+    definitions.extend(
+        [
+            SetupFieldDefinition(
+                section="suspension",
+                model=Suspension,
+                attribute="sway_bar_f",
+                label="Sway bar front",
+                value_type="text",
+                aliases=("front sway bar", "sway bar front", "front swaybar", "swaybar front"),
+            ),
+            SetupFieldDefinition(
+                section="suspension",
+                model=Suspension,
+                attribute="sway_bar_r",
+                label="Sway bar rear",
+                value_type="text",
+                aliases=("rear sway bar", "sway bar rear", "rear swaybar", "swaybar rear"),
+            ),
+            SetupFieldDefinition(
+                section="suspension",
+                model=Suspension,
+                attribute="wing_angle_deg",
+                label="Wing angle",
+                value_type="decimal",
+                aliases=("wing angle", "rear wing angle", "wing", "aero wing"),
+                minimum=-90,
+                maximum=90,
+            ),
+        ]
+    )
+
+    for corner, corner_label in corner_labels.items():
+        definitions.append(
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute=f"camber_{corner}",
+                label=f"Camber {corner_label}",
+                value_type="decimal",
+                aliases=_with_corner_aliases(corner, ("camber",)),
+                minimum=-20,
+                maximum=20,
+            )
+        )
+        definitions.append(
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute=f"corner_weight_{corner}",
+                label=f"Corner weight {corner_label}",
+                value_type="decimal",
+                aliases=_with_corner_aliases(corner, ("corner weight", "weight")),
+                minimum=0,
+            )
+        )
+
+    definitions.extend(
+        [
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="toe_front",
+                label="Toe front",
+                value_type="text",
+                aliases=_with_axle_aliases("f", ("toe",)),
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="toe_rear",
+                label="Toe rear",
+                value_type="text",
+                aliases=_with_axle_aliases("r", ("toe",)),
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="caster_l",
+                label="Caster L",
+                value_type="decimal",
+                aliases=_with_side_aliases("l", ("caster",)),
+                minimum=-20,
+                maximum=20,
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="caster_r",
+                label="Caster R",
+                value_type="decimal",
+                aliases=_with_side_aliases("r", ("caster",)),
+                minimum=-20,
+                maximum=20,
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="ride_height_f",
+                label="Ride height front",
+                value_type="decimal",
+                aliases=_with_axle_aliases("f", ("ride height", "rideheight")),
+                minimum=0,
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="ride_height_r",
+                label="Ride height rear",
+                value_type="decimal",
+                aliases=_with_axle_aliases("r", ("ride height", "rideheight")),
+                minimum=0,
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="rake_mm",
+                label="Rake",
+                value_type="decimal",
+                aliases=("rake", "rake mm"),
+                minimum=-500,
+                maximum=500,
+            ),
+            SetupFieldDefinition(
+                section="alignment",
+                model=Alignment,
+                attribute="wheelbase_mm",
+                label="Wheelbase",
+                value_type="decimal",
+                aliases=("wheelbase", "wheelbase mm"),
+                minimum=0.01,
+            ),
+        ]
+    )
+
+    temp_terms = {
+        "in": ("inner tire temperature", "inner temperature", "inner temp", "inside tire temp", "inside temp"),
+        "mid": ("middle tire temperature", "middle temperature", "middle temp", "mid tire temp", "mid temp"),
+        "out": ("outer tire temperature", "outer temperature", "outer temp", "outside tire temp", "outside temp"),
+    }
+    temp_labels = {"in": "inner", "mid": "middle", "out": "outer"}
+    for corner, corner_label in corner_labels.items():
+        for suffix, aliases in temp_terms.items():
+            definitions.append(
+                SetupFieldDefinition(
+                    section="tire_temperatures",
+                    model=TireTemperature,
+                    attribute=f"{corner}_{suffix}",
+                    label=f"Temperature {corner_label} {temp_labels[suffix]}",
+                    value_type="decimal",
+                    aliases=_with_corner_aliases(corner, aliases),
+                    minimum=0,
+                    maximum=300,
+                )
+            )
+
+    return tuple(definitions)
+
+
+SETUP_FIELD_DEFINITIONS = _setup_field_definitions()
 
 
 def _table(name: str) -> str:
@@ -278,6 +558,150 @@ def _record_reference(
     details: str | None = None,
 ) -> ChatbotRecordReference:
     return ChatbotRecordReference(kind=kind, value=str(value), label=label, details=details)
+
+
+def _actor_label(current_user: User | None) -> str:
+    if current_user is None:
+        return "admin-chatbot"
+
+    for attribute in ("name", "email"):
+        value = getattr(current_user, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return str(getattr(current_user, "id", "admin-chatbot"))
+
+
+def _alias_regex(alias: str) -> str:
+    return r"\b" + r"\s+".join(re.escape(part) for part in alias.lower().split()) + r"\b"
+
+
+def _coerce_setup_change_value(definition: SetupFieldDefinition, raw_value: str) -> Decimal | int | str:
+    cleaned = raw_value.strip().strip("'\"")
+    if not cleaned:
+        raise ValueError(f"{definition.label} needs a value.")
+
+    if definition.value_type == "text":
+        if len(cleaned) > 80:
+            raise ValueError(f"{definition.label} is too long. Keep the value under 80 characters.")
+        return cleaned
+
+    try:
+        numeric = Decimal(cleaned)
+    except Exception as exc:
+        raise ValueError(f"{definition.label} must be a valid number.") from exc
+
+    numeric_float = float(numeric)
+    if definition.minimum is not None and numeric_float < definition.minimum:
+        raise ValueError(f"{definition.label} must be at least {_decimal_text(definition.minimum)}.")
+    if definition.maximum is not None and numeric_float > definition.maximum:
+        raise ValueError(f"{definition.label} must be no more than {_decimal_text(definition.maximum)}.")
+
+    if definition.value_type == "int":
+        if numeric != numeric.to_integral_value():
+            raise ValueError(f"{definition.label} must be a whole number.")
+        return int(numeric)
+
+    return numeric
+
+
+def _extract_setup_value(query: str, definition: SetupFieldDefinition) -> str | None:
+    normalized = re.sub(r"\s+", " ", query.lower()).strip()
+    numeric_value = r"-?\d+(?:\.\d+)?"
+
+    if definition.value_type == "text":
+        value_pattern = r"[^,;.]+?"
+        for alias in definition.aliases:
+            alias_pattern = _alias_regex(alias)
+            pattern = rf"{alias_pattern}\s*(?:=|:|to|at|is|as)\s*(?P<value>{value_pattern})(?=\s+\band\b|\s+for\s+session\b|$|[,;.])"
+            match = re.search(pattern, normalized, flags=re.IGNORECASE)
+            if match:
+                return match.group("value").strip()
+        return None
+
+    for alias in definition.aliases:
+        alias_pattern = _alias_regex(alias)
+        after_pattern = rf"{alias_pattern}\s*(?:=|:|to|at|is|as)?\s*(?P<value>{numeric_value})"
+        match = re.search(after_pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return match.group("value")
+
+        before_pattern = rf"(?P<value>{numeric_value})\s*(?:psi|deg(?:rees)?|mm|clicks?)?\s+{alias_pattern}"
+        match = re.search(before_pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return match.group("value")
+
+    return None
+
+
+def _parse_setup_patch_from_query(query: str) -> list[ParsedSetupChange]:
+    changes: list[ParsedSetupChange] = []
+    seen: set[tuple[str, str]] = set()
+    for definition in SETUP_FIELD_DEFINITIONS:
+        raw_value = _extract_setup_value(query, definition)
+        if raw_value is None:
+            continue
+
+        key = (definition.section, definition.attribute)
+        if key in seen:
+            continue
+        changes.append(
+            ParsedSetupChange(
+                definition=definition,
+                value=_coerce_setup_change_value(definition, raw_value),
+                raw_value=raw_value,
+            )
+        )
+        seen.add(key)
+    return changes
+
+
+def _looks_like_setup_update_query(text: str) -> bool:
+    if not re.search(r"\b(set|update|change|adjust|record|log)\b", text):
+        return False
+    if not re.search(r"-?\d+(?:\.\d+)?", text):
+        return False
+    return any(
+        keyword in text
+        for keyword in [
+            "pressure",
+            "psi",
+            "camber",
+            "toe",
+            "caster",
+            "ride height",
+            "corner weight",
+            "rebound",
+            "bump",
+            "compression",
+            "sway",
+            "wing",
+            "temperature",
+            "temp",
+            "wheelbase",
+            "rake",
+        ]
+    )
+
+
+def _looks_like_note_log_query(text: str) -> bool:
+    return bool(re.search(r"\b(log|add|record|append)\b.*\bnote\b", text)) or text.startswith("note:")
+
+
+def _extract_session_note_text(query: str) -> str | None:
+    patterns = [
+        r"\b(?:log|add|record|append)\s+(?:a\s+)?(?:session\s+)?note(?:\s+for\s+session\s+\d+)?\s*(?:[:\-]|that|saying)?\s*(?P<note>.+)$",
+        r"^\s*note\s*[:\-]\s*(?P<note>.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if not match:
+            continue
+        note = match.group("note").strip().strip("'\"")
+        note = re.sub(r"\s+for\s+session\s+\d+\s*$", "", note, flags=re.IGNORECASE)
+        note = re.sub(r"\s+", " ", note)
+        if note:
+            return note
+    return None
 
 
 def _driver_choice(driver: Driver) -> ChatbotDirectoryChoice:
@@ -825,9 +1249,10 @@ def _extract_event_query(query: str) -> str | None:
 
 def _extract_car_number(query: str) -> str | None:
     patterns = [
-        r"\bcar\s*#?\s*([A-Za-z0-9-]+)\b",
+        r"\bcar\s*#\s*([A-Za-z0-9-]+)\b",
+        r"\bcar\s+(?:number|no\.?|id)\s*#?\s*([A-Za-z0-9-]+)\b",
         r"\bvehicle\s*#?\s*([A-Za-z0-9-]+)\b",
-        r"\bcar\s+([A-Za-z0-9-]+)\b",
+        r"\bcar\s+([A-Za-z0-9-]*\d[A-Za-z0-9-]*)\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, query, flags=re.IGNORECASE)
@@ -1768,6 +2193,397 @@ def _session_focus_response(
     )
 
 
+def _error_response(title: str, message: str, *, intent: str) -> ChatbotResponse:
+    return ChatbotResponse(
+        kind="message",
+        title=title,
+        summary=message,
+        answer=message,
+        source_label=SOURCE_LABEL,
+        data_found=False,
+        intent=intent,
+        status="error",
+        data={"message": message},
+        follow_up=DEFAULT_FOLLOW_UPS,
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _resolve_chat_write_bundle(
+    db: Session,
+    *,
+    event: Event | None,
+    event_rows: list[tuple[Event, RunGroup | None]],
+    session_bundle: SessionBundle | None,
+    query_in: ChatbotQuery,
+    session_number: int | None,
+    vehicle_filter_id: str | None,
+    session_date: date | None,
+    time_window: str | None,
+    intent: str,
+) -> tuple[SessionBundle | None, ChatbotResponse | None]:
+    if query_in.session_id:
+        return session_bundle, None
+
+    if session_number is not None:
+        rows = _load_session_rows_by_number(
+            db,
+            session_number=session_number,
+            event=event,
+            driver_id=query_in.driver_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+        )
+        if not rows:
+            return None, None
+        if len(rows) > 1 and event is None:
+            records_used = [
+                _record_reference(
+                    "session",
+                    row_session.id_seance,
+                    _session_heading(row_session),
+                    details=f"{row_session.track} | {_date_text(row_session.session_date)}",
+                )
+                for row_session, _, _ in rows
+            ]
+            section = _build_candidate_table(
+                title="Matching sessions",
+                subtitle="Multiple session records match that number. Please choose one before applying a chat update.",
+                headers=["Session", "Event", "Date", "Driver", "Vehicle"],
+                rows=[
+                    [
+                        _session_heading(row_session),
+                        (
+                            _session_event_match(row_session, event_rows)[0].name
+                            if _session_event_match(row_session, event_rows)[0]
+                            else "Not available"
+                        ),
+                        _date_text(row_session.session_date),
+                        _driver_name(row_driver, row_session.driver_id),
+                        _vehicle_name(row_vehicle, row_session.vehicle_id),
+                    ]
+                    for row_session, row_driver, row_vehicle in rows
+                ],
+                icon_key="session",
+            )
+            return None, _selection_response(
+                title="Choose a session",
+                message=MULTIPLE_SESSION_MATCH_MESSAGE.format(number=session_number),
+                intent=intent,
+                section=section,
+                records_used=records_used,
+            )
+        return _bundle_from_row(rows[0]), None
+
+    return (
+        _select_anchor_session(
+            db,
+            event=event,
+            session_id=None,
+            driver_id=query_in.driver_id,
+            vehicle_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+        ),
+        None,
+    )
+
+
+def _format_setup_value(value: object | None) -> str:
+    if value is None:
+        return "Not available"
+    if isinstance(value, (Decimal, int, float)):
+        return _decimal_text(value)
+    return _text(value)
+
+
+def _setup_row_for_change(db: Session, session_id: str, definition: SetupFieldDefinition) -> Any:
+    row = db.get(definition.model, session_id)
+    if row is None:
+        row = definition.model(id_seance=session_id)
+        db.add(row)
+        db.flush()
+    return row
+
+
+def _write_chatbot_audit_log(
+    db: Session,
+    *,
+    action: str,
+    session_id: str,
+    message: str,
+    payload: dict[str, Any],
+    actor: str,
+) -> None:
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    attempts = [
+        (
+            f"""
+            INSERT INTO {_table("logs")} (
+                action,
+                status,
+                message,
+                payload,
+                "user",
+                logged_at
+            ) VALUES (
+                :action,
+                :status,
+                :message,
+                CAST(:payload AS jsonb),
+                :actor,
+                now()
+            )
+            """,
+            {
+                "action": action,
+                "status": "SUCCESS",
+                "message": message,
+                "payload": payload_json,
+                "actor": actor,
+            },
+        ),
+        (
+            f"""
+            INSERT INTO {_table("logs")} (
+                action,
+                status,
+                entity_type,
+                entity_id,
+                message,
+                payload,
+                logged_at
+            ) VALUES (
+                :action,
+                :status,
+                'seance',
+                :entity_id,
+                :message,
+                CAST(:payload AS jsonb),
+                now()
+            )
+            """,
+            {
+                "action": action,
+                "status": "SUCCESS",
+                "entity_id": session_id,
+                "message": message,
+                "payload": payload_json,
+            },
+        ),
+    ]
+
+    for statement, params in attempts:
+        try:
+            with db.begin_nested():
+                db.execute(text(statement), params)
+            return
+        except Exception:
+            logger.debug("Chatbot audit log shape did not match for action %s", action, exc_info=True)
+
+    logger.warning("Chatbot audit log skipped for action %s session=%s", action, session_id)
+
+
+def _setup_update_response(
+    db: Session,
+    *,
+    bundle: SessionBundle,
+    changes: list[ParsedSetupChange],
+    query: str,
+    current_user: User | None,
+    event: Event | None = None,
+) -> ChatbotResponse:
+    if not changes:
+        return _unsupported_response(
+            "Setup Update",
+            "I could not find any supported setup fields to update. Try a specific command like 'Set LF cold pressure to 22.5 for Session 2.'",
+            intent="update_setup_fields",
+            follow_up=["Set LF cold pressure to 22.5 for Session 2", "Set LF camber to -3.2", "Log note: car felt loose"],
+        )
+
+    actor = _actor_label(current_user)
+    session = bundle.session
+    table_rows: list[list[str]] = []
+    change_payload: list[dict[str, Any]] = []
+    touched_sections: set[str] = set()
+
+    try:
+        for change in changes:
+            definition = change.definition
+            row = _setup_row_for_change(db, session.id_seance, definition)
+            old_value = getattr(row, definition.attribute, None)
+            setattr(row, definition.attribute, change.value)
+            touched_sections.add(definition.section)
+            table_rows.append(
+                [
+                    definition.section.replace("_", " ").title(),
+                    definition.label,
+                    _format_setup_value(old_value),
+                    _format_setup_value(change.value),
+                ]
+            )
+            change_payload.append(
+                {
+                    "section": definition.section,
+                    "field": definition.attribute,
+                    "label": definition.label,
+                    "old_value": _format_setup_value(old_value),
+                    "new_value": _format_setup_value(change.value),
+                }
+            )
+
+        _write_chatbot_audit_log(
+            db,
+            action="chatbot.setup.update",
+            session_id=session.id_seance,
+            message=query,
+            payload={"changes": change_payload, "session_id": session.id_seance, "actor": actor},
+            actor=actor,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Chatbot setup update failed for session=%s", session.id_seance)
+        return _error_response(
+            "Setup Update Failed",
+            f"I could not apply the setup update: {_text(exc)}",
+            intent="update_setup_fields",
+        )
+
+    pressure = db.scalar(select(Pressure).where(Pressure.id_seance == session.id_seance))
+    suspension = db.scalar(select(Suspension).where(Suspension.id_seance == session.id_seance))
+    alignment = db.scalar(select(Alignment).where(Alignment.id_seance == session.id_seance))
+    temperature = db.scalar(select(TireTemperature).where(TireTemperature.id_seance == session.id_seance))
+    sections = [
+        _session_metadata_section(bundle, pressure, event=event),
+        _section(
+            "Applied setup changes",
+            subtitle="Only the fields listed here were changed; all other setup values were preserved.",
+            variant="table",
+            icon_key="compare",
+            table_headers=["Section", "Field", "Old value", "New value"],
+            table_rows=table_rows,
+        ),
+    ]
+    if "pressures" in touched_sections:
+        sections.append(_pressure_section(pressure))
+    if "suspension" in touched_sections:
+        sections.append(_suspension_section(suspension))
+    if "alignment" in touched_sections:
+        sections.append(_alignment_section(alignment))
+    if "tire_temperatures" in touched_sections:
+        sections.append(_temperature_section(temperature))
+
+    records_used = [
+        _record_reference("session", session.id_seance, _session_heading(session), details=session.track),
+        _record_reference("driver", bundle.driver.driver_id if bundle.driver else session.driver_id, _driver_name(bundle.driver, session.driver_id)),
+        _record_reference("vehicle", bundle.vehicle.vehicle_id if bundle.vehicle else session.vehicle_id, _vehicle_name(bundle.vehicle, session.vehicle_id)),
+    ]
+    if event is not None:
+        records_used.append(_record_reference("event", event.id, event.name, details=event.track))
+
+    summary = (
+        f"Applied {len(table_rows)} setup update(s) to {_session_heading(session)}. "
+        "Unmentioned setup fields were left unchanged."
+    )
+    return ChatbotResponse(
+        kind="setup",
+        title="Setup Updated",
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent="update_setup_fields",
+        data=_response_data(
+            sections=sections,
+            records_used=records_used,
+            session_id=session.id_seance,
+            changes=change_payload,
+        ),
+        sections=sections,
+        follow_up=["Compare sessions", "Show setup for latest session", "Log note: setup change applied"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+def _note_log_response(
+    db: Session,
+    *,
+    bundle: SessionBundle,
+    note: str,
+    query: str,
+    current_user: User | None,
+    event: Event | None = None,
+) -> ChatbotResponse:
+    actor = _actor_label(current_user)
+    session = bundle.session
+    timestamp = datetime.utcnow().strftime("%b %d, %Y %I:%M %p UTC").replace(" 0", " ")
+    note_entry = f"[{timestamp} | {actor}] {note}"
+    existing_notes = (session.notes or "").strip()
+
+    try:
+        session.notes = f"{existing_notes}\n{note_entry}" if existing_notes else note_entry
+        _write_chatbot_audit_log(
+            db,
+            action="chatbot.session.note",
+            session_id=session.id_seance,
+            message=query,
+            payload={"session_id": session.id_seance, "note": note, "actor": actor},
+            actor=actor,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Chatbot note log failed for session=%s", session.id_seance)
+        return _error_response(
+            "Note Logging Failed",
+            f"I could not log the note: {_text(exc)}",
+            intent="log_session_note",
+        )
+
+    pressure = db.scalar(select(Pressure).where(Pressure.id_seance == session.id_seance))
+    sections = [
+        _session_metadata_section(bundle, pressure, event=event),
+        _section(
+            "Logged note",
+            subtitle="Chat-entered session note appended to the session record.",
+            variant="fields",
+            icon_key="default",
+            fields=[
+                _field("Session", _session_heading(session)),
+                _field("Note", note),
+                _field("Logged by", actor),
+                _field("Logged at", timestamp),
+            ],
+        ),
+    ]
+    records_used = [
+        _record_reference("session", session.id_seance, _session_heading(session), details=session.track),
+        _record_reference("driver", bundle.driver.driver_id if bundle.driver else session.driver_id, _driver_name(bundle.driver, session.driver_id)),
+        _record_reference("vehicle", bundle.vehicle.vehicle_id if bundle.vehicle else session.vehicle_id, _vehicle_name(bundle.vehicle, session.vehicle_id)),
+    ]
+    if event is not None:
+        records_used.append(_record_reference("event", event.id, event.name, details=event.track))
+
+    summary = f"Logged a note on {_session_heading(session)}: {note}"
+    return ChatbotResponse(
+        kind="setup",
+        title="Session Note Logged",
+        summary=summary,
+        answer=summary,
+        source_label=SOURCE_LABEL,
+        data_found=True,
+        records_used=records_used,
+        intent="log_session_note",
+        data=_response_data(sections=sections, records_used=records_used, session_id=session.id_seance, note=note),
+        sections=sections,
+        follow_up=["Show setup for latest session", "Show latest sessions", "Compare sessions"],
+        generated_at=datetime.utcnow(),
+    )
+
+
 def _session_rollup_section(rows: list[tuple[Seance, Driver | None, Vehicle | None]]) -> ChatbotSection:
     drivers = {_driver_name(driver, session.driver_id) for session, driver, _ in rows}
     vehicles = {_vehicle_name(vehicle, session.vehicle_id) for session, _, vehicle in rows}
@@ -2086,6 +2902,16 @@ def _submission_note_text(submission: Submission) -> str:
     return "Not available"
 
 
+def _submission_image_review_text(submission: Submission) -> str:
+    analysis = submission.analysis_result if isinstance(submission.analysis_result, dict) else {}
+    image_analysis = analysis.get("image_analysis") if isinstance(analysis.get("image_analysis"), dict) else {}
+    if image_analysis.get("recommended_review_status"):
+        return _text(image_analysis.get("recommended_review_status"))
+    if analysis.get("image_analysis_review_status"):
+        return _text(analysis.get("image_analysis_review_status"))
+    return "PENDING" if submission.image_url else "Not available"
+
+
 def _submissions_response(
     db: Session,
     *,
@@ -2151,6 +2977,8 @@ def _submissions_response(
                     _field("Driver", driver_label),
                     _field("Vehicle", vehicle_label),
                     _field("Structured ingest", submission.structured_ingest_status),
+                    _field("Image", "Attached" if submission.image_url else "Not available"),
+                    _field("Image review", _submission_image_review_text(submission)),
                     _field("Note", _submission_note_text(submission)),
                     _field("Created", _datetime_text(submission.created_at)),
                     _field("Error", submission.error_message or "Not available"),
@@ -2662,6 +3490,12 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     if any(keyword in text for keyword in ["baseline", "delta", "deltas", "changes from baseline"]):
         return "compare"
 
+    if _looks_like_note_log_query(text):
+        return "log_session_note"
+
+    if _looks_like_setup_update_query(text):
+        return "update_setup_fields"
+
     if any(keyword in text for keyword in ["show all events", "list events", "show events", "all events"]):
         return "list_events"
 
@@ -2885,7 +3719,7 @@ def build_chatbot_context(db: Session, *, limit: int = 10) -> ChatbotContextResp
     return context
 
 
-def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotResponse:
+def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: User | None = None) -> ChatbotResponse:
     query = query_in.message.strip()
     logger.info("Admin chatbot raw message received: %s", query)
     deterministic_intent = _intent_from_query(query, query_in)
@@ -3262,6 +4096,82 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery) -> ChatbotRespon
             intent="sessions_by_driver",
             event_rows=event_rows,
             follow_up=["Show driver and vehicle data", "Show setup for latest session", "Show latest sessions"],
+        )
+
+    if intent == "log_session_note":
+        note = _extract_session_note_text(query)
+        if note is None:
+            return _unsupported_response(
+                "Session Note",
+                "Please include the note text. Example: 'Log note: car felt loose on corner exit for Session 2.'",
+                intent="log_session_note",
+                follow_up=["Log note: car felt loose on corner exit", "Show latest sessions"],
+            )
+
+        bundle, selection_response = _resolve_chat_write_bundle(
+            db,
+            event=event,
+            event_rows=event_rows,
+            session_bundle=session_bundle,
+            query_in=query_in,
+            session_number=session_number,
+            vehicle_filter_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            intent="log_session_note",
+        )
+        if selection_response is not None:
+            return selection_response
+        if bundle is None or (event is not None and not _session_in_event_window(bundle.session, event)):
+            return _not_found_response("Session Note", NO_DATA_MESSAGE, intent="log_session_note")
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        logger.info("Admin chatbot write intent: log_session_note session=%s", bundle.session.id_seance)
+        return _note_log_response(
+            db,
+            bundle=bundle,
+            note=note,
+            query=query,
+            current_user=current_user,
+            event=event or resolved_event,
+        )
+
+    if intent == "update_setup_fields":
+        try:
+            changes = _parse_setup_patch_from_query(query)
+        except ValueError as exc:
+            return _error_response("Setup Update", str(exc), intent="update_setup_fields")
+
+        bundle, selection_response = _resolve_chat_write_bundle(
+            db,
+            event=event,
+            event_rows=event_rows,
+            session_bundle=session_bundle,
+            query_in=query_in,
+            session_number=session_number,
+            vehicle_filter_id=vehicle_filter_id,
+            session_date=session_date,
+            time_window=time_window,
+            intent="update_setup_fields",
+        )
+        if selection_response is not None:
+            return selection_response
+        if bundle is None or (event is not None and not _session_in_event_window(bundle.session, event)):
+            return _not_found_response("Setup Update", NO_DATA_MESSAGE, intent="update_setup_fields")
+
+        resolved_event, _ = _session_event_match(bundle.session, event_rows)
+        logger.info(
+            "Admin chatbot write intent: update_setup_fields session=%s changes=%s",
+            bundle.session.id_seance,
+            len(changes),
+        )
+        return _setup_update_response(
+            db,
+            bundle=bundle,
+            changes=changes,
+            query=query,
+            current_user=current_user,
+            event=event or resolved_event,
         )
 
     if intent == "setup_latest_session":
