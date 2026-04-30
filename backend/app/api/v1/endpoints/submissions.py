@@ -27,6 +27,7 @@ from app.schemas.submission import (
     SubmissionUpdate,
 )
 from app.services.image_analysis_service import analyze_submission_image
+from app.services.raw_note_llm_service import extract_raw_note_via_openai
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,
     build_raw_submission_payload,
@@ -773,6 +774,7 @@ def create_raw_submission(
 ) -> JSONResponse:
     request_payload = submission_in.model_dump(by_alias=True)
     request_user_label = submission_in.created_by
+    parser_mode = "deterministic"
 
     try:
         created_by_user = _resolve_raw_created_by_user(
@@ -790,8 +792,25 @@ def create_raw_submission(
             requested_run_group=submission_in.run_group,
         )
 
-        # Parse the shorthand note into deterministic structured session data.
-        parsed_note = parse_raw_note(submission_in.raw_text)
+        # Parse the shorthand note into deterministic structured session data first.
+        try:
+            parsed_note = parse_raw_note(submission_in.raw_text)
+        except RawSubmissionValidationError as parse_error:
+            # Keep OpenAI as a backend-only fallback for notes the deterministic parser cannot read.
+            fallback_result = extract_raw_note_via_openai(submission_in.raw_text)
+            if fallback_result is None:
+                raise parse_error
+            parsed_note = fallback_result.parsed_note
+            parser_mode = "openai"
+            submission_confidence = fallback_result.confidence
+            logger.info(
+                "Raw submission parse used OpenAI fallback: event_id=%s session_number=%s",
+                submission_in.event_id,
+                parsed_note.session_number,
+            )
+        else:
+            submission_confidence = submission_in.confidence
+
         driver = resolve_driver_alias(
             db.scalars(select(Driver).where(Driver.is_active.is_(True))).all(),
             parsed_note.driver_alias,
@@ -815,7 +834,7 @@ def create_raw_submission(
             run_group=run_group.normalized.value,
             created_by=request_user_label,
             captured_at=captured_at,
-            confidence=submission_in.confidence,
+            confidence=submission_confidence,
         )
 
         # Validate the backend-owned structured payload before any database write.
@@ -850,6 +869,7 @@ def create_raw_submission(
                 message=f"Duplicate raw submission ignored for {duplicate_session_id}",
                 payload={
                     **request_payload,
+                    "parser_mode": parser_mode,
                     "id_seance": duplicate_session_id,
                     "duplicate": True,
                 },
@@ -924,6 +944,7 @@ def create_raw_submission(
             message=f"Raw submission stored successfully for {stored_session_id}",
             payload={
                 **request_payload,
+                "parser_mode": parser_mode,
                 "submission_ref": raw_submission.submission_ref,
                 "correlation_id": raw_submission.correlation_id,
                 "id_seance": stored_session_id,
@@ -945,6 +966,9 @@ def create_raw_submission(
             id_seance=stored_session_id,
             message="Session stored successfully",
         )
+    except HTTPException:
+        db.rollback()
+        raise
     except RawSubmissionValidationError as exc:
         db.rollback()
         write_raw_audit_log_current_schema(
@@ -956,6 +980,7 @@ def create_raw_submission(
             message=exc.message,
             payload={
                 **request_payload,
+                "parser_mode": parser_mode,
                 "errors": exc.errors,
             },
             actor_user_id=current_user.id,

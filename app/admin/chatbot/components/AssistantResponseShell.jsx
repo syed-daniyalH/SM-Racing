@@ -744,14 +744,14 @@ export default function AssistantResponseShell({
         )}
 
         {loading ? (
-          <ResponseContentSlot>
-            <ChatLoadingState
-              label={summary}
-              hint="The assistant is checking the live database before replying."
-            />
-          </ResponseContentSlot>
-        ) : (
+          <ChatLoadingState
+            label={summary}
+            hint="The assistant is checking the live database before replying."
+          />
+        ) : hasSections ? (
           <ResponseContentSlot>{children}</ResponseContentSlot>
+        ) : (
+          children
         )}
       </div>
     </div>

@@ -190,6 +190,34 @@ def test_raw_persistence_uses_current_schema_columns():
     assert pressure_insert["hot_rr"] == 32.0
 
 
+def test_raw_persistence_preserves_wheelbase_when_alignment_is_also_present():
+    db = _FakeSession()
+    raw_text = "s3 30min nico gt4 Y-S3 pf 26/26/27/27 c -3.2/-3.1/-2.8/-2.8 wb 2450"
+    submission, event, run_group, driver, vehicle, current_user, payload, analysis_result, id_seance, captured_at = _build_submission(raw_text)
+
+    result = persist_raw_submission_current_schema(
+        db,
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        current_user=current_user,
+        source="pwa",
+        payload=payload,
+        analysis_result=analysis_result,
+        id_seance=id_seance,
+        captured_at=captured_at,
+    )
+
+    assert result.status == "saved"
+    assert "alignment" in result.saved_sections
+
+    alignment_insert = next(params for sql, params in db.executed if "insert into sm2racing.alignment" in sql.lower())
+    assert alignment_insert["camber_fl"] == -3.2
+    assert alignment_insert["wheelbase_mm"] == 2450.0
+
+
 def test_raw_duplicate_lookup_uses_current_schema_session_identity():
     db = _FakeSession()
     db.duplicate_id_seance = "20260430-NG-S02"
