@@ -4,6 +4,11 @@
 
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import AssistantIcon from "./AssistantIcon"
+import {
+  BetterPromptHelper,
+  FeaturedPromptRow,
+  FollowUpPromptRow,
+} from "./PromptLibrary"
 
 function renderStateIcon(Icon) {
   if (!Icon) {
@@ -125,7 +130,7 @@ export function ChatLoadingState({
 export function ChatEmptyState({
   title = "AI Race Assistant",
   description = "Ask about sessions, events, setup data, or comparisons.",
-  actions = [],
+  scope = {},
   loading = false,
   onAction,
 }) {
@@ -142,12 +147,13 @@ export function ChatEmptyState({
         </div>
       </div>
 
-      <ActionChipGroup
-        label="Starter actions"
-        items={actions}
+      <BetterPromptHelper className="chatbot-empty-helper" />
+
+      <FeaturedPromptRow
+        scope={scope}
         onAction={onAction}
         loading={loading}
-        className="chatbot-empty-actions-group"
+        className="chatbot-empty-featured-prompts"
       />
 
       {loading ? (
@@ -163,6 +169,9 @@ export function ChatEmptyState({
 export function ChatNotFoundState({
   title = "No matching data was found in the SM2 Racing database.",
   message = "Try narrowing the event, session, driver, or vehicle, then ask again.",
+  suggestions = [],
+  loading = false,
+  onAction,
 }) {
   return (
     <SupportStateCard
@@ -171,13 +180,23 @@ export function ChatNotFoundState({
       message={message}
       tone="warning"
       icon={AssistantIcon}
-    />
+    >
+      <FollowUpPromptRow
+        prompts={suggestions}
+        onAction={onAction}
+        loading={loading}
+        className="chatbot-support-state-prompts"
+      />
+    </SupportStateCard>
   )
 }
 
 export function ChatUnsupportedState({
   title = "I can help with sessions, events, setup data, comparisons, and summaries.",
   message = "Use one of the supported race-data queries to stay within the current scope.",
+  suggestions = [],
+  loading = false,
+  onAction,
 }) {
   return (
     <SupportStateCard
@@ -186,13 +205,23 @@ export function ChatUnsupportedState({
       message={message}
       tone="neutral"
       icon={AssistantIcon}
-    />
+    >
+      <FollowUpPromptRow
+        prompts={suggestions}
+        onAction={onAction}
+        loading={loading}
+        className="chatbot-support-state-prompts"
+      />
+    </SupportStateCard>
   )
 }
 
 export function ChatValidationState({
   title = "I need a more specific filter before I can continue.",
   message = "Select an event, session, driver, or vehicle, then try the request again.",
+  suggestions = [],
+  loading = false,
+  onAction,
 }) {
   return (
     <SupportStateCard
@@ -201,7 +230,14 @@ export function ChatValidationState({
       message={message}
       tone="warning"
       icon={AssistantIcon}
-    />
+    >
+      <FollowUpPromptRow
+        prompts={suggestions}
+        onAction={onAction}
+        loading={loading}
+        className="chatbot-support-state-prompts"
+      />
+    </SupportStateCard>
   )
 }
 
@@ -212,6 +248,9 @@ export function NeedsContextState(props) {
 export function ChatErrorState({
   title = "The assistant could not reach the live database.",
   message = "Try again in a moment or refresh the context from the sidebar.",
+  suggestions = [],
+  loading = false,
+  onAction,
 }) {
   return (
     <SupportStateCard
@@ -220,6 +259,13 @@ export function ChatErrorState({
       message={message}
       tone="danger"
       icon={AssistantIcon}
-    />
+    >
+      <FollowUpPromptRow
+        prompts={suggestions}
+        onAction={onAction}
+        loading={loading}
+        className="chatbot-support-state-prompts"
+      />
+    </SupportStateCard>
   )
 }

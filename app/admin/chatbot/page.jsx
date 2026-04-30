@@ -39,11 +39,16 @@ import CompactSessionList from "./components/CompactSessionList"
 import ComparisonResponseSections from "./components/ComparisonResponseSections"
 import CompactResultSection from "./components/CompactResultCards"
 import SetupDetailSection from "./components/SetupDetailSections"
+import { PromptLibrary } from "./components/PromptLibrary"
 import SubmissionList from "./components/SubmissionList"
 import AssistantResponseShell, {
   buildAssistantSummary,
   serializeAssistantResponse,
 } from "./components/AssistantResponseShell"
+import {
+  buildSupportPromptSuggestions,
+  normalizePromptItem,
+} from "./components/promptLibraryData"
 import "./ChatbotAssistant.css"
 
 const MESSAGE_ICON_MAP = {
@@ -155,91 +160,18 @@ const buildLoadingCopy = (queryText) => {
   return "Checking live SM2 Racing data..."
 }
 
-const buildStarterActions = (context) => [
-  {
-    label: context.default_event_id ? "Show sessions for this event" : "Show all events",
-    icon: EventOutlinedIcon,
-  },
-  { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-  { label: "Show setup for latest session", icon: TuneOutlinedIcon },
-  { label: "Compare sessions", icon: CompareArrowsOutlinedIcon },
-  { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-]
-
-const buildStateActions = ({ kind, scope = {}, response }) => {
-  const actionsByKind = {
-    not_found: [
-      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-      { label: "Show all events", icon: EventOutlinedIcon },
-      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-    ],
-    unsupported: [
-      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-      { label: "Show setup for latest session", icon: TuneOutlinedIcon },
-      { label: "Compare sessions", icon: CompareArrowsOutlinedIcon },
-    ],
-    validation: [
-      { label: "Show sessions for this event", icon: EventOutlinedIcon },
-      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-    ],
-    needs_context: [
-      { label: "Show sessions for this event", icon: EventOutlinedIcon },
-      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-    ],
-    error: [
-      { label: "Show latest sessions", icon: ScheduleOutlinedIcon },
-      { label: "Show all events", icon: EventOutlinedIcon },
-      { label: "Show driver and vehicle data", icon: DirectionsCarOutlinedIcon },
-    ],
-  }
-
-  const items = [...(actionsByKind[kind] || [])]
-
-  if (scope?.event_id) {
-    items.unshift({ label: "Show sessions for this event", icon: EventOutlinedIcon })
-  }
-
-  if (scope?.session_id) {
-    items.unshift({ label: "Show setup for this session", icon: TuneOutlinedIcon })
-  }
-
-  if (scope?.driver_id) {
-    items.unshift({ label: "Show sessions for this driver", icon: PeopleAltOutlinedIcon })
-  }
-
-  if (scope?.vehicle_id) {
-    items.unshift({ label: "Show alignment for this vehicle", icon: TrackChangesOutlinedIcon })
-  }
-
-  if (response?.kind === "compare") {
-    items.unshift({ label: "Show full setup for latest session", icon: TuneOutlinedIcon })
-  }
-
-  const uniqueItems = []
-  const seen = new Set()
-
-  items.forEach((item) => {
-    const label = normalizeSupportText(item?.label)
-    if (!label) {
-      return
-    }
-
-    const key = label.toLowerCase()
-    if (seen.has(key)) {
-      return
-    }
-
-    seen.add(key)
-    uniqueItems.push({ ...item, label })
+const buildSupportSuggestions = ({ kind, scope = {}, response, queryText = "" }) =>
+  buildSupportPromptSuggestions({
+    kind,
+    scope,
+    response,
+    queryText,
+    limit: 3,
   })
-
-  return uniqueItems.slice(0, 4)
-}
 
 const getSupportState = ({ message, response, scope }) => {
   const status = response?.status || (message?.role === "error" ? "error" : "")
+  const queryText = normalizeSupportText(message?.text || "")
   const supportText = normalizeSupportText(
     response?.error_message || response?.error || response?.summary || message?.text,
   )
@@ -250,65 +182,90 @@ const getSupportState = ({ message, response, scope }) => {
       isValidationText(supportText))
 
   if (status === "not_found") {
-    return {
-      variant: "not_found",
-      component: ChatNotFoundState,
-      props: {
-        title: "No matching data was found in the SM2 Racing database.",
-        message: "Try narrowing the event, session, driver, or vehicle, then ask again.",
-        actions: buildStateActions({ kind: "not_found", scope, response }),
-      },
-    }
+      return {
+        variant: "not_found",
+        component: ChatNotFoundState,
+        props: {
+          title: "No matching data was found in the SM2 Racing database.",
+          message: "Try narrowing the event, session, driver, or vehicle, then ask again.",
+          suggestions: buildSupportSuggestions({
+            kind: "not_found",
+            scope,
+            response,
+            queryText,
+          }),
+        },
+      }
   }
 
   if (status === "unsupported") {
-    return {
-      variant: "unsupported",
-      component: ChatUnsupportedState,
-      props: {
-        title: "I can help with sessions, events, setup data, comparisons, and summaries.",
-        message: "Use one of the supported race-data queries to stay within the current scope.",
-        actions: buildStateActions({ kind: "unsupported", scope, response }),
-      },
-    }
+      return {
+        variant: "unsupported",
+        component: ChatUnsupportedState,
+        props: {
+          title: "I can help with sessions, events, setup data, comparisons, and summaries.",
+          message: "Use one of the supported race-data queries to stay within the current scope.",
+          suggestions: buildSupportSuggestions({
+            kind: "unsupported",
+            scope,
+            response,
+            queryText,
+          }),
+        },
+      }
   }
 
   if (status === "needs_context") {
-    return {
-      variant: "needs_context",
-      component: NeedsContextState,
-      props: {
-        title: "I need one more detail before I can continue.",
-        message: supportText || "Select the missing event, session, driver, or vehicle and try again.",
-        actions: buildStateActions({ kind: "needs_context", scope, response }),
-      },
-    }
+      return {
+        variant: "needs_context",
+        component: NeedsContextState,
+        props: {
+          title: "I need one more detail before I can continue.",
+          message: supportText || "Select the missing event, session, driver, or vehicle and try again.",
+          suggestions: buildSupportSuggestions({
+            kind: "needs_context",
+            scope,
+            response,
+            queryText,
+          }),
+        },
+      }
   }
 
   if (isValidation) {
-    return {
-      variant: "needs_context",
-      component: NeedsContextState,
-      props: {
-        title: "I need one more detail before I can continue.",
-        message: supportText || "Select an event, session, driver, or vehicle, then try again.",
-        actions: buildStateActions({ kind: "needs_context", scope, response }),
-      },
-    }
+      return {
+        variant: "needs_context",
+        component: NeedsContextState,
+        props: {
+          title: "I need one more detail before I can continue.",
+          message: supportText || "Select an event, session, driver, or vehicle, then try again.",
+          suggestions: buildSupportSuggestions({
+            kind: "needs_context",
+            scope,
+            response,
+            queryText,
+          }),
+        },
+      }
   }
 
   if (status === "error") {
-    return {
-      variant: "error",
-      component: ChatErrorState,
-      props: {
-        title: "The assistant could not reach the live database.",
-        message:
-          supportText ||
-          "Try again in a moment or refresh the context from the sidebar.",
-        actions: buildStateActions({ kind: "error", scope, response }),
-      },
-    }
+      return {
+        variant: "error",
+        component: ChatErrorState,
+        props: {
+          title: "The assistant could not reach the live database.",
+          message:
+            supportText ||
+            "Try again in a moment or refresh the context from the sidebar.",
+          suggestions: buildSupportSuggestions({
+            kind: "error",
+            scope,
+            response,
+            queryText,
+          }),
+        },
+      }
   }
 
   return null
@@ -430,7 +387,7 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
   const useCompactResultLayout = Boolean(response && COMPACT_RESPONSE_KINDS.has(response.kind))
   const useSetupLayout = isSetupLikeResponse(response)
   const responseSections = Array.isArray(response?.sections) ? response.sections : []
-  const showSupportState = Boolean(supportState)
+  const showSupportState = Boolean(supportState && supportState.variant !== "not_found")
   const showSupportStateBeforeResults = Boolean(
     showSupportState && supportState?.variant === "needs_context" && responseSections.length,
   )
@@ -682,6 +639,16 @@ export default function ChatbotPage() {
     [selectedSessionId, visibleSessions],
   )
 
+  const promptScope = useMemo(
+    () => ({
+      eventLabel: selectedEvent?.label || "",
+      sessionLabel: selectedSession?.label || "",
+      driverLabel: selectedDriver?.label || "",
+      vehicleLabel: selectedVehicle?.label || "",
+    }),
+    [selectedDriver?.label, selectedEvent?.label, selectedSession?.label, selectedVehicle?.label],
+  )
+
   const latestAssistantMessage = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (
@@ -800,8 +767,18 @@ export default function ChatbotPage() {
   }
 
   const handleQuickAction = async (prompt) => {
-    setDraft(prompt)
-    await runQuery(prompt)
+    const item = normalizePromptItem(prompt)
+    if (!item?.label) {
+      return
+    }
+
+    if (item.mode === "fill") {
+      setDraft(item.text || item.label)
+      composerRef.current?.focus()
+      return
+    }
+
+    await runQuery(item.text || item.label)
   }
 
   const handleRefresh = async () => {
@@ -1103,40 +1080,17 @@ export default function ChatbotPage() {
                 </div>
               </section>
 
-              <section className="chatbot-sidebar-card">
-                <div className="chatbot-sidebar-card-head">
-                  <div className="chatbot-sidebar-card-icon" aria-hidden="true">
-                    <DataObjectOutlinedIcon fontSize="small" />
-                  </div>
-                  <div>
-                    <h2>What this assistant can do</h2>
-                    <p>Command examples for quick use</p>
-                  </div>
+              <PromptLibrary
+                scope={promptScope}
+                onAction={handleQuickAction}
+                loading={contextLoading || isSending}
+              />
+
+              {contextLoading ? (
+                <div className="chatbot-sidebar-loader">
+                  <Loader label="Loading context" sublabel="Fetching the latest database filters." />
                 </div>
-
-                <ul className="chatbot-capabilities-list">
-                  <li>Show all events</li>
-                  <li>Show latest sessions</li>
-                  <li>Show sessions for this event</li>
-                  <li>Show sessions for driver Alex</li>
-                  <li>Show setup for latest session</li>
-                  <li>Show tire pressures for Session 2</li>
-                  <li>Show suspension data</li>
-                  <li>Show alignment for Car 12</li>
-                  <li>Show latest submissions</li>
-                  <li>Show driver and vehicle data</li>
-                  <li>Compare sessions</li>
-                </ul>
-
-                {contextLoading ? (
-                  <div className="chatbot-sidebar-loader">
-                    <Loader
-                      label="Loading context"
-                      sublabel="Fetching the latest database filters."
-                    />
-                  </div>
-                ) : null}
-              </section>
+              ) : null}
 
               {contextError ? (
                 <section className="chatbot-sidebar-card chatbot-error-card">
@@ -1197,7 +1151,7 @@ export default function ChatbotPage() {
               <div className="chatbot-message-list" ref={listRef}>
                 {!hasMessages ? (
                   <ChatEmptyState
-                    actions={buildStarterActions(context)}
+                    scope={promptScope}
                     onAction={handleQuickAction}
                     loading={contextLoading || isSending}
                   />

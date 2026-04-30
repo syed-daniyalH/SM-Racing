@@ -5,6 +5,7 @@ import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import StatusBadge from "../../../components/Common/StatusBadge"
 import AssistantIcon from "./AssistantIcon"
 import AssistantLightReply from "./AssistantLightReply"
+import { FollowUpPromptRow } from "./PromptLibrary"
 import { ChatLoadingState } from "./ChatSupportStates"
 import {
   buildComparisonMetaItems,
@@ -711,7 +712,9 @@ export function SuggestedNextSteps({ suggestions = [], onFollowUp, loading = fal
 export default function AssistantResponseShell({
   response,
   message,
+  scope = {},
   onCopy,
+  onFollowUp,
   children = null,
   loading = false,
 }) {
@@ -753,6 +756,16 @@ export default function AssistantResponseShell({
         ) : (
           children
         )}
+
+        {!loading && state === "success" ? (
+          <FollowUpPromptRow
+            response={response}
+            messageText={message?.text || ""}
+            scope={scope}
+            onAction={onFollowUp}
+            className="chatbot-response-follow-ups"
+          />
+        ) : null}
       </div>
     </div>
   )
