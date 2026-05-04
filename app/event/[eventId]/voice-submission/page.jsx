@@ -300,6 +300,32 @@ const buildVoicePayloadData = ({
   wheelbase_mm: normalizeText(formState.wheelbase_mm) || null,
 });
 
+const formatDurationLabel = (durationMs) => {
+  const totalSeconds = Math.max(0, Math.round((durationMs || 0) / 1000));
+  if (!totalSeconds) {
+    return "Not captured";
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+};
+
+const formatConfidenceLabel = (confidenceValue) => {
+  if (confidenceValue === null || confidenceValue === undefined) {
+    return "Pending";
+  }
+
+  const normalizedValue =
+    Number(confidenceValue) <= 1 ? Number(confidenceValue) * 100 : Number(confidenceValue);
+
+  if (!Number.isFinite(normalizedValue)) {
+    return "Pending";
+  }
+
+  return `${Math.round(normalizedValue * 10) / 10}%`;
+};
+
 const getVoiceStatusMeta = (voiceSession, voiceState) => {
   const visibleStatus = String(voiceState?.visibleStatus || voiceState?.status || "idle").trim().toLowerCase();
   const transcript = buildVoiceNoteTranscript(voiceSession);
@@ -373,14 +399,6 @@ export default function VoiceSubmissionPage() {
   );
   const runGroupLabel = runGroup?.normalized || runGroup?.rawText || runGroup?.raw_text || "";
   const trackLabel = event?.track || event?.track_name || event?.trackName || "";
-  const voiceStatusMeta = getVoiceStatusMeta(voiceSession, voiceState);
-  const vehiclesForDriver = useMemo(() => {
-    const selectedDriverId = String(formState.driver_id || "").trim();
-    if (!selectedDriverId) {
-      return vehicleOptions;
-    }
-    return vehicleOptions.filter((vehicle) => !vehicle.driverId || vehicle.driverId === selectedDriverId);
-  }, [formState.driver_id, vehicleOptions]);
   const requiresExplicitReview = voiceSession?.validationStatus === "REVIEW_REQUIRED";
   const alreadyFinalized = Boolean(
     submittedSubmission?.id ||
@@ -388,6 +406,22 @@ export default function VoiceSubmissionPage() {
       voiceSession?.submissionId ||
       voiceSession?.submittedAt,
   );
+  const voiceStatusMeta = getVoiceStatusMeta(voiceSession, voiceState);
+  const transcriptText = normalizeText(voiceState?.transcript || buildVoiceNoteTranscript(voiceSession));
+  const transcriptWordCount = voiceSession?.transcriptWordCount || (transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0);
+  const sessionAttemptCount = Array.isArray(voiceSession?.attempts)
+    ? voiceSession.attempts.length
+    : voiceSession?.retryCount
+      ? Number(voiceSession.retryCount) + 1
+      : 0;
+  const audioDurationLabel = formatDurationLabel(voiceSession?.audioDurationMs);
+  const confidenceLabel = formatConfidenceLabel(voiceSession?.transcriptConfidence);
+  const backendSessionLabel = voiceSession?.id
+    ? `${String(voiceSession.id).slice(0, 8)}...`
+    : recoveredSessionSnapshot?.sessionId
+      ? `${String(recoveredSessionSnapshot.sessionId).slice(0, 8)}...`
+      : "Not started";
+  const isFormReadOnly = isSubmitting || alreadyFinalized;
   const canFinalize =
     Boolean(runGroup?.id) &&
     submissionState.isOpen &&
@@ -397,6 +431,67 @@ export default function VoiceSubmissionPage() {
     ["ready", "confirmed"].includes(String(voiceState?.status || "").trim().toLowerCase()) &&
     (!requiresExplicitReview || String(voiceState?.status || "").trim().toLowerCase() === "confirmed") &&
     !isSubmitting;
+  const sessionStatusNote = alreadyFinalized
+    ? "This voice session is already linked to a finalized submission."
+    : voiceSession?.id
+      ? "The backend voice session ID is active and will be reused for upload, transcription, and finalize."
+      : recoveredSessionSnapshot?.sessionId
+        ? "A recoverable voice session snapshot was found for this event."
+        : "A backend voice session will be created as soon as recording starts.";
+  const transcriptStatusNote = requiresExplicitReview
+    ? "Low-confidence transcript detected. Save the reviewed text before finalizing."
+    : transcriptWordCount
+      ? "Transcript content is ready to be reviewed or finalized."
+      : "Transcript text will appear here after Deepgram finishes processing.";
+  const workflowSteps = [
+    {
+      label: "Context",
+      state: runGroup?.id ? "complete" : "pending",
+      note: runGroup?.id ? "Run group resolved" : "Run group required",
+    },
+    {
+      label: "Record",
+      state: voiceSession?.id ? "complete" : "active",
+      note: voiceSession?.id ? "Voice session created" : "Start recording",
+    },
+    {
+      label: "Transcribe",
+      state:
+        voiceState?.status === "failed"
+          ? "error"
+          : ["transcribing", "uploading", "recording"].includes(String(voiceState?.status || "").trim().toLowerCase())
+            ? "active"
+            : transcriptWordCount
+              ? "complete"
+              : "pending",
+      note: transcriptWordCount ? "Transcript ready" : "Awaiting transcript",
+    },
+    {
+      label: "Review",
+      state:
+        String(voiceState?.status || "").trim().toLowerCase() === "confirmed"
+          ? "complete"
+          : requiresExplicitReview || transcriptWordCount
+            ? "active"
+            : "pending",
+      note:
+        String(voiceState?.status || "").trim().toLowerCase() === "confirmed"
+          ? "Reviewed and confirmed"
+          : "Review transcript",
+    },
+    {
+      label: "Finalize",
+      state: alreadyFinalized ? "complete" : canFinalize ? "active" : "pending",
+      note: alreadyFinalized ? "Submission linked" : "Create final submission",
+    },
+  ];
+  const vehiclesForDriver = useMemo(() => {
+    const selectedDriverId = String(formState.driver_id || "").trim();
+    if (!selectedDriverId) {
+      return vehicleOptions;
+    }
+    return vehicleOptions.filter((vehicle) => !vehicle.driverId || vehicle.driverId === selectedDriverId);
+  }, [formState.driver_id, vehicleOptions]);
 
   useEffect(() => {
     const storedSnapshot = parseStoredSnapshot(formStorageKey);
@@ -873,7 +968,7 @@ export default function VoiceSubmissionPage() {
                     type="date"
                     value={formState.date}
                     onChange={(event) => updateFormField("date", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                   {fieldErrors.date ? <p className="voice-submission-field-error">{fieldErrors.date}</p> : null}
                 </div>
@@ -887,7 +982,7 @@ export default function VoiceSubmissionPage() {
                     type="time"
                     value={formState.time}
                     onChange={(event) => updateFormField("time", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                   {fieldErrors.time ? <p className="voice-submission-field-error">{fieldErrors.time}</p> : null}
                 </div>
@@ -898,13 +993,13 @@ export default function VoiceSubmissionPage() {
                     <input
                       id="voice-session-id"
                       data-testid="voice-submission-session-id"
-                      className={`input ${fieldErrors.session_id ? "input-error" : ""}`}
-                      type="text"
-                      value={formState.session_id}
-                      onChange={(event) => updateFormField("session_id", event.target.value.toUpperCase())}
-                      disabled={isSubmitting}
-                    />
-                    <button type="button" className="btn btn-secondary" onClick={handleUseGeneratedSessionId} disabled={isSubmitting}>
+                    className={`input ${fieldErrors.session_id ? "input-error" : ""}`}
+                    type="text"
+                    value={formState.session_id}
+                    onChange={(event) => updateFormField("session_id", event.target.value.toUpperCase())}
+                    disabled={isFormReadOnly}
+                  />
+                    <button type="button" className="btn btn-secondary" onClick={handleUseGeneratedSessionId} disabled={isFormReadOnly}>
                       Use Generated ID
                     </button>
                   </div>
@@ -930,7 +1025,7 @@ export default function VoiceSubmissionPage() {
                     className={`select ${fieldErrors.driver_id ? "input-error" : ""}`}
                     value={formState.driver_id}
                     onChange={(event) => updateFormField("driver_id", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   >
                     <option value="">Select Driver</option>
                     {driverOptions.map((driver) => (
@@ -950,7 +1045,7 @@ export default function VoiceSubmissionPage() {
                     className={`select ${fieldErrors.vehicle_id ? "input-error" : ""}`}
                     value={formState.vehicle_id}
                     onChange={(event) => updateFormField("vehicle_id", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   >
                     <option value="">Select Vehicle</option>
                     {vehiclesForDriver.map((vehicle) => (
@@ -970,7 +1065,7 @@ export default function VoiceSubmissionPage() {
                     className={`select ${fieldErrors.session_type ? "input-error" : ""}`}
                     value={formState.session_type}
                     onChange={(event) => updateFormField("session_type", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   >
                     {SESSION_TYPE_OPTIONS.map((option) => (
                       <option key={option.id} value={option.id}>
@@ -992,7 +1087,7 @@ export default function VoiceSubmissionPage() {
                     step="1"
                     value={formState.session_number}
                     onChange={(event) => updateFormField("session_number", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                   {fieldErrors.session_number ? <p className="voice-submission-field-error">{fieldErrors.session_number}</p> : null}
                 </div>
@@ -1007,7 +1102,7 @@ export default function VoiceSubmissionPage() {
                     step="1"
                     value={formState.duration_min}
                     onChange={(event) => updateFormField("duration_min", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                 </div>
 
@@ -1019,7 +1114,7 @@ export default function VoiceSubmissionPage() {
                     type="text"
                     value={formState.tire_set}
                     onChange={(event) => updateFormField("tire_set", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                 </div>
 
@@ -1032,11 +1127,62 @@ export default function VoiceSubmissionPage() {
                     step="1"
                     value={formState.wheelbase_mm}
                     onChange={(event) => updateFormField("wheelbase_mm", event.target.value)}
-                    disabled={isSubmitting}
+                    disabled={isFormReadOnly}
                   />
                 </div>
               </div>
             </div>
+
+            <section className="voice-submission-status-grid">
+              <article className="voice-submission-status-card primary">
+                <span className="voice-submission-status-label">Workflow Status</span>
+                <strong>{voiceStatusMeta.label}</strong>
+                <p>{voiceState?.isBlocking ? "The backend is still processing this session." : sessionStatusNote}</p>
+              </article>
+
+              <article className="voice-submission-status-card">
+                <span className="voice-submission-status-label">Backend Session</span>
+                <strong>{backendSessionLabel}</strong>
+                <p>{sessionStatusNote}</p>
+              </article>
+
+              <article className="voice-submission-status-card">
+                <span className="voice-submission-status-label">Transcript</span>
+                <strong>{transcriptWordCount ? `${transcriptWordCount} words` : "Pending"}</strong>
+                <p>{transcriptStatusNote}</p>
+              </article>
+
+              <article className="voice-submission-status-card">
+                <span className="voice-submission-status-label">Audio and Attempts</span>
+                <strong>{audioDurationLabel}</strong>
+                <p>
+                  Confidence {confidenceLabel}
+                  {sessionAttemptCount ? ` • ${sessionAttemptCount} attempt${sessionAttemptCount === 1 ? "" : "s"}` : " • No attempts yet"}
+                </p>
+              </article>
+            </section>
+
+            <section className="voice-submission-workflow-card">
+              <div className="voice-submission-panel-head">
+                <div>
+                  <p className="voice-submission-panel-eyebrow">Workflow</p>
+                  <h2>Mechanic voice submission steps</h2>
+                </div>
+                <StatusBadge label={alreadyFinalized ? "Linked" : "In Progress"} tone={alreadyFinalized ? "success" : "info"} />
+              </div>
+
+              <div className="voice-submission-workflow-steps">
+                {workflowSteps.map((step, index) => (
+                  <div key={step.label} className={`voice-submission-workflow-step ${step.state}`}>
+                    <span className="voice-submission-workflow-step-number">{index + 1}</span>
+                    <div className="voice-submission-workflow-step-copy">
+                      <strong>{step.label}</strong>
+                      <span>{step.note}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
             <div className="voice-submission-panel">
               <div className="voice-submission-panel-head">
@@ -1060,7 +1206,7 @@ export default function VoiceSubmissionPage() {
                 rows={6}
                 value={rawText}
                 onChange={(event) => setRawText(event.target.value)}
-                disabled={isSubmitting}
+                disabled={isFormReadOnly}
                 placeholder="The reviewed transcript will appear here after you apply it."
               />
             </div>
@@ -1071,7 +1217,7 @@ export default function VoiceSubmissionPage() {
             eventId={eventId}
             runGroupId={runGroup?.id || ""}
             eventOpen={submissionState.isOpen}
-            disabled={isSubmitting}
+            disabled={isFormReadOnly}
             rawText={rawText}
             onRawTextChange={setRawText}
             onVoiceSessionChange={(nextSession) => {

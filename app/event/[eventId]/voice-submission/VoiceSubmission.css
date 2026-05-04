@@ -180,6 +180,146 @@
   margin-bottom: 1rem;
 }
 
+.voice-submission-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.voice-submission-status-card,
+.voice-submission-workflow-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(160deg, rgba(18, 18, 18, 0.96), rgba(10, 10, 10, 0.96));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
+}
+
+.voice-submission-status-card {
+  padding: 1rem 1.05rem;
+}
+
+.voice-submission-status-card.primary {
+  background:
+    radial-gradient(circle at top right, rgba(255, 149, 0, 0.16), transparent 52%),
+    linear-gradient(160deg, rgba(36, 18, 10, 0.98), rgba(20, 12, 10, 0.98));
+  border-color: rgba(255, 149, 0, 0.2);
+}
+
+.voice-submission-status-label {
+  display: inline-flex;
+  margin-bottom: 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ffb08c;
+}
+
+.voice-submission-status-card strong {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: var(--color-text);
+  font-size: 1.18rem;
+  line-height: 1.15;
+}
+
+.voice-submission-status-card p {
+  margin: 0;
+  color: var(--color-text-light);
+  line-height: 1.5;
+}
+
+.voice-submission-workflow-card {
+  padding: 1.15rem 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.voice-submission-workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.voice-submission-workflow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(14, 14, 14, 0.78);
+}
+
+.voice-submission-workflow-step.complete {
+  border-color: rgba(52, 199, 89, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(52, 199, 89, 0.12), transparent 48%),
+    rgba(12, 24, 16, 0.92);
+}
+
+.voice-submission-workflow-step.active {
+  border-color: rgba(255, 149, 0, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(255, 149, 0, 0.12), transparent 48%),
+    rgba(28, 18, 10, 0.92);
+}
+
+.voice-submission-workflow-step.error {
+  border-color: rgba(255, 59, 48, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(255, 59, 48, 0.12), transparent 48%),
+    rgba(34, 12, 12, 0.92);
+}
+
+.voice-submission-workflow-step-number {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.voice-submission-workflow-step.complete .voice-submission-workflow-step-number {
+  background: rgba(52, 199, 89, 0.16);
+  color: #b7f4c8;
+}
+
+.voice-submission-workflow-step.active .voice-submission-workflow-step-number {
+  background: rgba(255, 149, 0, 0.16);
+  color: #ffd59a;
+}
+
+.voice-submission-workflow-step.error .voice-submission-workflow-step-number {
+  background: rgba(255, 59, 48, 0.16);
+  color: #ffb3ad;
+}
+
+.voice-submission-workflow-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.voice-submission-workflow-step-copy strong {
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.voice-submission-workflow-step-copy span {
+  color: var(--color-text-light);
+  line-height: 1.45;
+  font-size: 0.84rem;
+}
+
 .voice-submission-panel {
   padding: 1.2rem 1.2rem 1.25rem;
 }
@@ -408,7 +548,12 @@
   }
 
   .voice-submission-context-grid,
+  .voice-submission-status-grid,
   .voice-submission-success-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .voice-submission-workflow-steps {
     grid-template-columns: 1fr;
   }
 }
@@ -423,9 +568,16 @@
     grid-template-columns: 1fr;
   }
 
+  .voice-submission-context-grid,
+  .voice-submission-status-grid,
+  .voice-submission-success-actions {
+    grid-template-columns: 1fr;
+  }
+
   .voice-submission-panel,
   .voice-submission-warning-list,
-  .voice-submission-footer {
+  .voice-submission-footer,
+  .voice-submission-workflow-card {
     padding-inline: 1rem;
   }
 
