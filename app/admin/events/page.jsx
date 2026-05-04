@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import EmptyState from "../../components/Common/EmptyState";
 import Loader from "../../components/Common/Loader";
@@ -56,7 +55,6 @@ const NOTICE_COPY = {
 
 export default function EventsManagementPage() {
   const router = useRouter();
-  const { logout } = useAuth();
 
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -518,7 +516,11 @@ export default function EventsManagementPage() {
               >
                 Create Event
               </button>
-              <button type="button" className="btn btn-secondary" onClick={logout}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => router.push("/admin/signout?next=/admin/login")}
+              >
                 Logout
               </button>
             </div>

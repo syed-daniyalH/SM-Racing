@@ -46,7 +46,10 @@ export default function Navbar() {
   const [activeEventId, setActiveEventId] = useState(null)
 
   const isAuthPage =
-    pathname === "/login" || pathname === "/admin/login" || pathname === "/signup"
+    pathname === "/login" ||
+    pathname === "/admin/login" ||
+    pathname === "/admin/signout" ||
+    pathname === "/signup"
   const isSubmissionReportPage = pathname.startsWith("/admin/submissions/report/")
 
   const currentEventIdMatch = pathname.match(/^\/event\/([^/]+)/)
@@ -75,8 +78,13 @@ export default function Navbar() {
     return null
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    if (isAdmin()) {
+      router.push("/admin/signout?next=/admin/login")
+      return
+    }
+
+    await logout()
     router.push("/login")
   }
 

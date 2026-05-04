@@ -195,9 +195,9 @@ export const deleteUser = async (userId) => {
 /**
  * Login user and return a normalized user plus token.
  */
-export const loginUser = async (credentials) => {
+export const loginUser = async (credentials, loginPath = "/auth/login") => {
   try {
-    const response = await axiosInstance.post("/auth/login", credentials);
+    const response = await axiosInstance.post(loginPath, credentials);
     const token = extractToken(response);
 
     if (!token) {
@@ -224,6 +224,11 @@ export const loginUser = async (credentials) => {
     throw buildApiError(error, "Invalid email or password");
   }
 };
+
+/**
+ * Login an owner or admin account through the admin portal entry point.
+ */
+export const loginAdminUser = async (credentials) => loginUser(credentials, "/auth/admin-login");
 
 /**
  * Logout user and revoke the token server-side.

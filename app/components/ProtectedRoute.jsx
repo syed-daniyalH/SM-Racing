@@ -15,13 +15,15 @@ export default function ProtectedRoute({
   useEffect(() => {
     if (loading) return;
 
+    const loginPath = requireAdmin ? "/admin/login" : "/login";
+
     if (!user) {
-      router.push("/login");
+      router.push(loginPath);
       return;
     }
 
     if (requireAdmin && !isAdmin()) {
-      router.push("/login");
+      router.push("/admin/login?access=denied");
       return;
     }
 

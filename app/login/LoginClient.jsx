@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-import { loginUser } from "../utils/authApi";
+import { loginAdminUser, loginUser } from "../utils/authApi";
 import "./Login.css";
 
 const TELEMETRY_BACKGROUND =
@@ -152,15 +152,17 @@ function ArrowIcon() {
   );
 }
 
-export default function LoginContent() {
+export default function LoginContent({ mode = "standard" } = {}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [portalNotice, setPortalNotice] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login } = useAuth();
+  const { login, user } = useAuth();
+  const isAdminPortal = mode === "admin";
 
   const backgroundStyle = useMemo(
     () => ({
@@ -171,6 +173,8 @@ export default function LoginContent() {
 
   useEffect(() => {
     const signupSuccess = searchParams.get("signup");
+    const accessStatus = searchParams.get("access");
+
     if (signupSuccess === "success") {
       setSuccess("Signup successful. Please login with your credentials.");
       router.replace("/login", { scroll: false });
@@ -181,8 +185,36 @@ export default function LoginContent() {
       return () => window.clearTimeout(timer);
     }
 
+    if (isAdminPortal && accessStatus === "denied") {
+      setPortalNotice("This portal requires an OWNER or ADMIN account.");
+      router.replace("/admin/login", { scroll: false });
+      const timer = window.setTimeout(() => {
+        setPortalNotice("");
+      }, 7000);
+
+      return () => window.clearTimeout(timer);
+    }
+
     return undefined;
-  }, [searchParams, router]);
+  }, [isAdminPortal, searchParams, router]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const currentRole = String(user.role || "").toUpperCase();
+    const hasAdminAccess = currentRole === "OWNER" || currentRole === "ADMIN";
+
+    if (isAdminPortal) {
+      if (hasAdminAccess) {
+        router.replace("/admin/users");
+      }
+      return;
+    }
+
+    router.replace(hasAdminAccess ? "/admin/users" : "/events");
+  }, [isAdminPortal, router, user]);
 
   const emailError = useMemo(() => {
     if (!error) return "";
@@ -213,17 +245,21 @@ export default function LoginContent() {
     }
 
     try {
-      const response = await loginUser({ email, password });
+      const loginAction = isAdminPortal ? loginAdminUser : loginUser;
+      const response = await loginAction({ email, password });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
 
       if (userData) {
         login(userData, token);
         const userRole = userData.role || userData.roleName;
-        const redirectPath =
-          userRole === "OWNER" || userRole === "ADMIN" ? "/admin/users" : "/events";
+        const redirectPath = isAdminPortal
+          ? "/admin/users"
+          : userRole === "OWNER" || userRole === "ADMIN"
+            ? "/admin/users"
+            : "/events";
 
-        window.location.href = redirectPath;
+        router.replace(redirectPath);
         return;
       }
 
@@ -279,7 +315,9 @@ export default function LoginContent() {
             <span className="login-brand__white">-2</span>
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
-          <p className="login-hero__subtitle">Race Weekend Operations Platform</p>
+          <p className="login-hero__subtitle">
+            {isAdminPortal ? "Admin Portal Access" : "Race Weekend Operations Platform"}
+          </p>
         </section>
 
         <section className="login-card" aria-label="Login form">
@@ -287,11 +325,25 @@ export default function LoginContent() {
             {success ? (
               <div className="login-state">
                 <AlertIcon tone="success" />
-                <h2 className="login-state__title">Authentication successful</h2>
-                <p className="login-state__text">Redirecting to dashboard...</p>
+                <h2 className="login-state__title">
+                  {isAdminPortal ? "Admin authentication successful" : "Authentication successful"}
+                </h2>
+                <p className="login-state__text">
+                  {isAdminPortal ? "Redirecting to the admin dashboard..." : "Redirecting to dashboard..."}
+                </p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="login-form">
+                {portalNotice && (
+                  <div className="login-alert" role="status">
+                    <AlertIcon />
+                    <div className="login-alert__copy">
+                      <p className="login-alert__title">Portal access required</p>
+                      <p className="login-alert__text">{portalNotice}</p>
+                    </div>
+                  </div>
+                )}
+
                 {error && (
                   <div className="login-alert" role="alert">
                     <AlertIcon />
@@ -386,16 +438,35 @@ export default function LoginContent() {
 
         {!success && (
           <section className="login-cta" aria-label="Signup link">
-            <p className="login-cta__text">
-              Don&apos;t have an account?{" "}
-              <button
-                type="button"
-                className="login-cta__link"
-                onClick={() => router.push("/signup")}
-              >
-                Create a new account
-              </button>
-            </p>
+            {isAdminPortal ? (
+              <p className="login-cta__text">
+                {user ? (
+                  <>
+                    Signed in as <strong>{user.name || user.email}</strong>.{" "}
+                    <button
+                      type="button"
+                      className="login-cta__link"
+                      onClick={() => router.push("/admin/signout?next=/admin/login")}
+                    >
+                      Switch account
+                    </button>
+                  </>
+                ) : (
+                  "Owners and admins can sign in here to reach the portal."
+                )}
+              </p>
+            ) : (
+              <p className="login-cta__text">
+                Don&apos;t have an account?{" "}
+                <button
+                  type="button"
+                  className="login-cta__link"
+                  onClick={() => router.push("/signup")}
+                >
+                  Create a new account
+                </button>
+              </p>
+            )}
           </section>
         )}
 

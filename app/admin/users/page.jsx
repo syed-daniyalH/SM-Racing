@@ -136,7 +136,7 @@ const getApiErrorMessage = (error, fallback) => {
 
 export default function UsersManagement() {
   const router = useRouter();
-  const { logout, user: currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -521,7 +521,11 @@ export default function UsersManagement() {
               >
                 Events
               </button>
-              <button onClick={logout} className="fleet-btn fleet-btn-secondary" type="button">
+              <button
+                onClick={() => router.push("/admin/signout?next=/admin/login")}
+                className="fleet-btn fleet-btn-secondary"
+                type="button"
+              >
                 Logout
               </button>
             </div>

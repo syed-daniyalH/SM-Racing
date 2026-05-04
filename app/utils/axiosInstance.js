@@ -47,10 +47,15 @@ axiosInstance.interceptors.response.use(
       localStorage.removeItem("sm2_token");
       localStorage.removeItem("sm2_user");
 
-      // Redirect to login if not already there
+      // Redirect to login if not already on an auth screen that needs to handle 401s itself.
       if (
         typeof window !== "undefined" &&
-        window.location.pathname !== "/login"
+        ![
+          "/login",
+          "/admin/login",
+          "/admin/signout",
+          "/signup",
+        ].includes(window.location.pathname)
       ) {
         window.location.href = "/login";
       }

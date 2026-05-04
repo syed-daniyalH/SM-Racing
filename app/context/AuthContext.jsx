@@ -13,9 +13,15 @@ export function AuthProvider({ children }) {
     // Check for stored token and verify with API
     const token = localStorage.getItem('sm2_token')
     if (token) {
+      const verificationToken = token
+
       // Verify token with backend
       getMe()
         .then((data) => {
+          if (localStorage.getItem('sm2_token') !== verificationToken) {
+            return
+          }
+
           // Token is valid, set user from API response
           if (data.user) {
             setUser(data.user)
@@ -26,6 +32,10 @@ export function AuthProvider({ children }) {
           }
         })
         .catch((error) => {
+          if (localStorage.getItem('sm2_token') !== verificationToken) {
+            return
+          }
+
           // Token invalid or expired, clear storage
           console.error('Token verification failed:', error)
           localStorage.removeItem('sm2_user')
@@ -48,9 +58,12 @@ export function AuthProvider({ children }) {
   }
 
   const logout = async () => {
+    let success = false
+
     try {
       // Call logout API
       await logoutApi()
+      success = true
     } catch (error) {
       // Even if API call fails, clear local storage
       console.error('Logout API error:', error)
@@ -60,6 +73,8 @@ export function AuthProvider({ children }) {
       localStorage.removeItem('sm2_user')
       localStorage.removeItem('sm2_token')
     }
+
+    return { success }
   }
 
   const isAdmin = () => {

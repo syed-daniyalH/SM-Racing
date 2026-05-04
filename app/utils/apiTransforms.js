@@ -22,6 +22,8 @@ export const normalizeUser = (user) => {
     _id: id,
     role: user.role || user.userRole || "MECHANIC",
     isActive: user.is_active ?? user.isActive ?? true,
+    lastLoginAt: user.last_login_at || user.lastLoginAt || null,
+    lastLogoutAt: user.last_logout_at || user.lastLogoutAt || null,
     activeEventId: user.active_event_id || user.activeEventId || null,
     createdAt: user.created_at || user.createdAt || null,
     updatedAt: user.updated_at || user.updatedAt || null,
