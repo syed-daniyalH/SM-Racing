@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -80,7 +82,7 @@ class SubmissionRead(TimestampedModel):
     run_group: RunGroupRead | None = None
     driver: DriverRead | None = None
     vehicle: VehicleRead | None = None
-    voice_session: "VoiceNoteSessionRead" | None = None
+    voice_session: VoiceNoteSessionRead | None = None
 
     @field_validator("structured_ingest_status", mode="before")
     @classmethod
