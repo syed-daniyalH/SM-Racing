@@ -46,6 +46,31 @@ def login(
     return Token(access_token=token)
 
 
+@router.post("/admin-login", response_model=Token)
+def admin_login(
+    user_in: UserLogin,
+    db: Session = Depends(get_db),
+) -> Token:
+    user = authenticate_user(db, user_in.email, user_in.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    if user.role not in {UserRole.OWNER, UserRole.ADMIN}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin portal access requires an owner or admin account",
+        )
+
+    token = create_access_token(
+        subject=str(user.id),
+        additional_claims={"email": user.email, "role": user.role.value},
+    )
+    return Token(access_token=token)
+
+
 @router.get("/me", response_model=UserRead)
 def read_me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
