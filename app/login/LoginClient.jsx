@@ -157,6 +157,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [successTitle, setSuccessTitle] = useState("");
   const [portalNotice, setPortalNotice] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
@@ -172,14 +173,18 @@ export default function LoginContent({ mode = "standard" } = {}) {
   );
 
   useEffect(() => {
-    const signupSuccess = searchParams.get("signup");
+    const signupState = searchParams.get("signup");
     const accessStatus = searchParams.get("access");
 
-    if (signupSuccess === "success") {
-      setSuccess("Signup successful. Please login with your credentials.");
+    if (signupState === "pending" || signupState === "success") {
+      setSuccessTitle("Request submitted");
+      setSuccess(
+        "Your account request has been sent to an admin for approval. You can sign in after the request is approved.",
+      );
       router.replace("/login", { scroll: false });
       const timer = window.setTimeout(() => {
         setSuccess("");
+        setSuccessTitle("");
       }, 5000);
 
       return () => window.clearTimeout(timer);
@@ -236,6 +241,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     e.preventDefault();
     setError("");
     setSuccess("");
+    setSuccessTitle("");
     setIsLoading(true);
 
     if (!email || !password) {
@@ -326,10 +332,16 @@ export default function LoginContent({ mode = "standard" } = {}) {
               <div className="login-state">
                 <AlertIcon tone="success" />
                 <h2 className="login-state__title">
-                  {isAdminPortal ? "Admin authentication successful" : "Authentication successful"}
+                  {successTitle ||
+                    (isAdminPortal
+                      ? "Admin authentication successful"
+                      : "Authentication successful")}
                 </h2>
                 <p className="login-state__text">
-                  {isAdminPortal ? "Redirecting to the admin dashboard..." : "Redirecting to dashboard..."}
+                  {success ||
+                    (isAdminPortal
+                      ? "Redirecting to the admin dashboard..."
+                      : "Redirecting to dashboard...")}
                 </p>
               </div>
             ) : (

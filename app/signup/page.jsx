@@ -178,7 +178,7 @@ export default function Signup() {
       });
 
       if (response?.success && response?.user) {
-        window.location.replace("/login?signup=success");
+        window.location.replace("/login?signup=pending");
         return;
       }
 
@@ -223,7 +223,9 @@ export default function Signup() {
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
           <p className="login-hero__subtitle">Create Your Account</p>
-          <p className="signup-hero__caption">Join SM-2 Race Control and manage your race operations</p>
+          <p className="signup-hero__caption">
+            Request access to SM-2 Race Control. An admin will review and approve the account.
+          </p>
         </section>
 
         <section className="login-card signup-card" aria-label="Create account form">
@@ -412,9 +414,9 @@ export default function Signup() {
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <span className="signup-button__label">Creating<br />Account...</span>
+                  <span className="signup-button__label">Submitting<br />Request...</span>
                 ) : (
-                  <span className="signup-button__label">Create<br />Account</span>
+                  <span className="signup-button__label">Request<br />Access</span>
                 )}
                 {!isLoading && <ArrowIcon />}
               </button>

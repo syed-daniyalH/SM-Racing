@@ -15,13 +15,20 @@ export const normalizeUser = (user) => {
   if (!user) return null;
 
   const id = user.id || user._id || user.user_id || user.userId || null;
+  const isActive = user.is_active ?? user.isActive ?? true;
+  const approvalStatus =
+    user.approval_status ||
+    user.approvalStatus ||
+    (isActive ? "APPROVED" : "PENDING");
 
   return {
     ...user,
     id,
     _id: id,
     role: user.role || user.userRole || "MECHANIC",
-    isActive: user.is_active ?? user.isActive ?? true,
+    approvalStatus,
+    isPendingApproval: approvalStatus === "PENDING",
+    isActive,
     lastLoginAt: user.last_login_at || user.lastLoginAt || null,
     lastLogoutAt: user.last_logout_at || user.lastLogoutAt || null,
     activeEventId: user.active_event_id || user.activeEventId || null,

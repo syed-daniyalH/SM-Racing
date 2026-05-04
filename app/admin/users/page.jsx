@@ -24,7 +24,13 @@ import {
   EmptyStatePanel,
   MetricCard,
 } from "../fleet/_components/ManagementUi";
-import { createAdminUser, deleteUser, getUsers, resetUserPassword } from "../../utils/authApi";
+import {
+  approveUser,
+  createAdminUser,
+  deleteUser,
+  getUsers,
+  resetUserPassword,
+} from "../../utils/authApi";
 import "../fleet/fleetManagement.css";
 import "./UsersManagement.css";
 
@@ -42,6 +48,7 @@ const INITIAL_PASSWORD_FORM_VALUES = {
 
 const STATUS_FILTER_OPTIONS = [
   { value: "all", label: "All Statuses" },
+  { value: "pending", label: "Pending Approval" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
 ];
@@ -61,6 +68,10 @@ const SORT_OPTIONS = [
 
 const normalizeRole = (role) => String(role || "MECHANIC").toUpperCase();
 
+const normalizeApprovalStatus = (value) => String(value || "APPROVED").toUpperCase();
+
+const isPendingApproval = (user) => normalizeApprovalStatus(user?.approvalStatus) === "PENDING";
+
 const formatRoleLabel = (role) => {
   const normalized = normalizeRole(role);
   return `${normalized.charAt(0)}${normalized.slice(1).toLowerCase()}`;
@@ -77,9 +88,21 @@ const getRoleTone = (role) => {
   }
 };
 
-const getAccountTone = (isActive) => (isActive === false ? "danger" : "success");
+const getAccountTone = (user) => {
+  if (isPendingApproval(user)) {
+    return "warning";
+  }
 
-const getAccountLabel = (isActive) => (isActive === false ? "Inactive" : "Active");
+  return user?.isActive === false ? "danger" : "success";
+};
+
+const getAccountLabel = (user) => {
+  if (isPendingApproval(user)) {
+    return "Pending Approval";
+  }
+
+  return user?.isActive === false ? "Inactive" : "Active";
+};
 
 const formatDate = (value) => {
   if (!value) return "-";
@@ -95,7 +118,7 @@ const formatDate = (value) => {
 };
 
 const buildSearchText = (user) =>
-  [user.name, user.email, user.role, getAccountLabel(user.isActive)]
+  [user.name, user.email, user.role, getAccountLabel(user)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -156,6 +179,7 @@ export default function UsersManagement() {
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [isApprovingUser, setIsApprovingUser] = useState(false);
 
   const refreshUsers = useCallback(async () => {
     try {
@@ -185,8 +209,13 @@ export default function UsersManagement() {
   }, [notice]);
 
   const summaryCounts = useMemo(() => {
-    const activeUsers = users.filter((user) => user.isActive !== false).length;
-    const inactiveUsers = users.length - activeUsers;
+    const pendingUsers = users.filter((user) => isPendingApproval(user)).length;
+    const activeUsers = users.filter(
+      (user) => user.isActive !== false && !isPendingApproval(user),
+    ).length;
+    const inactiveUsers = users.filter(
+      (user) => user.isActive === false && !isPendingApproval(user),
+    ).length;
     const elevatedUsers = users.filter((user) =>
       ["OWNER", "ADMIN"].includes(normalizeRole(user.role)),
     ).length;
@@ -194,6 +223,7 @@ export default function UsersManagement() {
     return {
       total: users.length,
       active: activeUsers,
+      pending: pendingUsers,
       inactive: inactiveUsers,
       elevated: elevatedUsers,
     };
@@ -210,8 +240,15 @@ export default function UsersManagement() {
 
     if (statusFilter !== "all") {
       nextUsers = nextUsers.filter((user) => {
-        const isActive = user.isActive !== false;
-        return statusFilter === "active" ? isActive : !isActive;
+        if (statusFilter === "pending") {
+          return isPendingApproval(user);
+        }
+
+        if (statusFilter === "active") {
+          return user.isActive !== false && !isPendingApproval(user);
+        }
+
+        return user.isActive === false && !isPendingApproval(user);
       });
     }
 
@@ -299,6 +336,10 @@ export default function UsersManagement() {
         return false;
       }
 
+      if (isPendingApproval(targetUser)) {
+        return false;
+      }
+
       if (currentRole === "OWNER") {
         return true;
       }
@@ -309,6 +350,14 @@ export default function UsersManagement() {
 
       return currentRole === "ADMIN";
     },
+    [currentUser],
+  );
+
+  const canApproveUser = useCallback(
+    (targetUser) =>
+      Boolean(targetUser?.id) &&
+      targetUser.id !== currentUser?.id &&
+      isPendingApproval(targetUser),
     [currentUser],
   );
 
@@ -339,6 +388,10 @@ export default function UsersManagement() {
   );
 
   const getPasswordActionTitle = (targetUser) => {
+    if (isPendingApproval(targetUser)) {
+      return "Approve this signup before resetting the password";
+    }
+
     if (canResetPassword(targetUser)) {
       return `Change password for ${targetUser.name}`;
     }
@@ -395,6 +448,35 @@ export default function UsersManagement() {
   const closeDeleteDialog = () => {
     if (isDeletingUser) return;
     setDeleteTarget(null);
+  };
+
+  const handleApproveUser = async (targetUser) => {
+    if (!canApproveUser(targetUser)) return;
+
+    try {
+      setIsApprovingUser(true);
+
+      const response = await approveUser(targetUser.id);
+      const updatedUser = response.user;
+
+      setUsers((current) =>
+        current.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user)),
+      );
+      setNotice({
+        tone: "success",
+        title: "User approved",
+        message: `${updatedUser.name} can now log in with their signup credentials.`,
+      });
+    } catch (error) {
+      console.error("Failed to approve user:", error);
+      setNotice({
+        tone: "danger",
+        title: "Approval failed",
+        message: getApiErrorMessage(error, "This request could not be approved right now."),
+      });
+    } finally {
+      setIsApprovingUser(false);
+    }
   };
 
   const handlePasswordFormChange = (field, value) => {
@@ -573,10 +655,10 @@ export default function UsersManagement() {
               />
               <MetricCard
                 icon={ArchiveOutlinedIcon}
-                value={summaryCounts.inactive}
-                label="Inactive Users"
-                helper="Disabled accounts retained for audit visibility."
-                tone="danger"
+                value={summaryCounts.pending}
+                label="Pending Approvals"
+                helper="Signup requests waiting for admin review."
+                tone="accent"
               />
               <MetricCard
                 icon={AdminPanelSettingsOutlinedIcon}
@@ -831,7 +913,7 @@ export default function UsersManagement() {
                     {filteredUsers.map((user) => (
                       <div
                         key={user.id}
-                        className={`fleet-table-row ${user.isActive === false ? "inactive" : ""}`}
+                        className={`fleet-table-row ${isPendingApproval(user) ? "pending" : user.isActive === false ? "inactive" : ""}`}
                       >
                         <div className="fleet-table-cell" data-label="Name">
                           <div className="fleet-cell-stack">
@@ -850,8 +932,8 @@ export default function UsersManagement() {
 
                         <div className="fleet-table-cell" data-label="Status">
                           <StatusBadge
-                            label={getAccountLabel(user.isActive)}
-                            tone={getAccountTone(user.isActive)}
+                            label={getAccountLabel(user)}
+                            tone={getAccountTone(user)}
                           />
                         </div>
 
@@ -861,17 +943,31 @@ export default function UsersManagement() {
 
                         <div className="fleet-table-cell users-action-cell" data-label="Admin Actions">
                           <div className="users-action-group">
-                            <button
-                              type="button"
-                              className="users-password-action"
-                              onClick={() => openPasswordPanel(user)}
-                              disabled={!canResetPassword(user)}
-                              title={getPasswordActionTitle(user)}
-                              aria-label={getPasswordActionTitle(user)}
-                            >
-                              <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
-                              Change PW
-                            </button>
+                            {isPendingApproval(user) ? (
+                              <button
+                                type="button"
+                                className="users-approve-action"
+                                onClick={() => handleApproveUser(user)}
+                                disabled={isApprovingUser || !canApproveUser(user)}
+                                title="Approve this signup request"
+                                aria-label={`Approve ${user.name}`}
+                              >
+                                <CheckCircleOutlineOutlinedIcon sx={{ fontSize: 18 }} />
+                                {isApprovingUser ? "Approving..." : "Approve"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="users-password-action"
+                                onClick={() => openPasswordPanel(user)}
+                                disabled={!canResetPassword(user)}
+                                title={getPasswordActionTitle(user)}
+                                aria-label={getPasswordActionTitle(user)}
+                              >
+                                <LockResetOutlinedIcon sx={{ fontSize: 18 }} />
+                                Change PW
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="users-delete-action"

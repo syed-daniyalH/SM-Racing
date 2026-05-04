@@ -126,6 +126,27 @@ export const createAdminUser = async (userData) => {
 };
 
 /**
+ * Approve a pending signup request from the admin area.
+ */
+export const approveUser = async (userId) => {
+  try {
+    const response = await axiosInstance.patch(`/users/${userId}/approve`);
+
+    return {
+      success: true,
+      user: normalizeUser(response.data),
+    };
+  } catch (error) {
+    console.error("Admin user approval API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to approve user");
+  }
+};
+
+/**
  * List users for the admin area.
  */
 export const getUsers = async () => {
