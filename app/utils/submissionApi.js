@@ -221,7 +221,7 @@ const buildRawSubmissionPayload = (submissionData) => {
   };
 };
 
-const buildSubmissionPayload = async (submissionData) => {
+export const buildSubmissionPayload = async (submissionData) => {
   const legacyEventId = submissionData?.eventId || submissionData?.event_id;
   let runGroupId =
     submissionData?.run_group_id || submissionData?.runGroupId || null;

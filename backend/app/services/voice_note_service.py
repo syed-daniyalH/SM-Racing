@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -149,6 +149,13 @@ def _validate_event_submission_window(event: Event) -> None:
             event_end = event_end.replace(tzinfo=timezone.utc)
         else:
             event_end = event_end.astimezone(timezone.utc)
+        if (
+            event_end.hour == 0
+            and event_end.minute == 0
+            and event_end.second == 0
+            and event_end.microsecond == 0
+        ):
+            event_end = event_end + timedelta(days=1)
         if now >= event_end:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -358,6 +365,46 @@ def create_transcription_attempt(
     db.add(attempt)
     db.flush()
     return attempt
+
+
+def ensure_voice_session_mutable(
+    voice_session: VoiceNoteSession,
+    *,
+    allow_archive_transition: bool = False,
+) -> None:
+    if voice_session.status == VoiceNoteStatus.SUBMITTED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is submitted and read-only")
+
+    if voice_session.status == VoiceNoteStatus.ARCHIVED and not allow_archive_transition:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived and read-only")
+
+
+def ensure_voice_transcription_allowed(
+    voice_session: VoiceNoteSession,
+    *,
+    action: str = "start",
+) -> None:
+    ensure_voice_session_mutable(voice_session)
+
+    if not voice_session.audio_storage_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload audio before transcription")
+
+    if voice_session.status in {VoiceNoteStatus.PENDING_TRANSCRIPTION, VoiceNoteStatus.TRANSCRIBING}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice transcription is already in progress")
+
+    if action == "start" and voice_session.status in {VoiceNoteStatus.PENDING_REVIEW, VoiceNoteStatus.CONFIRMED}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice transcription already completed. Use retry if a new transcription attempt is required",
+        )
+
+
+def require_explicit_review_before_finalize(voice_session: VoiceNoteSession) -> None:
+    if voice_session.validation_status == "REVIEW_REQUIRED" and voice_session.status != VoiceNoteStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Low-confidence transcripts must be reviewed and confirmed before final submission",
+        )
 
 
 def _voice_audio_path(voice_session: VoiceNoteSession) -> Path:

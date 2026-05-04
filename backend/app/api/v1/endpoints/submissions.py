@@ -607,6 +607,8 @@ def create_submission(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session does not belong to the run group")
         if voice_session.status == VoiceNoteStatus.ARCHIVED:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived")
+        if voice_session.status == VoiceNoteStatus.SUBMITTED or voice_session.submission_id is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is already linked to a submission")
         if voice_session.status == VoiceNoteStatus.TRANSCRIPTION_FAILED:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice transcription failed and cannot be submitted")
         if not normalize_optional_text(submission_in.raw_text):

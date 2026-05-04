@@ -11,6 +11,7 @@ import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRigh
 import NoteAltRoundedIcon from "@mui/icons-material/NoteAltRounded";
 import PendingActionsRoundedIcon from "@mui/icons-material/PendingActionsRounded";
 import PinDropRoundedIcon from "@mui/icons-material/PinDropRounded";
+import RecordVoiceOverRoundedIcon from "@mui/icons-material/RecordVoiceOverRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import ProtectedRoute from "../../components/ProtectedRoute";
@@ -127,17 +128,7 @@ export default function EventDetail() {
       try {
         const response = await getRunGroup(eventId);
 
-        if (response && typeof response === "object") {
-          const runGroupValue = response.normalized || response.rawText || response.raw_text;
-
-          if (runGroupValue && typeof runGroupValue === "string" && runGroupValue.trim()) {
-            setRunGroup(runGroupValue.trim());
-          } else {
-            setRunGroup(null);
-          }
-        } else {
-          setRunGroup(null);
-        }
+        setRunGroup(response && typeof response === "object" ? response : null);
       } catch (runGroupError) {
         console.error("Failed to load run group:", runGroupError);
         setRunGroup(null);
@@ -240,8 +231,8 @@ export default function EventDetail() {
   const eventDates = formatEventDateRange(event.startDate || event.start_date, event.endDate || event.end_date);
   const eventStatus = deriveEventStatus(event);
   const submissionState = getEventSubmissionState(event);
-  const runGroupValue = runGroup || "Not assigned yet";
-  const hasRunGroup = Boolean(runGroup && runGroup !== "Not assigned yet");
+  const runGroupValue = runGroup?.normalized || runGroup?.rawText || runGroup?.raw_text || "Not assigned yet";
+  const hasRunGroup = Boolean(runGroup?.id && runGroupValue && runGroupValue !== "Not assigned yet");
   const canCaptureNotes = hasRunGroup && submissionState.isOpen;
   const runGroupFooterNote = hasRunGroup
     ? canCaptureNotes
@@ -260,7 +251,7 @@ export default function EventDetail() {
         ? "Closed after event"
         : "Schedule needed";
   const noteBannerCopy = canCaptureNotes
-    ? "Use Submit Notes to start a quick or detailed entry. View Submissions to review the event history."
+    ? "Use Submit Notes for typed entry, Voice Submission for the dedicated Deepgram workflow, or View Submissions to review the event history."
     : submissionState.isUpcoming
       ? "Submission notes will open when the event start date arrives."
       : submissionState.hasEnded
@@ -402,6 +393,23 @@ export default function EventDetail() {
                 <span className="event-detail-action-label">Primary</span>
                 <h2>Submit Notes</h2>
                 <p>Open the mechanic note flow for this event.</p>
+              </div>
+              <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
+            </button>
+
+            <button
+              type="button"
+              className="event-detail-action-card tertiary"
+              onClick={() => router.push(`/event/${eventId}/voice-submission`)}
+              data-testid="event-detail-voice-submission"
+            >
+              <div className="event-detail-action-icon tertiary">
+                <RecordVoiceOverRoundedIcon fontSize="inherit" />
+              </div>
+              <div className="event-detail-action-copy">
+                <span className="event-detail-action-label">Focused Flow</span>
+                <h2>Voice Submission</h2>
+                <p>Record, transcribe, review, and finalize a Deepgram-backed voice note.</p>
               </div>
               <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
             </button>

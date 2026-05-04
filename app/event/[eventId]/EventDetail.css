@@ -400,7 +400,7 @@
 
 .event-detail-actions-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
@@ -439,6 +439,19 @@
   background: linear-gradient(135deg, rgba(240, 83, 35, 1), rgba(255, 149, 0, 0.98));
 }
 
+.event-detail-action-card.tertiary {
+  background:
+    radial-gradient(circle at top right, rgba(0, 122, 255, 0.14), transparent 52%),
+    linear-gradient(160deg, rgba(16, 26, 44, 0.98), rgba(10, 14, 28, 0.98));
+  border-color: rgba(79, 156, 255, 0.2);
+}
+
+.event-detail-action-card.tertiary:hover {
+  background:
+    radial-gradient(circle at top right, rgba(0, 122, 255, 0.2), transparent 52%),
+    linear-gradient(160deg, rgba(18, 30, 50, 0.98), rgba(12, 18, 34, 0.98));
+}
+
 .event-detail-action-icon {
   width: 3rem;
   height: 3rem;
@@ -456,6 +469,12 @@
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.18);
   color: #fff;
+}
+
+.event-detail-action-icon.tertiary {
+  background: rgba(79, 156, 255, 0.14);
+  border-color: rgba(79, 156, 255, 0.18);
+  color: #9dc6ff;
 }
 
 .event-detail-action-copy {
@@ -477,6 +496,10 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
+.event-detail-action-card.tertiary .event-detail-action-label {
+  color: rgba(157, 198, 255, 0.9);
+}
+
 .event-detail-action-copy h2 {
   margin: 0 0 0.35rem;
   font-size: 1.05rem;
@@ -493,6 +516,10 @@
 
 .event-detail-action-card.primary .event-detail-action-copy p {
   color: rgba(255, 255, 255, 0.92);
+}
+
+.event-detail-action-card.tertiary .event-detail-action-copy p {
+  color: rgba(221, 233, 255, 0.9);
 }
 
 .event-detail-action-arrow {
@@ -554,6 +581,10 @@
 
   .event-detail-panels {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .event-detail-actions-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

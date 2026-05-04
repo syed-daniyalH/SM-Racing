@@ -220,6 +220,46 @@
   margin-bottom: 0;
 }
 
+.voice-note-moved-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 149, 0, 0.2);
+  background:
+    radial-gradient(circle at top right, rgba(255, 149, 0, 0.16), transparent 48%),
+    linear-gradient(135deg, rgba(240, 83, 35, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.voice-note-moved-copy {
+  min-width: 0;
+}
+
+.voice-note-moved-label {
+  display: inline-flex;
+  margin-bottom: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ffb08c;
+}
+
+.voice-note-moved-copy strong {
+  display: block;
+  color: var(--color-text);
+  margin-bottom: 0.3rem;
+}
+
+.voice-note-moved-copy p {
+  margin: 0;
+  color: var(--color-text-light);
+  line-height: 1.55;
+}
+
 .voice-input-control {
   display: flex;
   flex-direction: column;
@@ -721,6 +761,15 @@
   .raw-notes-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .voice-note-moved-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .voice-note-moved-banner .btn {
+    width: 100%;
   }
 
   .voice-input-control {

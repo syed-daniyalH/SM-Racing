@@ -25,9 +25,12 @@ from app.services.voice_note_service import (
     confirm_voice_session,
     create_transcription_attempt,
     create_voice_session,
+    ensure_voice_session_mutable,
+    ensure_voice_transcription_allowed,
     get_voice_session_for_user,
     prepare_voice_submission_create,
     process_voice_transcription_task,
+    require_explicit_review_before_finalize,
     store_voice_audio,
     _audit,
     _ensure_voice_session_event_context,
@@ -116,8 +119,7 @@ async def upload_voice_audio_endpoint(
         event_id=voice_session.event_id,
         run_group_id=voice_session.run_group_id,
     )
-    if voice_session.status in {VoiceNoteStatus.ARCHIVED, VoiceNoteStatus.SUBMITTED}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived or submitted")
+    ensure_voice_session_mutable(voice_session)
 
     audio_bytes = await audio_file.read()
     store_voice_audio(
@@ -148,9 +150,9 @@ def _queue_transcription(
     current_user: User,
     voice_session: VoiceNoteSession,
     background_tasks: BackgroundTasks,
+    action: str = "start",
 ) -> VoiceNoteSession:
-    if not voice_session.audio_storage_key:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload audio before transcription")
+    ensure_voice_transcription_allowed(voice_session, action=action)
 
     request_json = {
         "voice_session_id": str(voice_session.id),
@@ -205,14 +207,12 @@ def transcribe_voice_session_endpoint(
         event_id=voice_session.event_id,
         run_group_id=voice_session.run_group_id,
     )
-    if voice_session.status in {VoiceNoteStatus.ARCHIVED, VoiceNoteStatus.SUBMITTED}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived or submitted")
-
     _queue_transcription(
         db=db,
         current_user=current_user,
         voice_session=voice_session,
         background_tasks=background_tasks,
+        action="start",
     )
     db.commit()
     db.refresh(voice_session)
@@ -237,14 +237,14 @@ def retry_voice_transcription_endpoint(
         event_id=voice_session.event_id,
         run_group_id=voice_session.run_group_id,
     )
-    if voice_session.status in {VoiceNoteStatus.ARCHIVED, VoiceNoteStatus.SUBMITTED}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived or submitted")
+    ensure_voice_transcription_allowed(voice_session, action="retry")
 
     _queue_transcription(
         db=db,
         current_user=current_user,
         voice_session=voice_session,
         background_tasks=background_tasks,
+        action="retry",
     )
     db.commit()
     db.refresh(voice_session)
@@ -293,8 +293,9 @@ def update_voice_session_endpoint(
         run_group_id=voice_session.run_group_id,
     )
 
-    if voice_session.status == VoiceNoteStatus.SUBMITTED:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is submitted and read-only")
+    ensure_voice_session_mutable(voice_session)
+    if payload.status not in {None, VoiceNoteStatus.ARCHIVED, VoiceNoteStatus.CONFIRMED}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported voice session transition")
     if payload.status == VoiceNoteStatus.ARCHIVED:
         archive_voice_session(db, voice_session=voice_session)
     elif payload.transcript_edited_text is not None or payload.status == VoiceNoteStatus.CONFIRMED:
@@ -343,19 +344,26 @@ def finalize_voice_submission_endpoint(
         event_id=voice_session.event_id,
         run_group_id=voice_session.run_group_id,
     )
-    if voice_session.status in {VoiceNoteStatus.TRANSCRIPTION_FAILED, VoiceNoteStatus.ARCHIVED, VoiceNoteStatus.SUBMITTED}:
+    if voice_session.submission_id is not None:
+        existing_submission = db.get(Submission, voice_session.submission_id)
+        if existing_submission is not None:
+            return existing_submission
+
+    if voice_session.status in {VoiceNoteStatus.TRANSCRIPTION_FAILED, VoiceNoteStatus.ARCHIVED}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Voice session cannot be finalized in its current state",
         )
+    require_explicit_review_before_finalize(voice_session)
 
     finalized_submission = prepare_voice_submission_create(payload, voice_session=voice_session)
-    confirm_voice_session(
-        db,
-        voice_session=voice_session,
-        transcript_text=finalized_submission.raw_text,
-        validation_status="VALIDATED",
-    )
+    if voice_session.status != VoiceNoteStatus.CONFIRMED:
+        confirm_voice_session(
+            db,
+            voice_session=voice_session,
+            transcript_text=finalized_submission.raw_text,
+            validation_status="VALIDATED",
+        )
 
     submission = create_submission(
         submission_in=finalized_submission,
