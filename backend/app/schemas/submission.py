@@ -146,6 +146,16 @@ class VoiceNoteSessionRead(TimestampedModel):
     audio_download_url: str | None = None
 
 
+class VoiceTranscriptionRead(ORMModel):
+    transcript_text: str
+    transcript_confidence: float | None = None
+    transcript_word_count: int | None = None
+    audio_language: str | None = None
+    deepgram_request_id: str | None = None
+    deepgram_model: str | None = None
+    transcript_json: dict[str, Any] | None = None
+
+
 class VoiceSubmissionFinalizeCreate(SubmissionCreate):
     voice_session_id: UUID
 
