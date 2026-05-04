@@ -124,9 +124,13 @@ const getSubmissionMode = (submissionData) =>
 const hasVoiceNotes = (submissionData) =>
   Boolean(
     submissionData?.analysis_result?.voice_input_used ||
-      submissionData?.analysis_result?.voiceInputUsed ||
-      submissionData?.analysisResult?.voice_input_used ||
-      submissionData?.analysisResult?.voiceInputUsed,
+    submissionData?.analysis_result?.voiceInputUsed ||
+    submissionData?.analysisResult?.voice_input_used ||
+    submissionData?.analysisResult?.voiceInputUsed ||
+    submissionData?.voice_session_id ||
+    submissionData?.voiceSessionId ||
+    submissionData?.voice_session?.id ||
+    submissionData?.voiceSession?.id,
   );
 
 const hasImageInput = (submissionData) =>
@@ -262,6 +266,12 @@ const buildSubmissionPayload = async (submissionData) => {
     correlation_id: correlationId,
     event_id: legacyEventId,
     run_group_id: runGroupId,
+    voice_session_id:
+      submissionData?.voice_session_id ||
+      submissionData?.voiceSessionId ||
+      submissionData?.voice_session?.id ||
+      submissionData?.voiceSession?.id ||
+      null,
     driver_id:
       submissionData?.driver_id ||
       submissionData?.driverId ||

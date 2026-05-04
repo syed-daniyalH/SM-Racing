@@ -5,10 +5,10 @@ import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext";
 import ProtectedRoute from "../../../components/ProtectedRoute";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
-import VoiceInputControl from "../../../components/Common/VoiceInputControl";
 import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { createSubmission, shouldUseRawSubmissionRoute } from "../../../utils/submissionApi";
+import { finalizeVoiceSubmission } from "../../../utils/voiceNotesApi";
 import { getTrackCatalog } from "../../../utils/trackCatalogApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
@@ -19,6 +19,7 @@ import {
   SESSION_TYPE_OPTIONS,
   PRESSURE_UNIT_OPTIONS,
 } from "../../../utils/staticOptions";
+import VoiceNoteComposer from "./_components/VoiceNoteComposer";
 import "./NotesSubmission.css";
 
 const getCurrentLocalTimeValue = () => {
@@ -415,7 +416,8 @@ export default function NotesSubmission() {
   const [detailDraftReady, setDetailDraftReady] = useState(false);
   const [quickImage, setQuickImage] = useState(null);
   const [detailImage, setDetailImage] = useState(null);
-  const [quickVoiceInputUsed, setQuickVoiceInputUsed] = useState(false);
+  const [quickVoiceSession, setQuickVoiceSession] = useState(null);
+  const [quickVoiceState, setQuickVoiceState] = useState(null);
   const quickRawTextRef = useRef(null);
   const detailDraftHydratedRef = useRef(false);
   const detailDraftSaveTimeoutRef = useRef(null);
@@ -1054,7 +1056,21 @@ export default function NotesSubmission() {
     const actionValue = isQuick ? quickAction : detailAction;
     const confidenceValue = isQuick ? quickConfidence : detailConfidence;
     const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
-    const voiceInputUsed = isQuick ? quickVoiceInputUsed : undefined;
+    const hasVoiceSession = isQuick && Boolean(quickVoiceSession?.id);
+    const voiceSessionStatus = String(quickVoiceState?.status || "").trim().toLowerCase();
+    const voiceSessionReady =
+      !hasVoiceSession || ["ready", "confirmed"].includes(voiceSessionStatus);
+    if (hasVoiceSession && (quickVoiceState?.isBlocking || !voiceSessionReady)) {
+      setSubmissionStatus("failed");
+      setError(
+        voiceSessionStatus === "failed"
+          ? "The voice transcription failed. Retry transcription or discard the voice note before submitting."
+          : "Voice recording is still processing. Please wait for the transcript to finish.",
+      );
+      setSubmissionFeedback("");
+      setSubmissionWarnings([]);
+      return;
+    }
     const submissionErrors = validateSubmissionFields({
       formState,
       trackValue,
@@ -1116,8 +1132,12 @@ export default function NotesSubmission() {
           confidence: Number(confidenceValue),
           run_group: eventRunGroup || undefined,
           submission_mode: isQuick ? "quick" : "detail",
-          ...(isQuick && voiceInputUsed !== undefined
-            ? { voice_input_used: voiceInputUsed }
+          ...(hasVoiceSession
+            ? {
+                voice_session_id: quickVoiceSession.id,
+                source_type: "voice",
+                has_voice_notes: true,
+              }
             : {}),
         },
         ...(isQuick
@@ -1128,7 +1148,12 @@ export default function NotesSubmission() {
           : {}),
       };
 
-      const response = await createSubmission(payload);
+      const response = hasVoiceSession
+        ? await finalizeVoiceSubmission({
+            voiceSessionId: quickVoiceSession.id,
+            submissionData: payload,
+          })
+        : await createSubmission(payload);
 
       if (response.success) {
         const successState = getSubmissionSuccessState(response.submission);
@@ -1144,7 +1169,8 @@ export default function NotesSubmission() {
         setPressureTypeDetail("cold");
         setQuickImage(null);
         setDetailImage(null);
-        setQuickVoiceInputUsed(false);
+        setQuickVoiceSession(null);
+        setQuickVoiceState(null);
         setQuickForm(createBaseFormState());
         setDetailForm(createDetailFormState());
         setSessionIdMode({
@@ -1319,17 +1345,18 @@ export default function NotesSubmission() {
   const quickRawRoute = useMemo(
     () =>
       shouldUseRawSubmissionRoute({
+        voice_session_id: quickVoiceSession?.id,
         analysis_result: {
           submission_mode: "quick",
-          ...(quickVoiceInputUsed !== undefined
-            ? { voice_input_used: quickVoiceInputUsed }
+          ...(quickVoiceSession?.id
+            ? { voice_session_id: quickVoiceSession.id, source_type: "voice" }
             : {}),
         },
         raw_text: quickRawText,
         image_url: quickImage,
         ...(quickImage ? { payload: { image_url: quickImage } } : {}),
       }),
-    [quickImage, quickRawText, quickVoiceInputUsed],
+    [quickImage, quickRawText, quickVoiceSession],
   );
 
   useEffect(() => {
@@ -2763,6 +2790,19 @@ export default function NotesSubmission() {
                   ref={quickRawTextRef}
                 />
 
+                <VoiceNoteComposer
+                  eventId={eventId}
+                  runGroupId={eventRunGroup}
+                  eventOpen={canSubmitNotes}
+                  disabled={isSubmitting || !canSubmitNotes}
+                  rawText={quickRawText}
+                  onRawTextChange={setQuickRawText}
+                  onVoiceSessionChange={setQuickVoiceSession}
+                  onVoiceStateChange={setQuickVoiceState}
+                  onTranscriptApplied={() => {}}
+                  className="voice-note-quick-composer"
+                />
+
                 <div style={{ marginTop: "0.5rem" }}>
                   <label className="form-label sub-label">Photo</label>
                   <input
@@ -2814,18 +2854,6 @@ export default function NotesSubmission() {
             </div>
 
             <div className={`form-actions ${isQuickTab ? "form-actions-with-voice" : ""}`}>
-              {isQuickTab && (
-                <div data-testid="quick-voice-control">
-                  <VoiceInputControl
-                    className="voice-input-bottom"
-                    textareaRef={quickRawTextRef}
-                    onValueChange={setRawTextValue}
-                    onTranscriptInserted={() => setQuickVoiceInputUsed(true)}
-                    disabled={isSubmitting || !canSubmitNotes}
-                  />
-                </div>
-              )}
-
               <div className="form-action-buttons">
                 <button
                   type="button"
@@ -2837,7 +2865,13 @@ export default function NotesSubmission() {
                 <button
                   type="submit"
                   className="btn btn-primary btn-large"
-                  disabled={isSubmitting || !canSubmitNotes}
+                  disabled={
+                    isSubmitting ||
+                    !canSubmitNotes ||
+                    Boolean(quickVoiceState?.isBlocking) ||
+                    (Boolean(quickVoiceSession?.id) &&
+                      !["ready", "confirmed"].includes(String(quickVoiceState?.status || "").trim().toLowerCase()))
+                  }
                 >
                   {isSubmitting ? "Submitting..." : submitButtonLabel}
                 </button>

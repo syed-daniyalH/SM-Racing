@@ -110,6 +110,73 @@ const normalizeStructuredWarnings = (value) => {
     .filter(Boolean);
 };
 
+const normalizeVoiceAttempt = (attempt) => {
+  if (!attempt || typeof attempt !== "object") return null;
+
+  return {
+    ...attempt,
+    id: attempt.id || attempt._id || null,
+    voiceSessionId: attempt.voice_session_id || attempt.voiceSessionId || null,
+    attemptNumber: attempt.attempt_number || attempt.attemptNumber || null,
+    attemptStatus: attempt.attempt_status || attempt.attemptStatus || null,
+    provider: attempt.provider || "deepgram",
+    transcriptText: attempt.transcript_text || attempt.transcriptText || null,
+    confidence: attempt.confidence ?? null,
+    requestId: attempt.request_id || attempt.requestId || null,
+    errorCode: attempt.error_code || attempt.errorCode || null,
+    errorMessage: attempt.error_message || attempt.errorMessage || null,
+  };
+};
+
+const normalizeVoiceSession = (voiceSession) => {
+  if (!voiceSession) return null;
+
+  const id = voiceSession.id || voiceSession._id || null;
+  const attempts = Array.isArray(voiceSession.attempts)
+    ? voiceSession.attempts.map(normalizeVoiceAttempt).filter(Boolean)
+    : [];
+
+  return {
+    ...voiceSession,
+    id,
+    _id: id,
+    submissionId: voiceSession.submission_id || voiceSession.submissionId || null,
+    eventId: voiceSession.event_id || voiceSession.eventId || null,
+    runGroupId: voiceSession.run_group_id || voiceSession.runGroupId || null,
+    createdById: voiceSession.created_by_id || voiceSession.createdById || null,
+    clientSessionId: voiceSession.client_session_id || voiceSession.clientSessionId || null,
+    status: voiceSession.status || "DRAFT",
+    validationStatus: voiceSession.validation_status || voiceSession.validationStatus || "PENDING",
+    validationMessage: voiceSession.validation_message || voiceSession.validationMessage || null,
+    audioStorageKey: voiceSession.audio_storage_key || voiceSession.audioStorageKey || null,
+    audioFileName: voiceSession.audio_file_name || voiceSession.audioFileName || null,
+    audioContentType: voiceSession.audio_content_type || voiceSession.audioContentType || null,
+    audioSizeBytes: voiceSession.audio_size_bytes || voiceSession.audioSizeBytes || null,
+    audioDurationMs: voiceSession.audio_duration_ms || voiceSession.audioDurationMs || null,
+    audioChecksum: voiceSession.audio_checksum || voiceSession.audioChecksum || null,
+    audioLanguage: voiceSession.audio_language || voiceSession.audioLanguage || null,
+    transcriptText: voiceSession.transcript_edited_text || voiceSession.transcriptEditedText || voiceSession.transcript_text || voiceSession.transcriptText || null,
+    transcriptEditedText: voiceSession.transcript_edited_text || voiceSession.transcriptEditedText || null,
+    transcriptConfidence: voiceSession.transcript_confidence || voiceSession.transcriptConfidence || null,
+    transcriptWordCount: voiceSession.transcript_word_count || voiceSession.transcriptWordCount || null,
+    transcriptJson: voiceSession.transcript_json || voiceSession.transcriptJson || null,
+    deepgramRequestJson: voiceSession.deepgram_request_json || voiceSession.deepgramRequestJson || null,
+    deepgramResponseJson: voiceSession.deepgram_response_json || voiceSession.deepgramResponseJson || null,
+    deepgramRequestId: voiceSession.deepgram_request_id || voiceSession.deepgramRequestId || null,
+    deepgramModel: voiceSession.deepgram_model || voiceSession.deepgramModel || null,
+    retryCount: voiceSession.retry_count || voiceSession.retryCount || 0,
+    uploadedAt: voiceSession.uploaded_at || voiceSession.uploadedAt || null,
+    transcribedAt: voiceSession.transcribed_at || voiceSession.transcribedAt || null,
+    confirmedAt: voiceSession.confirmed_at || voiceSession.confirmedAt || null,
+    submittedAt: voiceSession.submitted_at || voiceSession.submittedAt || null,
+    archivedAt: voiceSession.archived_at || voiceSession.archivedAt || null,
+    lastErrorCode: voiceSession.last_error_code || voiceSession.lastErrorCode || null,
+    lastErrorMessage: voiceSession.last_error_message || voiceSession.lastErrorMessage || null,
+    audioDownloadUrl: voiceSession.audio_download_url || voiceSession.audioDownloadUrl || null,
+    attempts,
+  };
+};
+
 export const normalizeDriver = (driver) => {
   if (!driver) return null;
 
@@ -221,6 +288,7 @@ export const normalizeSubmission = (submission) => {
   const event = normalizeEvent(submission.event);
   const payload = submission.payload || submission.data || {};
   const analysisResult = submission.analysis_result || submission.analysisResult || {};
+  const voiceSession = normalizeVoiceSession(submission.voice_session || submission.voiceSession);
   const sessionPayload =
     payload && typeof payload === "object" && payload.data && typeof payload.data === "object"
       ? payload.data
@@ -245,6 +313,16 @@ export const normalizeSubmission = (submission) => {
     event,
     driver: submission.driver || null,
     vehicle: submission.vehicle || null,
+    voice_session: voiceSession,
+    voiceSession,
+    voiceSessionId: submission.voice_session_id || submission.voiceSessionId || voiceSession?.id || null,
+    hasVoiceNotes: Boolean(
+      analysisResult?.has_voice_notes ||
+      analysisResult?.hasVoiceNotes ||
+      analysisResult?.voice_input_used ||
+      analysisResult?.voiceInputUsed ||
+      voiceSession,
+    ),
     createdByUser: submission.created_by_user || submission.createdByUser || null,
     userId: submission.created_by_id || submission.userId || null,
     raw_text: submission.raw_text || submission.rawText || "",
@@ -256,7 +334,9 @@ export const normalizeSubmission = (submission) => {
     submissionMode:
       analysisResult?.submission_mode || analysisResult?.submissionMode || null,
     sourceType:
-      analysisResult?.source_type || analysisResult?.sourceType || null,
+      analysisResult?.source_type ||
+      analysisResult?.sourceType ||
+      (voiceSession ? "voice" : null),
     structuredOnly:
       analysisResult?.structured_only ?? analysisResult?.structuredOnly ?? false,
     hasStructuredData:

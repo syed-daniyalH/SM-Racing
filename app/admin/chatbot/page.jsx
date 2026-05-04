@@ -16,16 +16,19 @@ import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined"
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined"
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined"
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined"
+import RecordVoiceOverOutlinedIcon from "@mui/icons-material/RecordVoiceOverOutlined"
 import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined"
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined"
 import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined"
 import ThermostatOutlinedIcon from "@mui/icons-material/ThermostatOutlined"
+import StopCircleOutlinedIcon from "@mui/icons-material/StopCircleOutlined"
 import TrackChangesOutlinedIcon from "@mui/icons-material/TrackChangesOutlined"
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined"
 import FilterAltOutlinedIcon from "@mui/icons-material/FilterAltOutlined"
 import Loader from "../../components/Common/Loader"
 import ProtectedRoute from "../../components/ProtectedRoute"
 import StatusBadge from "../../components/Common/StatusBadge"
+import VoiceInputControl from "../../components/Common/VoiceInputControl"
 import { getChatbotContext, sendChatbotQuery } from "../../utils/chatbotApi"
 import AssistantIcon from "./components/AssistantIcon"
 import {
@@ -39,7 +42,6 @@ import CompactSessionList from "./components/CompactSessionList"
 import ComparisonResponseSections from "./components/ComparisonResponseSections"
 import CompactResultSection from "./components/CompactResultCards"
 import SetupDetailSection from "./components/SetupDetailSections"
-import { PromptLibrary } from "./components/PromptLibrary"
 import SubmissionList from "./components/SubmissionList"
 import AssistantResponseShell, {
   buildAssistantSummary,
@@ -565,6 +567,7 @@ export default function ChatbotPage() {
   const [selectedDriverId, setSelectedDriverId] = useState("")
   const [selectedVehicleId, setSelectedVehicleId] = useState("")
   const [isSending, setIsSending] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
   const [notice, setNotice] = useState("")
   const [lastUserQuery, setLastUserQuery] = useState("")
   const [conversationId, setConversationId] = useState(() => readStoredConversationId())
@@ -633,6 +636,14 @@ export default function ChatbotPage() {
       // Ignore storage failures and keep the in-memory conversation id.
     }
   }, [conversationId])
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }, [])
 
   const selectedEvent = useMemo(
     () => context.events.find((event) => event.value === selectedEventId) || null,
@@ -865,6 +876,59 @@ export default function ChatbotPage() {
     await handleCopyMessage(latestAssistantMessage)
   }
 
+  const stopSpeaking = () => {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      return
+    }
+
+    window.speechSynthesis.cancel()
+    setIsSpeaking(false)
+  }
+
+  const handleSpeakLatest = () => {
+    if (!latestAssistantMessage?.response) {
+      setNotice("There is no assistant answer to read yet.")
+      return
+    }
+
+    if (
+      typeof window === "undefined" ||
+      !window.speechSynthesis ||
+      typeof window.SpeechSynthesisUtterance !== "function"
+    ) {
+      setNotice("Speech playback is not supported in this browser.")
+      return
+    }
+
+    const text = buildAssistantSummary(
+      latestAssistantMessage.response,
+      latestAssistantMessage.text,
+    )
+
+    if (!text) {
+      setNotice("There is no assistant answer to read yet.")
+      return
+    }
+
+    stopSpeaking()
+
+    const utterance = new window.SpeechSynthesisUtterance(text)
+    utterance.lang = "en-US"
+    utterance.rate = 1
+    utterance.pitch = 1
+    utterance.onend = () => {
+      setIsSpeaking(false)
+    }
+    utterance.onerror = () => {
+      setIsSpeaking(false)
+      setNotice("Could not read the latest answer aloud.")
+    }
+
+    setIsSpeaking(true)
+    setNotice("Reading the latest answer aloud.")
+    window.speechSynthesis.speak(utterance)
+  }
+
   const handleEventChange = (event) => {
     const nextEventId = event.target.value
     setSelectedEventId(nextEventId)
@@ -955,6 +1019,19 @@ export default function ChatbotPage() {
                 >
                   <ContentCopyOutlinedIcon fontSize="small" />
                   <span>Copy answer</span>
+                </button>
+                <button
+                  type="button"
+                  className={`chatbot-action-button ${isSpeaking ? "voice-active" : ""}`.trim()}
+                  onClick={isSpeaking ? stopSpeaking : handleSpeakLatest}
+                  disabled={!latestAssistantMessage?.response && !isSpeaking}
+                >
+                  {isSpeaking ? (
+                    <StopCircleOutlinedIcon fontSize="small" />
+                  ) : (
+                    <RecordVoiceOverOutlinedIcon fontSize="small" />
+                  )}
+                  <span>{isSpeaking ? "Stop reading" : "Read latest"}</span>
                 </button>
                 <button
                   type="button"
@@ -1117,12 +1194,6 @@ export default function ChatbotPage() {
                 </div>
               </section>
 
-              <PromptLibrary
-                scope={promptScope}
-                onAction={handleQuickAction}
-                loading={contextLoading || isSending}
-              />
-
               {contextLoading ? (
                 <div className="chatbot-sidebar-loader">
                   <Loader label="Loading context" sublabel="Fetching the latest database filters." />
@@ -1240,6 +1311,17 @@ export default function ChatbotPage() {
                         event.preventDefault()
                         void handleSubmit(event)
                       }
+                    }}
+                    disabled={isSending}
+                  />
+
+                  <VoiceInputControl
+                    className="chatbot-voice-input"
+                    mode="assistant"
+                    textareaRef={composerRef}
+                    onValueChange={setDraft}
+                    onTranscriptInserted={() => {
+                      setNotice("Voice prompt inserted into the composer.")
                     }}
                     disabled={isSending}
                   />

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_user, require_roles
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.enums import SubmissionStatus, UserRole
+from app.core.enums import SubmissionStatus, UserRole, VoiceNoteStatus
 from app.models.driver import Driver
 from app.models.event import Event
 from app.models.run_group import RunGroup
@@ -19,6 +19,7 @@ from app.models.structured_notes import Seance
 from app.models.submission import Submission
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.models.voice_note import VoiceNoteSession
 from app.schemas.submission import (
     RawSubmissionCreate,
     RawSubmissionResult,
@@ -60,6 +61,7 @@ from app.services.submission_payload_service import (
     normalize_optional_text,
     should_persist_structured_submission,
 )
+from app.services.voice_note_service import confirm_voice_session, get_voice_session_for_user
 
 
 router = APIRouter()
@@ -186,6 +188,7 @@ def _submission_options():
         joinedload(Submission.run_group),
         joinedload(Submission.driver),
         joinedload(Submission.vehicle),
+        joinedload(Submission.voice_session).joinedload(VoiceNoteSession.attempts),
     )
 
 
@@ -249,8 +252,14 @@ def _build_submission_candidate(
     driver: Driver | None,
     vehicle: Vehicle | None,
     correlation_id: str,
+    voice_session: VoiceNoteSession | None = None,
 ) -> Submission:
     raw_text = normalize_optional_text(submission_in.raw_text)
+    if raw_text is None and voice_session is not None:
+        raw_text = (
+            normalize_optional_text(voice_session.transcript_edited_text)
+            or normalize_optional_text(voice_session.transcript_text)
+        )
     image_url = normalize_optional_text(submission_in.image_url)
     analysis_result = merge_submission_analysis(
         submission_in.payload,
@@ -259,12 +268,28 @@ def _build_submission_candidate(
         submission_in.analysis_result,
     )
 
+    if voice_session is not None:
+        analysis_result = {
+            **analysis_result,
+            "source_type": "voice",
+            "has_voice_notes": True,
+            "voice_input_used": True,
+            "raw_input_mode": "voice",
+            "voice_session_id": str(voice_session.id),
+            "voice_session_status": (
+                voice_session.status.value if hasattr(voice_session.status, "value") else voice_session.status
+            ),
+            "voice_transcript_confidence": voice_session.transcript_confidence,
+            "voice_validation_status": voice_session.validation_status,
+        }
+
     submission = Submission(
         submission_ref=submission_in.submission_ref,
         event_id=event.id,
         run_group_id=run_group.id,
         driver_id=driver.id if driver else None,
         vehicle_id=vehicle.id if vehicle else None,
+        voice_session_id=voice_session.id if voice_session is not None else None,
         created_by_id=current_user.id,
         correlation_id=correlation_id,
         raw_text=raw_text,
@@ -541,6 +566,7 @@ def create_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Submission:
+    voice_session = None
     event = db.get(Event, submission_in.event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -567,6 +593,33 @@ def create_submission(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run group does not belong to the event")
 
     driver, vehicle = _validate_submission_relations(db, submission_in)
+
+    if submission_in.voice_session_id is not None:
+        voice_session = get_voice_session_for_user(
+            db,
+            submission_in.voice_session_id,
+            current_user=current_user,
+            load_attempts=True,
+        )
+        if voice_session.event_id != submission_in.event_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session does not belong to the event")
+        if voice_session.run_group_id != submission_in.run_group_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session does not belong to the run group")
+        if voice_session.status == VoiceNoteStatus.ARCHIVED:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice session is archived")
+        if voice_session.status == VoiceNoteStatus.TRANSCRIPTION_FAILED:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice transcription failed and cannot be submitted")
+        if not normalize_optional_text(submission_in.raw_text):
+            submission_in = submission_in.model_copy(
+                update={
+                    "raw_text": (
+                        normalize_optional_text(voice_session.transcript_edited_text)
+                        or normalize_optional_text(voice_session.transcript_text)
+                    )
+                }
+            )
+        if not normalize_optional_text(submission_in.raw_text):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice transcript is empty")
 
     submission_ref = _ensure_unique_submission_ref(db, submission_in.submission_ref)
     correlation_id = _ensure_unique_correlation_id(db, submission_in.correlation_id)
@@ -595,6 +648,7 @@ def create_submission(
         driver,
         vehicle,
         correlation_id,
+        voice_session=voice_session,
     )
 
     db.add(submission)
@@ -633,6 +687,20 @@ def create_submission(
         else:
             submission.structured_ingest_status = "skipped"
             submission.structured_ingest_warnings = []
+
+        if voice_session is not None:
+            now = datetime.now(timezone.utc)
+            voice_session.transcript_edited_text = normalize_optional_text(submission.raw_text)
+            if not voice_session.transcript_text:
+                voice_session.transcript_text = normalize_optional_text(submission.raw_text)
+            voice_session.confirmed_at = voice_session.confirmed_at or now
+            voice_session.submitted_at = now
+            voice_session.status = VoiceNoteStatus.SUBMITTED
+            voice_session.validation_status = "VALIDATED"
+            voice_session.validation_message = "Transcript confirmed and submission created."
+            voice_session.submission = submission
+            voice_session.submission_id = submission.id
+            db.add(voice_session)
 
         if submission.image_url and submission_input_id is None:
             try:

@@ -49,6 +49,34 @@ def build_make_payload(submission: Submission, submission_input_id: int | None =
     if raw_input_mode in {None, "", "none"} and analysis_payload.get("has_image"):
         raw_input_mode = "image"
     correlation_id = getattr(submission, "correlation_id", None) or submission.submission_ref
+    voice_session = getattr(submission, "voice_session", None)
+    voice_session_payload = None
+    if voice_session is not None:
+        voice_session_payload = {
+            "id": str(voice_session.id),
+            "submissionId": str(voice_session.submission_id) if voice_session.submission_id else None,
+            "status": voice_session.status.value if hasattr(voice_session.status, "value") else voice_session.status,
+            "validationStatus": voice_session.validation_status,
+            "validationMessage": voice_session.validation_message,
+            "audioStorageKey": voice_session.audio_storage_key,
+            "audioFileName": voice_session.audio_file_name,
+            "audioContentType": voice_session.audio_content_type,
+            "audioSizeBytes": voice_session.audio_size_bytes,
+            "audioDurationMs": voice_session.audio_duration_ms,
+            "audioChecksum": voice_session.audio_checksum,
+            "audioLanguage": voice_session.audio_language,
+            "transcriptText": voice_session.transcript_edited_text or voice_session.transcript_text,
+            "transcriptConfidence": voice_session.transcript_confidence,
+            "transcriptWordCount": voice_session.transcript_word_count,
+            "deepgramRequestId": voice_session.deepgram_request_id,
+            "deepgramModel": voice_session.deepgram_model,
+            "retryCount": voice_session.retry_count,
+            "uploadedAt": to_isoformat(voice_session.uploaded_at),
+            "transcribedAt": to_isoformat(voice_session.transcribed_at),
+            "confirmedAt": to_isoformat(voice_session.confirmed_at),
+            "submittedAt": to_isoformat(voice_session.submitted_at),
+            "archivedAt": to_isoformat(voice_session.archived_at),
+        }
 
     return {
         "submissionId": submission.submission_ref,
@@ -115,6 +143,7 @@ def build_make_payload(submission: Submission, submission_input_id: int | None =
         "analysis": analysis_payload,
         "session": session_payload,
         "payload": session_payload,
+        "voiceSession": voice_session_payload,
         "rawInput": {
             "rawText": submission.raw_text,
             "imageUrl": submission.image_url,

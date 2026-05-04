@@ -17,6 +17,11 @@ class Submission(Base, TimestampMixin):
     run_group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("run_groups.id"), nullable=False)
     driver_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("drivers.id"), nullable=True)
     vehicle_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
+    voice_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voice_note_sessions.id", ondelete="SET NULL"),
+        unique=True,
+        nullable=True,
+    )
     created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     correlation_id: Mapped[str | None] = mapped_column(String(36), unique=True, index=True, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -37,3 +42,4 @@ class Submission(Base, TimestampMixin):
     driver = relationship("Driver", back_populates="submissions")
     vehicle = relationship("Vehicle", back_populates="submissions")
     created_by_user = relationship("User", back_populates="submissions")
+    voice_session = relationship("VoiceNoteSession", back_populates="submission", uselist=False)

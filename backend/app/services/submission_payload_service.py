@@ -198,6 +198,8 @@ def merge_submission_analysis(
         or existing.get("hasVoiceNotes")
         or existing.get("voice_input_used")
         or existing.get("voiceInputUsed")
+        or existing.get("voice_session_id")
+        or existing.get("voiceSessionId")
         or str(existing.get("raw_input_mode") or existing.get("rawInputMode") or "")
         .strip()
         .lower()
@@ -216,7 +218,9 @@ def merge_submission_analysis(
         has_voice_notes=has_voice_notes,
     )
 
-    if submission_mode == "detail":
+    if has_voice_notes:
+        source_type = "voice"
+    elif submission_mode == "detail":
         if structured_only:
             source_type = "detail_structured_only"
         elif has_structured_data and (has_raw_text or has_image):

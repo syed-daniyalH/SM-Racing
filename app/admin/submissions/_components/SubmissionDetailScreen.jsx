@@ -30,6 +30,7 @@ import {
   getApiErrorMessage,
 } from "../../fleet/_components/fleetManagementHelpers";
 import { updateSubmission } from "../../../utils/submissionApi";
+import ProtectedAudioPlayer from "./ProtectedAudioPlayer";
 import {
   buildReviewAnalysisPatch,
   buildSubmissionMonitorRecord,
@@ -399,6 +400,7 @@ const normalizeAuditLogEntry = (entry, index) => {
 };
 
 const buildAuditTimeline = (record, analysisResult = {}) => {
+  const voiceSession = record?.voiceSession || record?.voice_session || null;
   const existing = Array.isArray(analysisResult.audit_log)
     ? analysisResult.audit_log.map(normalizeAuditLogEntry).filter(Boolean)
     : [];
@@ -433,6 +435,48 @@ const buildAuditTimeline = (record, analysisResult = {}) => {
       tone: "neutral",
     },
   ];
+
+  if (voiceSession) {
+    fallback.unshift(
+      {
+        action: "Voice Captured",
+        note: voiceSession.audioFileName ? `Stored ${voiceSession.audioFileName} for transcription.` : "Voice note audio stored for processing.",
+        timestamp: voiceSession.uploadedAt || voiceSession.createdAt || record?.createdAt || null,
+        actor: "Voice Capture",
+        tone: "info",
+      },
+      {
+        action: "Voice Transcribed",
+        note:
+          voiceSession.transcriptEditedText || voiceSession.transcriptText
+            ? "Deepgram transcript available for review."
+            : voiceSession.lastErrorMessage || "Transcription is pending or failed.",
+        timestamp: voiceSession.transcribedAt || voiceSession.updatedAt || record?.processedAt || null,
+        actor: "Deepgram",
+        tone: voiceSession.status === "TRANSCRIPTION_FAILED" ? "danger" : "success",
+      },
+    );
+
+    if (voiceSession.confirmedAt) {
+      fallback.push({
+        action: "Voice Confirmed",
+        note: "Mechanic confirmed the transcript before final submission.",
+        timestamp: voiceSession.confirmedAt,
+        actor: "Mechanic",
+        tone: "success",
+      });
+    }
+
+    if (voiceSession.submittedAt) {
+      fallback.push({
+        action: "Voice Submitted",
+        note: "Voice note finalized into the standard submission pipeline.",
+        timestamp: voiceSession.submittedAt,
+        actor: "Submission API",
+        tone: "accent",
+      });
+    }
+  }
 
   if (analysisResult.archived_at || analysisResult.archivedAt) {
     fallback.push({
@@ -482,12 +526,15 @@ const normalizeAttachment = (attachment, index) => {
     url,
     name: attachment.name || attachment.filename || attachment.file_name || `Attachment ${index + 1}`,
     description: attachment.description || attachment.label || attachment.caption || "",
+    voiceSessionId: attachment.voiceSessionId || attachment.voice_session_id || null,
+    mimeType: attachment.mimeType || attachment.mime_type || null,
   };
 };
 
 const buildAttachmentList = (record, draftAnalysis = {}) => {
   const fromAnalysis = Array.isArray(draftAnalysis.attachments) ? draftAnalysis.attachments : [];
   const fromPayload = Array.isArray(record?.data?.attachments) ? record.data.attachments : [];
+  const voiceSession = record?.voiceSession || record?.voice_session || null;
 
   const normalized = [
     ...(record?.imageUrl
@@ -498,6 +545,19 @@ const buildAttachmentList = (record, draftAnalysis = {}) => {
             url: record.imageUrl,
             name: "Primary image",
             description: "Driver supplied media attachment.",
+          },
+        ]
+      : []),
+    ...(voiceSession?.audioDownloadUrl || voiceSession?.audio_storage_key
+      ? [
+          {
+            id: `voice-audio-${voiceSession.id || "session"}`,
+            kind: "audio",
+            url: voiceSession.audioDownloadUrl || voiceSession.audio_download_url || null,
+            voiceSessionId: voiceSession.id || voiceSession.voiceSessionId || null,
+            name: voiceSession.audioFileName || "Voice recording",
+            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Mechanic voice capture.",
+            mimeType: voiceSession.audioContentType || voiceSession.audio_content_type || "audio/webm",
           },
         ]
       : []),
@@ -527,6 +587,14 @@ const buildSubmissionCsv = ({ record, draftPayload, draftAnalysis, timeline, att
     "Review State": record.reviewStateLabel || "-",
     "Validation State": record.validationStateLabel || "-",
     "Source Type": record.sourceTypeLabel || "-",
+    "Voice Status": record.voiceStatus || "-",
+    "Voice Review": record.voiceValidationStatus || "-",
+    "Voice Session ID": record.voiceSessionId || "",
+    "Deepgram Request ID": record.voiceSession?.deepgramRequestId || "",
+    "Voice Transcript": record.voiceTranscript || "",
+    "Voice Confidence": record.confidenceLabel || "",
+    "Voice Audio File": record.voiceAudioFileName || "",
+    "Voice Audio Duration": record.voiceAudioDurationLabel || "",
     Driver: getSubmissionDriverLabel(record),
     Vehicle: getSubmissionVehicleLabel(record),
     Event: getSubmissionEventLabel(record),
@@ -547,7 +615,7 @@ const buildSubmissionCsv = ({ record, draftPayload, draftAnalysis, timeline, att
 };
 
 const DownloadLink = ({ attachment }) => {
-  if (!attachment?.url) {
+  if (!attachment?.url || (attachment.kind === "audio" && attachment.voiceSessionId)) {
     return null;
   }
 
@@ -757,7 +825,12 @@ const AttachmentCard = ({ attachment }) => {
           unoptimized
         />
       ) : isAudio ? (
-        <audio controls className="submission-detail-audio" src={attachment.url} />
+        <ProtectedAudioPlayer
+          className="submission-detail-audio-player"
+          voiceSessionId={attachment.voiceSessionId || null}
+          src={attachment.url}
+          downloadName={attachment.name || "voice-note"}
+        />
       ) : (
         <div className="submission-detail-media-placeholder">
           <VisibilityOutlinedIcon fontSize="inherit" />
@@ -1350,6 +1423,42 @@ export default function SubmissionDetailScreen({
                     {record.rawText || "No raw note was submitted."}
                   </pre>
 
+                  {record.voiceSession ? (
+                    <div className="submission-detail-voice-transcript-card">
+                      <div className="submission-raw-card-title">voice_transcript</div>
+                      <pre className="submission-code-block submission-detail-raw-code">
+                        {record.voiceTranscript || record.rawText || "No transcript available."}
+                      </pre>
+                      <div className="submission-detail-voice-meta">
+                        <StatusBadge
+                          label={record.voiceStatus || "Voice"}
+                          tone={
+                            record.voiceStatus === "TRANSCRIPTION_FAILED"
+                              ? "danger"
+                              : record.voiceValidationStatus === "REVIEW_REQUIRED"
+                                ? "warning"
+                                : "info"
+                          }
+                        />
+                        {record.voiceAudioDurationLabel ? (
+                          <StatusBadge label={record.voiceAudioDurationLabel} tone="neutral" />
+                        ) : null}
+                        {record.voiceTranscriptConfidence !== null && record.voiceTranscriptConfidence !== undefined ? (
+                          <StatusBadge
+                            label={`Confidence ${
+                              Math.round(
+                                ((record.voiceTranscriptConfidence <= 1
+                                  ? record.voiceTranscriptConfidence * 100
+                                  : record.voiceTranscriptConfidence) * 10) / 10,
+                              )
+                            }%`}
+                            tone="neutral"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="submission-detail-quick-verdict">
                     <button
                       type="button"
@@ -1540,6 +1649,30 @@ export default function SubmissionDetailScreen({
                   <p className="submission-kv-label">Structured Warnings</p>
                   <p className="submission-kv-value">{record.structuredWarningCount || 0}</p>
                 </div>
+                {record.voiceStatus ? (
+                  <div className="submission-kv-card">
+                    <p className="submission-kv-label">Voice Status</p>
+                    <p className="submission-kv-value">{record.voiceStatus}</p>
+                  </div>
+                ) : null}
+                {record.voiceValidationStatus ? (
+                  <div className="submission-kv-card">
+                    <p className="submission-kv-label">Voice Review</p>
+                    <p className="submission-kv-value">{record.voiceValidationStatus}</p>
+                  </div>
+                ) : null}
+                {record.confidenceLabel ? (
+                  <div className="submission-kv-card">
+                    <p className="submission-kv-label">Voice Confidence</p>
+                    <p className="submission-kv-value">{record.confidenceLabel}</p>
+                  </div>
+                ) : null}
+                {record.voiceAudioDurationLabel ? (
+                  <div className="submission-kv-card">
+                    <p className="submission-kv-label">Voice Duration</p>
+                    <p className="submission-kv-value">{record.voiceAudioDurationLabel}</p>
+                  </div>
+                ) : null}
               </div>
             </section>
           </aside>

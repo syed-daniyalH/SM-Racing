@@ -64,6 +64,7 @@ const formatShortDateLabel = (value) => {
 const sourceTypeCatalog = {
   quick: { label: "Quick Submission", tone: "accent" },
   detail: { label: "Detailed Submission", tone: "info" },
+  voice: { label: "Voice Submission", tone: "accent" },
   ocr: { label: "OCR Submission", tone: "warning" },
   photo: { label: "Photo Submission", tone: "success" },
 };
@@ -103,6 +104,7 @@ const validationSeverityCatalog = {
 };
 
 const parseSourceTypeKey = (submission, data, analysisResult) => {
+  const voiceSession = submission.voiceSession || submission.voice_session || null;
   const explicit = normalizeLower(
     analysisResult.source_type ||
       analysisResult.sourceType ||
@@ -113,6 +115,7 @@ const parseSourceTypeKey = (submission, data, analysisResult) => {
   );
 
   if (explicit) {
+    if (explicit.includes("voice")) return "voice";
     if (explicit.includes("ocr")) return "ocr";
     if (explicit.includes("photo")) return "photo";
     if (explicit.includes("detail")) return "detail";
@@ -120,8 +123,20 @@ const parseSourceTypeKey = (submission, data, analysisResult) => {
   }
 
   if (
+    analysisResult.voice_session_id ||
+    analysisResult.voiceSessionId ||
+    analysisResult.voice_input_used ||
+    analysisResult.voiceInputUsed ||
+    analysisResult.raw_input_mode === "voice" ||
+    analysisResult.rawInputMode === "voice" ||
+    voiceSession
+  ) {
+    return "voice";
+  }
+
+  if (
     analysisResult.ocr_text ||
-    analysisResult.ocrText ||
+      analysisResult.ocrText ||
     analysisResult.ocr_result ||
     analysisResult.ocrResult
   ) {
@@ -211,6 +226,8 @@ const getSubmissionRawText = (submission) =>
       submission.rawText ||
       submission.analysis_result?.raw_text ||
       submission.analysisResult?.raw_text ||
+      submission.voiceSession?.transcriptEditedText ||
+      submission.voiceSession?.transcriptText ||
       "",
   );
 
@@ -309,7 +326,16 @@ export const buildSubmissionSearchText = (submission) =>
     submission.vehicle?.registrationNumber,
     submission.vehicle?.vehicleCode,
     submission.vehicle?.vehicle_id,
+    submission.voiceSessionId,
+    submission.voiceSession?.id,
     submission.raw_text,
+    submission.voiceSession?.transcriptEditedText,
+    submission.voiceSession?.transcriptText,
+    submission.voiceSession?.audioFileName,
+    submission.voiceSession?.audioLanguage,
+    submission.voiceSession?.status,
+    submission.voiceSession?.validationStatus,
+    submission.voiceSession?.deepgramRequestId,
     submission.data?.track,
     submission.data?.session_type,
     submission.data?.driver_id,
@@ -467,7 +493,13 @@ export const getConfidenceValue = (submission) => {
   if (!normalized) return null;
 
   const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
-  const confidence = analysisResult.confidence ?? analysisResult.confidence_score ?? normalized.confidence;
+  const confidence =
+    analysisResult.confidence ??
+    analysisResult.confidence_score ??
+    analysisResult.voice_transcript_confidence ??
+    analysisResult.voiceTranscriptConfidence ??
+    normalized.voiceSession?.transcriptConfidence ??
+    normalized.confidence;
   const numeric = formatConfidence(confidence);
   return numeric === null ? null : numeric;
 };
@@ -481,6 +513,7 @@ export const buildSubmissionSummaryCounts = (submissions = []) => {
     validationFailed: rows.filter((submission) => submission.validationStateKey === "failed").length,
     synced: rows.filter((submission) => submission.syncStateKey === "sent").length,
     media: rows.filter((submission) => submission.sourceTypeKey === "ocr" || submission.sourceTypeKey === "photo").length,
+    voice: rows.filter((submission) => submission.sourceTypeKey === "voice").length,
   };
 };
 
@@ -490,6 +523,16 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
 
   const data = normalized.data || normalized.payload || {};
   const analysisResult = normalized.analysisResult || normalized.analysis_result || {};
+  const voiceSession = normalized.voiceSession || normalized.voice_session || null;
+  const voiceTranscript = normalizeText(
+    voiceSession?.transcriptEditedText ||
+      voiceSession?.transcriptText ||
+      analysisResult.voice_transcript_text ||
+      analysisResult.voiceTranscriptText ||
+      normalized.raw_text ||
+      normalized.rawText ||
+      "",
+  );
   const sourceTypeKey = parseSourceTypeKey(normalized, data, analysisResult);
   const sourceTypeMeta = sourceTypeCatalog[sourceTypeKey] || sourceTypeCatalog.quick;
   const syncStateKey = normalizeLower(normalized.status || "pending");
@@ -563,6 +606,9 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   if (confidence !== null && confidence < 80) {
     warnings.push("low-confidence");
   }
+  if (sourceTypeKey === "voice" && voiceSession?.status === "TRANSCRIPTION_FAILED") {
+    warnings.push("voice-transcription-failed");
+  }
 
   const ocrText = getSubmissionOcrText(analysisResult);
   if (sourceTypeKey === "ocr" || sourceTypeKey === "photo" || ocrText) {
@@ -624,6 +670,15 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
   if (confidence !== null && confidence < 80) {
     validationMessages.push(`Confidence is ${confidence}%, which is below the preferred review threshold.`);
   }
+  if (sourceTypeKey === "voice" && voiceTranscript) {
+    validationMessages.push("Voice transcript is attached and traceable to the submitted audio file.");
+  }
+  if (sourceTypeKey === "voice" && voiceSession?.validationStatus === "REVIEW_REQUIRED") {
+    validationMessages.push("Voice transcript needs manual review because transcription confidence is below the configured threshold.");
+  }
+  if (sourceTypeKey === "voice" && voiceSession?.lastErrorMessage) {
+    validationMessages.push(`Voice transcription error: ${voiceSession.lastErrorMessage}`);
+  }
   if (structuredWarnings.length) {
     structuredWarnings.forEach((warning) => {
       validationMessages.push(
@@ -652,11 +707,31 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
     normalizeText(analysisResult.audit_snippet || analysisResult.auditSnippet) ||
     `Synced ${syncStateMeta.label.toLowerCase()} with ${validationStateMeta.label.toLowerCase()} state.`;
 
+  const voiceAudioDurationLabel =
+    voiceSession?.audioDurationMs !== null && voiceSession?.audioDurationMs !== undefined
+      ? `${Math.round((voiceSession.audioDurationMs / 1000) * 10) / 10}s`
+      : "-";
+  const voiceTranscriptConfidence = voiceSession?.transcriptConfidence ?? analysisResult.voice_transcript_confidence ?? null;
+
   return {
     ...normalized,
     data,
     analysisResult,
     analysis_result: analysisResult,
+    voiceSession,
+    voiceSessionId: voiceSession?.id || normalized.voiceSessionId || normalized.voice_session_id || null,
+    voiceTranscript,
+    voiceTranscriptConfidence,
+    voiceTranscriptWordCount: voiceSession?.transcriptWordCount ?? null,
+    voiceAudioFileName: voiceSession?.audioFileName || null,
+    voiceAudioContentType: voiceSession?.audioContentType || null,
+    voiceAudioDurationMs: voiceSession?.audioDurationMs || null,
+    voiceAudioDurationLabel,
+    voiceAudioLanguage: voiceSession?.audioLanguage || null,
+    voiceAudioDownloadUrl: voiceSession?.audioDownloadUrl || null,
+    voiceValidationStatus: voiceSession?.validationStatus || null,
+    voiceValidationMessage: voiceSession?.validationMessage || null,
+    voiceStatus: voiceSession?.status || null,
     sourceTypeKey,
     sourceTypeLabel: sourceTypeMeta.label,
     sourceTypeTone: sourceTypeMeta.tone,
@@ -688,6 +763,7 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
       "admin-monitor-1.0",
     processedAt: analysisResult.processed_at || analysisResult.processedAt || normalized.updatedAt || normalized.createdAt,
     sourceChannel:
+      voiceSession ? "Voice Recording" :
       analysisResult.source_channel ||
       analysisResult.sourceChannel ||
       sourceTypeMeta.label,
@@ -703,7 +779,7 @@ export const buildSubmissionMonitorRecord = (submission, allSubmissions = []) =>
     auditSnippet,
     recommendation,
     structuredIssues,
-    hasMedia: Boolean(normalized.image || normalized.image_url || ocrText),
+    hasMedia: Boolean(normalized.image || normalized.image_url || ocrText || voiceSession?.audioDownloadUrl),
     submittedAt: normalized.createdAt || normalized.updatedAt || null,
     submittedAtLabel: formatDateTimeLabel(normalized.createdAt || normalized.updatedAt || null),
     dateLabel: formatShortDateLabel(normalized.createdAt || normalized.updatedAt || null),

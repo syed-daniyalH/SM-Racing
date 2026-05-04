@@ -17,6 +17,7 @@ import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined"
 
 import StatusBadge from "../../../components/Common/StatusBadge"
 import { formatDateTime, formatEntityId } from "../../fleet/_components/fleetManagementHelpers"
+import ProtectedAudioPlayer from "./ProtectedAudioPlayer"
 import {
   getSubmissionDriverLabel,
   getSubmissionEventLabel,
@@ -86,6 +87,7 @@ const toneFromText = (text) => {
 }
 
 const buildTimeline = ({ record, submissionType, statusLabel, actionLabel }) => {
+  const voiceSession = record?.voiceSession || record?.voice_session || null
   const createdAt = record?.createdAt || record?.submittedAt || record?.updatedAt || null
   const processedAt = record?.processedAt || record?.updatedAt || null
   const actorLabel = record?.sourceChannel || record?.sourceTypeLabel || "System"
@@ -121,6 +123,52 @@ const buildTimeline = ({ record, submissionType, statusLabel, actionLabel }) => 
     },
   ]
 
+  if (voiceSession) {
+    timeline.push(
+      {
+        id: "voice-uploaded",
+        action: "Voice Uploaded",
+        note: voiceSession.audioFileName ? `Stored ${voiceSession.audioFileName} for transcription.` : "Voice audio stored for transcription.",
+        timestamp: voiceSession.uploadedAt || voiceSession.created_at || voiceSession.createdAt || createdAt,
+        actor: "Voice Capture",
+        tone: "info",
+      },
+      {
+        id: "voice-transcribed",
+        action: "Voice Transcribed",
+        note:
+          voiceSession.transcriptEditedText || voiceSession.transcriptText
+            ? "Deepgram transcript is available for review."
+            : voiceSession.lastErrorMessage || "Transcription is still pending or failed.",
+        timestamp: voiceSession.transcribedAt || voiceSession.updatedAt || processedAt,
+        actor: "Deepgram",
+        tone: voiceSession.status === "TRANSCRIPTION_FAILED" ? "danger" : "success",
+      },
+    )
+
+    if (voiceSession.confirmedAt) {
+      timeline.push({
+        id: "voice-confirmed",
+        action: "Voice Confirmed",
+        note: "Mechanic confirmed the transcript before submission.",
+        timestamp: voiceSession.confirmedAt,
+        actor: "Mechanic",
+        tone: "success",
+      })
+    }
+
+    if (voiceSession.submittedAt) {
+      timeline.push({
+        id: "voice-submitted",
+        action: "Voice Submitted",
+        note: "Voice note was finalized into the standard submission workflow.",
+        timestamp: voiceSession.submittedAt,
+        actor: "Submission API",
+        tone: "accent",
+      })
+    }
+  }
+
   if (record?.isArchived || record?.analysisResult?.archived_at || record?.analysisResult?.archivedAt) {
     timeline.push({
       id: "archived",
@@ -132,7 +180,13 @@ const buildTimeline = ({ record, submissionType, statusLabel, actionLabel }) => 
     })
   }
 
-  return timeline.filter((item) => item.action)
+  return timeline
+    .filter((item) => item.action)
+    .sort((left, right) => {
+      const leftTime = new Date(left.timestamp || 0).getTime()
+      const rightTime = new Date(right.timestamp || 0).getTime()
+      return rightTime - leftTime
+    })
 }
 
 const normalizeAttachment = (attachment, index) => {
@@ -158,12 +212,15 @@ const normalizeAttachment = (attachment, index) => {
     url,
     name: attachment.name || attachment.filename || attachment.file_name || `Attachment ${index + 1}`,
     description: attachment.description || attachment.label || attachment.caption || "",
+    voiceSessionId: attachment.voiceSessionId || attachment.voice_session_id || null,
+    mimeType: attachment.mimeType || attachment.mime_type || null,
   }
 }
 
 const buildAttachments = (record = {}, analysisResult = {}, imageUrl = null) => {
   const fromAnalysis = Array.isArray(analysisResult.attachments) ? analysisResult.attachments : []
   const fromPayload = Array.isArray(record?.data?.attachments) ? record.data.attachments : []
+  const voiceSession = record?.voiceSession || record?.voice_session || null
 
   const items = [
     ...(imageUrl
@@ -174,6 +231,19 @@ const buildAttachments = (record = {}, analysisResult = {}, imageUrl = null) => 
             url: imageUrl,
             name: "Primary image",
             description: "Driver supplied media attachment.",
+          },
+        ]
+      : []),
+    ...(voiceSession?.audioDownloadUrl || voiceSession?.audio_storage_key
+      ? [
+          {
+            id: `voice-audio-${voiceSession.id || "session"}`,
+            kind: "audio",
+            url: voiceSession.audioDownloadUrl || voiceSession.audio_download_url || null,
+            voiceSessionId: voiceSession.id || voiceSession.voiceSessionId || null,
+            name: voiceSession.audioFileName || "Voice recording",
+            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Mechanic voice capture.",
+            mimeType: voiceSession.audioContentType || voiceSession.audio_content_type || "audio/webm",
           },
         ]
       : []),
@@ -337,7 +407,11 @@ export const buildWorkspaceFromRecord = (record) => {
     { label: "Session Number", value: data.session_number || data.sessionNumber || "-" },
     { label: "Created At", value: formatDateTime(record.createdAt || record.submittedAt) },
     { label: "Source Type", value: record.sourceTypeLabel || "-" },
+    record.voiceStatus ? { label: "Voice Status", value: record.voiceStatus } : null,
+    record.voiceValidationStatus ? { label: "Voice Review", value: record.voiceValidationStatus } : null,
+    record.voiceAudioDurationLabel ? { label: "Voice Duration", value: record.voiceAudioDurationLabel } : null,
   ]
+    .filter(Boolean)
 
   const validationMessages = Array.isArray(record.validationMessages) ? record.validationMessages : []
   const issueCards = [
@@ -351,6 +425,28 @@ export const buildWorkspaceFromRecord = (record) => {
 
   const rawCards = [
     { title: "raw_text", value: record.rawText || "No raw text submitted.", kind: "text" },
+    record.voiceSession
+      ? {
+          title: "voice_transcript",
+          value: record.voiceTranscript || "No transcript available.",
+          kind: "text",
+          meta: [
+            record.voiceStatus ? `Status: ${record.voiceStatus}` : null,
+            record.voiceValidationStatus ? `Review: ${record.voiceValidationStatus}` : null,
+            record.voiceTranscriptConfidence !== null && record.voiceTranscriptConfidence !== undefined
+              ? `Confidence: ${
+                  Math.round(
+                    ((record.voiceTranscriptConfidence <= 1
+                      ? record.voiceTranscriptConfidence * 100
+                      : record.voiceTranscriptConfidence) * 10) / 10,
+                  )
+                }%`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" | "),
+        }
+      : null,
     { title: "raw_payload_json", value: data, kind: "json" },
     { title: "OCR Text", value: record.ocrText || "No OCR text captured.", kind: "text" },
     {
@@ -358,7 +454,7 @@ export const buildWorkspaceFromRecord = (record) => {
       kind: "image",
       imageUrl: record.imageUrl || null,
     },
-  ]
+  ].filter(Boolean)
 
   const parsedSections = [
     {
@@ -518,7 +614,11 @@ export const buildWorkspaceFromRecord = (record) => {
         { label: "Review", value: record.reviewStateLabel },
         { label: "Structured Status", value: record.structuredStatusLabel },
         { label: "Structured Warnings", value: record.structuredWarningCount || 0 },
-      ],
+        record.confidenceLabel ? { label: "Voice Confidence", value: record.confidenceLabel } : null,
+        record.voiceStatus ? { label: "Voice Status", value: record.voiceStatus } : null,
+        record.voiceValidationStatus ? { label: "Voice Review", value: record.voiceValidationStatus } : null,
+        record.voiceAudioDurationLabel ? { label: "Voice Duration", value: record.voiceAudioDurationLabel } : null,
+      ].filter(Boolean),
       auditSnippet: record.auditSnippet,
       timeline,
       attachments,
@@ -810,7 +910,12 @@ const AttachmentCard = ({ attachment }) => {
       </div>
 
       {attachment.kind === "audio" ? (
-        <audio className="submission-detail-audio" controls src={attachment.url} />
+        <ProtectedAudioPlayer
+          className="submission-detail-audio-player"
+          voiceSessionId={attachment.voiceSessionId || null}
+          src={attachment.url}
+          downloadName={attachment.name || "voice-note"}
+        />
       ) : attachment.kind === "video" ? (
         <video className="submission-detail-media" controls src={attachment.url} />
       ) : (
@@ -866,6 +971,7 @@ function RawCard({ card }) {
       <pre className="submission-code-block submission-detail-raw-code">
         {toDisplayValue(card.value, "No data available.")}
       </pre>
+      {card.meta ? <div className="submission-detail-raw-meta">{card.meta}</div> : null}
     </div>
   )
 }

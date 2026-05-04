@@ -1407,6 +1407,16 @@
   background: rgba(6, 8, 16, 0.86);
 }
 
+.submission-protected-audio {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.submission-detail-audio-player {
+  display: grid;
+  gap: 0.55rem;
+}
+
 .submission-detail-media {
   max-height: 240px;
   object-fit: cover;
@@ -1431,6 +1441,14 @@
 
 .submission-detail-attachment-link {
   min-width: 136px;
+}
+
+.submission-detail-raw-meta,
+.submission-detail-voice-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
 }
 
 .submission-detail-storage-grid {

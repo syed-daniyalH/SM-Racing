@@ -30,6 +30,23 @@ class Settings(BaseSettings):
     openai_vision_model: str | None = None
     openai_request_timeout_seconds: float = 8.0
     openai_intent_confidence_threshold: float = 0.70
+    voice_storage_root: str = "storage/voice-notes"
+    voice_upload_max_bytes: int = 25 * 1024 * 1024
+    voice_upload_max_duration_seconds: int = 300
+    voice_transcription_confidence_threshold: float = 0.80
+    voice_transcription_timeout_seconds: float = 45.0
+    deepgram_api_key: str | None = None
+    deepgram_base_url: str = "https://api.deepgram.com/v1/listen"
+    deepgram_model: str = "nova-3"
+    deepgram_language: str = "en-US"
+    deepgram_punctuate: bool = True
+    deepgram_smart_format: bool = True
+    deepgram_numerals: bool = True
+    deepgram_utterances: bool = True
+    deepgram_diarize: bool = False
+    deepgram_filler_words: bool = False
+    deepgram_endpointing: int = 300
+    deepgram_alternatives: int = 1
 
     @field_validator("cors_origins", mode="before")
     @classmethod

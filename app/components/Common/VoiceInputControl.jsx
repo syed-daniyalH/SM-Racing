@@ -6,31 +6,38 @@ import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import StatusBadge from "./StatusBadge";
 
-const STATUS_META = {
-  idle: {
-    tone: "neutral",
-    label: "Ready",
-    message: "",
+const VOICE_COPY_PRESETS = {
+  notes: {
+    eyebrow: "Voice Input",
+    listeningMessage: "Speak naturally. The mic will capture your note.",
+    processingMessage: "Processing voice input...",
+    successMessage: "Voice note added to raw text.",
+    errorMessage: "Could not capture speech.",
+    unsupportedMessage: "Voice input is not supported in this browser. Use Chrome or Edge.",
+    supportMessage: "Voice dictation is currently available in Chrome or Edge.",
+    startButtonLabel: "Start Voice Note",
+    listeningButtonLabel: "Stop Recording",
+    processingButtonLabel: "Processing",
+    successButtonLabel: "Voice Added",
+    errorButtonLabel: "Retry Voice",
+    successBadgeLabel: "Inserted",
+    previewLabel: "Heard",
   },
-  listening: {
-    tone: "accent",
-    label: "Listening",
-    message: "Speak naturally. The mic will capture your note.",
-  },
-  processing: {
-    tone: "warning",
-    label: "Processing",
-    message: "Processing voice input...",
-  },
-  success: {
-    tone: "success",
-    label: "Inserted",
-    message: "Voice note added to raw text.",
-  },
-  error: {
-    tone: "danger",
-    label: "Error",
-    message: "Could not capture speech.",
+  assistant: {
+    eyebrow: "Voice Agent",
+    listeningMessage: "Speak naturally. The mic will capture your prompt.",
+    processingMessage: "Processing voice input...",
+    successMessage: "Voice prompt added to the assistant composer.",
+    errorMessage: "Could not capture speech.",
+    unsupportedMessage: "Voice input is not supported in this browser. Use Chrome or Edge.",
+    supportMessage: "Voice dictation is currently available in Chrome or Edge.",
+    startButtonLabel: "Start Voice Query",
+    listeningButtonLabel: "Stop Recording",
+    processingButtonLabel: "Processing",
+    successButtonLabel: "Voice Ready",
+    errorButtonLabel: "Retry Voice",
+    successBadgeLabel: "Ready",
+    previewLabel: "Heard",
   },
 };
 
@@ -53,7 +60,37 @@ export default function VoiceInputControl({
   onTranscriptInserted,
   disabled = false,
   className = "",
+  mode = "notes",
 }) {
+  const voiceCopy = VOICE_COPY_PRESETS[mode] || VOICE_COPY_PRESETS.notes;
+  const STATUS_META = {
+    idle: {
+      tone: "neutral",
+      label: "Ready",
+      message: "",
+    },
+    listening: {
+      tone: "accent",
+      label: "Listening",
+      message: voiceCopy.listeningMessage,
+    },
+    processing: {
+      tone: "warning",
+      label: "Processing",
+      message: voiceCopy.processingMessage,
+    },
+    success: {
+      tone: "success",
+      label: voiceCopy.successBadgeLabel,
+      message: voiceCopy.successMessage,
+    },
+    error: {
+      tone: "danger",
+      label: "Error",
+      message: voiceCopy.errorMessage,
+    },
+  };
+
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState(STATUS_META.idle.message);
   const [preview, setPreview] = useState("");
@@ -107,6 +144,10 @@ export default function VoiceInputControl({
 
     if (typeof onTranscriptInserted === "function") {
       onTranscriptInserted(cleanedTranscript);
+    }
+
+    if (typeof onValueChange !== "function") {
+      return;
     }
 
     onValueChange((currentValue = "") => {
@@ -209,7 +250,7 @@ export default function VoiceInputControl({
     if (!isSupported) {
       updateStatus(
         "error",
-        "Voice input is not supported in this browser. Use Chrome or Edge.",
+        voiceCopy.unsupportedMessage,
       );
       return;
     }
@@ -224,7 +265,7 @@ export default function VoiceInputControl({
     if (!Recognition) {
       updateStatus(
         "error",
-        "Voice input is not supported in this browser. Use Chrome or Edge.",
+        voiceCopy.unsupportedMessage,
       );
       return;
     }
@@ -341,7 +382,7 @@ export default function VoiceInputControl({
     if (!supported) {
       updateStatus(
         "error",
-        "Voice input is not supported in this browser. Use Chrome or Edge.",
+        voiceCopy.unsupportedMessage,
       );
       setPreview("");
     }
@@ -357,27 +398,27 @@ export default function VoiceInputControl({
   const badgeLabel = !isSupported ? "Unsupported" : meta.label;
   const badgeTone = !isSupported ? "danger" : meta.tone;
   const badgeMessage = !isSupported
-    ? "Voice input is not supported in this browser. Use Chrome or Edge."
+    ? voiceCopy.unsupportedMessage
     : meta.message;
   const displayMessage = isSupported ? message : badgeMessage;
   const buttonLabel = !isSupported
     ? "Unavailable"
     : status === "listening"
-      ? "Stop Recording"
+      ? voiceCopy.listeningButtonLabel
       : status === "processing"
-        ? "Processing"
+        ? voiceCopy.processingButtonLabel
         : status === "success"
-          ? "Voice Added"
+          ? voiceCopy.successButtonLabel
       : status === "error"
-        ? "Retry Voice"
-        : "Start Voice Note";
+        ? voiceCopy.errorButtonLabel
+        : voiceCopy.startButtonLabel;
 
   return (
     <div className={`voice-input-control ${className}`.trim()}>
       <div className={`voice-input-card voice-input-card-${status}`}>
         <div className="voice-input-header">
           <div className="voice-input-copy">
-            <span className="voice-input-eyebrow">Voice Input</span>
+            <span className="voice-input-eyebrow">{voiceCopy.eyebrow}</span>
             {displayMessage ? (
               <p className="voice-input-message" aria-live="polite">
                 {displayMessage}
@@ -432,12 +473,14 @@ export default function VoiceInputControl({
       </div>
 
       {preview ? (
-        <p className="voice-input-preview">Heard: &quot;{preview}&quot;</p>
+        <p className="voice-input-preview">
+          {voiceCopy.previewLabel}: &quot;{preview}&quot;
+        </p>
       ) : null}
 
       {!isSupported ? (
         <p className="voice-input-support">
-          Voice dictation is currently available in Chrome or Edge.
+          {voiceCopy.supportMessage}
         </p>
       ) : null}
     </div>
