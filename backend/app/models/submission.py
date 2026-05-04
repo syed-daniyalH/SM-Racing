@@ -42,4 +42,8 @@ class Submission(Base, TimestampMixin):
     driver = relationship("Driver", back_populates="submissions")
     vehicle = relationship("Vehicle", back_populates="submissions")
     created_by_user = relationship("User", back_populates="submissions")
-    voice_session = relationship("VoiceNoteSession", back_populates="submission", uselist=False)
+    voice_session = relationship(
+        "VoiceNoteSession",
+        foreign_keys=[voice_session_id],
+        uselist=False,
+    )

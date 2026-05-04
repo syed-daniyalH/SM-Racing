@@ -60,7 +60,11 @@ class VoiceNoteSession(Base, TimestampMixin):
     event = relationship("Event")
     run_group = relationship("RunGroup")
     created_by_user = relationship("User")
-    submission = relationship("Submission", back_populates="voice_session", uselist=False)
+    submission = relationship(
+        "Submission",
+        foreign_keys=[submission_id],
+        uselist=False,
+    )
     attempts = relationship(
         "VoiceNoteTranscriptionAttempt",
         back_populates="voice_session",
