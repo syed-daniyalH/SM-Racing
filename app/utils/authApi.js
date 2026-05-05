@@ -32,13 +32,32 @@ const getErrorDetail = (error) =>
   error?.error ||
   "";
 
+const isServiceUnavailableError = (error) => {
+  const status = error?.response?.status ?? error?.status ?? null;
+  const detail = getErrorDetail(error);
+
+  if ([404, 502, 503, 504].includes(status)) {
+    return true;
+  }
+
+  if (typeof detail === "string" && isHtmlLikeError(detail)) {
+    return true;
+  }
+
+  return false;
+};
+
 const buildApiError = (error, fallbackMessage) => {
   const status = error?.response?.status ?? error?.status ?? null;
   const detail = getErrorDetail(error);
+  const serviceUnavailableMessage =
+    "Authentication service unavailable. Please check the backend server and API proxy configuration.";
   const message =
-    typeof detail === "string" && detail.trim() && !isHtmlLikeError(detail)
-      ? detail.trim()
-      : fallbackMessage;
+    isServiceUnavailableError(error)
+      ? serviceUnavailableMessage
+      : typeof detail === "string" && detail.trim() && !isHtmlLikeError(detail)
+        ? detail.trim()
+        : fallbackMessage;
 
   return {
     success: false,
