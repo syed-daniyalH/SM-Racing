@@ -2,18 +2,20 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
 from app.core.database import get_db
 from app.core.enums import UserRole
+from app.models.chatbot_conversation import ChatbotConversation
 from app.models.driver import Driver
 from app.models.event import Event
 from app.models.run_group import RunGroup
 from app.models.submission import Submission
 from app.core.security import hash_password
 from app.models.user import User
+from app.models.voice_note import VoiceNoteSession
 from app.schemas.auth import UserCreate, UserPasswordReset, UserRead, UserRoleUpdate
 from app.services.auth_service import create_user
 
@@ -73,6 +75,19 @@ def _reassign_user_references(db: Session, target_user_id: UUID, replacement_use
     }
 
     return updates
+
+
+def _delete_user_history(db: Session, target_user_id: UUID) -> dict[str, int]:
+    return {
+        "chatbot_conversations": db.execute(
+            delete(ChatbotConversation).where(ChatbotConversation.user_id == target_user_id),
+        ).rowcount
+        or 0,
+        "voice_note_sessions": db.execute(
+            delete(VoiceNoteSession).where(VoiceNoteSession.created_by_id == target_user_id),
+        ).rowcount
+        or 0,
+    }
 
 
 @router.get("", response_model=list[UserRead])
@@ -194,6 +209,7 @@ def delete_user(
         )
 
     try:
+        _delete_user_history(db, target_user.id)
         _reassign_user_references(db, target_user.id, current_user.id)
         db.delete(target_user)
         db.commit()
@@ -201,5 +217,8 @@ def delete_user(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="User cannot be deleted because it is referenced by events, run groups, submissions, or drivers.",
+            detail=(
+                "User cannot be deleted because it is referenced by events, run groups, "
+                "submissions, drivers, chatbot conversations, or voice note sessions."
+            ),
         ) from exc
