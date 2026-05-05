@@ -530,7 +530,7 @@ export default function DriversManagementPage() {
     }
   };
 
-  const drawerFooter = useMemo(() => {
+  const drawerFooter = (() => {
     if (drawerMode === "view") {
       return (
         <>
@@ -585,7 +585,7 @@ export default function DriversManagementPage() {
         </button>
       </>
     );
-  }, [closeDrawer, currentDriver, drawerMode, savingDriver]);
+  })();
 
   const emptyStateAction = filteredDrivers.length === 0 ? (
     <div className="fleet-actions-inline">

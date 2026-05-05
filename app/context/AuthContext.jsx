@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useCallback, useContext, useState, useEffect } from 'react'
 import { getMe, logoutUser as logoutApi } from '../utils/authApi'
 
 const AuthContext = createContext()
@@ -77,13 +77,13 @@ export function AuthProvider({ children }) {
     return { success }
   }
 
-  const isAdmin = () => {
+  const isAdmin = useCallback(() => {
     return user?.role === 'OWNER' || user?.role === 'ADMIN'
-  }
+  }, [user?.role])
 
-  const isMechanic = () => {
+  const isMechanic = useCallback(() => {
     return user?.role === 'MECHANIC' || user?.role === 'WORKER'
-  }
+  }, [user?.role])
 
   return (
     <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, isMechanic }}>

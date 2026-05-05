@@ -22,7 +22,7 @@ export default function Home() {
     } else {
       router.push('/login')
     }
-  }, [user, loading, router]) // Removed isAdmin from dependencies (it's a function)
+  }, [user, loading, isAdmin, router])
 
   return null
 }

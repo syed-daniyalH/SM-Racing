@@ -711,7 +711,7 @@ export default function VehiclesManagementPage() {
     }
   };
 
-  const drawerFooter = useMemo(() => {
+  const drawerFooter = (() => {
     if (drawerMode === "view") {
       return (
         <>
@@ -766,7 +766,7 @@ export default function VehiclesManagementPage() {
         </button>
       </>
     );
-  }, [closeDrawer, currentVehicle, drawerMode, savingVehicle]);
+  })();
 
   const emptyStateAction = filteredVehicles.length === 0 ? (
     <div className="fleet-actions-inline">

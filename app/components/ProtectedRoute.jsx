@@ -31,7 +31,7 @@ export default function ProtectedRoute({
       router.push("/login");
       return;
     }
-  }, [user, loading, requireAdmin, requireMechanic, router]); // Removed isAdmin and isMechanic (they're functions)
+  }, [user, loading, requireAdmin, requireMechanic, isAdmin, isMechanic, router]);
 
   if (loading) {
     return (
