@@ -308,6 +308,7 @@ def _greeting_style_for_query(value: str) -> str:
 
 def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
     style = _greeting_style_for_query(query)
+    normalized = _normalize_query_text(query)
 
     if style == "intro":
         return (
