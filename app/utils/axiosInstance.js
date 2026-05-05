@@ -1,9 +1,12 @@
 import axios from "axios";
 
-// Create axios instance with base configuration.
-// Local development uses /api/v1 through the Next.js proxy.
-// Production should set NEXT_PUBLIC_API_URL to the Render backend /api/v1 URL.
-const apiBaseURL = (process.env.NEXT_PUBLIC_API_URL || "/api/v1").trim();
+// Always prefer the same-origin /api/v1 proxy in production.
+// That keeps browser requests on the Vercel origin and avoids CORS failures
+// against the Render backend. Local development also uses the same proxy path.
+const apiBaseURL =
+  process.env.NODE_ENV === "production"
+    ? "/api/v1"
+    : (process.env.NEXT_PUBLIC_API_URL || "/api/v1").trim();
 
 const axiosInstance = axios.create({
   baseURL: apiBaseURL,
