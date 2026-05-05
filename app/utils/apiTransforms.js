@@ -246,8 +246,8 @@ export const normalizeVehicle = (vehicle) => {
 export const normalizeTrack = (track) => {
   if (!track) return null;
 
-  const id = track.id || track._id || track.track_id || track.trackId || null;
-  const trackName = track.track_name || track.trackName || "";
+  const id = track.id || track._id || track.track_id || track.trackId || track.name || track.track_name || null;
+  const trackName = track.track_name || track.trackName || track.name || "";
   const displayName =
     track.display_name ||
     track.displayName ||
@@ -274,9 +274,9 @@ export const normalizeTrack = (track) => {
     notes: track.notes || track.description || "",
     status: String(track.status || "").toLowerCase() || (isActive ? "active" : "archived"),
     isActive,
+    archivedAt: track.archived_at || track.archivedAt || null,
     createdAt: track.created_at || track.createdAt || null,
     updatedAt: track.updated_at || track.updatedAt || null,
-    archivedAt: track.archived_at || track.archivedAt || null,
   };
 };
 

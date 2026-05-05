@@ -36,6 +36,7 @@ import {
   getApiErrorMessage,
   getTrackDisplayName,
   getTrackLifecycle,
+  getTrackName,
   getTrackSearchText,
   getTrackSummaryCounts,
   normalizeTrackShortCode,
@@ -75,7 +76,7 @@ export default function TracksManagementPage() {
     setPageError("");
 
     try {
-      const response = await getTracks();
+      const response = await getTracks({ includeArchived: true, syncLegacyStorage: true });
       setTracks(response.tracks || []);
     } catch (error) {
       setTracks([]);
@@ -215,9 +216,7 @@ export default function TracksManagementPage() {
         return false;
       }
 
-      const existingName = String(track.trackName || track.track_name || "")
-        .trim()
-        .toLowerCase();
+      const existingName = String(getTrackName(track)).trim().toLowerCase();
       const existingCode = normalizeTrackShortCode(track.shortCode || track.short_code || "");
 
       return existingName === normalizedName || existingCode === normalizedCode;

@@ -56,7 +56,7 @@ export const toTrackFormValues = (track = null) => {
   const isArchived = !resolveTrackIsActive(track);
 
   return {
-    trackName: track.trackName || track.track_name || "",
+    trackName: track.trackName || track.track_name || track.name || "",
     displayName: track.displayName || track.display_name || "",
     shortCode: track.shortCode || track.short_code || "",
     country: track.country || track.country_name || "",
@@ -78,6 +78,7 @@ export const buildTrackPayload = (values = {}) => {
   const status = String(values.status || "active").toLowerCase() === "archived" ? "archived" : "active";
 
   return {
+    name: trackName,
     track_name: trackName,
     display_name: displayName || trackName,
     short_code: shortCode,
@@ -91,10 +92,20 @@ export const buildTrackPayload = (values = {}) => {
 };
 
 export const getTrackName = (track = null) =>
-  track?.trackName || track?.track_name || track?.displayName || track?.display_name || "";
+  track?.trackName ||
+  track?.track_name ||
+  track?.name ||
+  track?.displayName ||
+  track?.display_name ||
+  "";
 
 export const getTrackDisplayName = (track = null) =>
-  track?.displayName || track?.display_name || track?.trackName || track?.track_name || "";
+  track?.displayName ||
+  track?.display_name ||
+  track?.name ||
+  track?.trackName ||
+  track?.track_name ||
+  "";
 
 export const getTrackSearchText = (track = null) =>
   [
