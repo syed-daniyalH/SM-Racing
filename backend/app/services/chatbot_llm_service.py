@@ -13,6 +13,20 @@ from app.schemas.chatbot import ChatbotCard, ChatbotQuery, ChatbotResponse, Chat
 
 logger = logging.getLogger(__name__)
 
+CHATBOT_PERSONA_PROMPT = (
+    "You are the AI Race Assistant for the SM-2 Racing system. "
+    "Act as a highly skilled motorsport data analyst and race engineer. "
+    "Be professional, authoritative, concise, objective, empathetic, and structured. "
+    "Use only the structured backend data provided to you. "
+    "Do not invent values, guess missing data, or claim records that are not present. "
+    "When the user is greeting or asks what you are / what you can do, respond with a brief welcome "
+    "and a clear capability statement. "
+    "For data-heavy responses, lead with a short executive summary, then present the most important insights first, "
+    "followed by structured details and a few relevant next prompts. "
+    "If the backend response indicates ambiguity or missing context, explain that clearly and ask for only the missing detail. "
+    "If the request is outside the supported scope, say so briefly and offer the closest supported actions."
+)
+
 INTENT_RESPONSE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -223,10 +237,11 @@ def classify_chatbot_intent(
 ) -> ChatbotLLMIntentResult | None:
     parsed, error = _call_openai_json(
         system_prompt=(
-            "You classify SM2 Racing admin chatbot requests. "
+            "You classify SM2 Racing admin chatbot requests for the AI Race Assistant. "
             "Return only JSON that matches the schema. "
             "Choose one allowed intent. Extract only explicit filters from the user's text. "
-            "Do not invent session IDs, car numbers, driver names, event names, dates, or times."
+            "Do not invent session IDs, car numbers, driver names, event names, dates, or times. "
+            "If the user is greeting or asking what you are / what you can do, choose the greeting intent."
         ),
         user_prompt=(
             f"User query: {query}\n"
@@ -398,7 +413,12 @@ def fallback_plain_response(*, user_query: str, backend_response: ChatbotRespons
     if response_type == "greeting":
         summary = (
             summary
-            or "I can help with recent sessions, setup data, comparisons, submissions, and driver or vehicle lookups."
+            or (
+                "Hello, and welcome to the SM Racing System. "
+                "I can assist you with session analysis, setup data insights, performance comparisons, "
+                "submission reviews, and driver or vehicle lookups. "
+                "Please let me know how you would like to proceed."
+            )
         )
     elif response_type == "latest_sessions" and record_count:
         summary = summary or f"I found {record_count} recent sessions in the SM2 Racing database."
@@ -448,18 +468,7 @@ def generate_summary_response(
         request_scope=request_scope,
     )
     parsed, error = _call_openai_json(
-        system_prompt=(
-            "You are the AI Race Assistant for the SM2 Racing system. "
-            "Use only the structured backend data provided to you. "
-            "Do not invent values. "
-            "Do not guess missing data. "
-            "Do not claim a session exists unless it is present in the provided backend result. "
-            "Do not calculate values that were not already computed by backend logic. "
-            "If the backend response is a recommendation or coaching response, keep the answer evidence-based and do not invent performance metrics. "
-            "Keep responses concise, professional, practical, and client-friendly. "
-            "Prioritize the most important answer first. "
-            "If the backend response indicates ambiguity or missing context, explain that clearly and ask for only the missing detail."
-        ),
+        system_prompt=CHATBOT_PERSONA_PROMPT,
         user_prompt=(
             f"User query: {user_query}\n"
             f"Backend result:\n{json.dumps(context, ensure_ascii=False)}\n"
