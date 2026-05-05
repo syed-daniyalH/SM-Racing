@@ -217,6 +217,24 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         )
         self.assertEqual(fallback.response_type, "greeting")
 
+    def test_fallback_plain_response_preserves_narrative_paragraph_breaks(self) -> None:
+        backend_response = _response(
+            kind="compare",
+            title="Session Comparison",
+            summary="Executive summary line.\n\nSecond paragraph with the main setup change.",
+            answer="Executive summary line.\n\nSecond paragraph with the main setup change.",
+            intent="compare",
+        )
+
+        fallback = chatbot_llm_service.fallback_plain_response(
+            user_query="compare session 1 vs session 2",
+            backend_response=backend_response,
+        )
+
+        self.assertIn("\n\n", fallback.summary)
+        self.assertTrue(fallback.summary.startswith("Executive summary line."))
+        self.assertIn("Second paragraph with the main setup change.", fallback.summary)
+
     def test_fallback_response_types_cover_recommendation_and_coaching(self) -> None:
         recommendation_response = _response(kind="recommendation", intent="recommendation")
         coaching_response = _response(kind="coaching", intent="coaching")

@@ -103,12 +103,16 @@ const polishValidationText = (value) => {
 }
 
 const polishAssistantText = (value) => {
-  const text = normalizeWhitespace(value)
+  const text = String(value || "").replace(/\r\n/g, "\n").trim()
   if (!text) {
     return ""
   }
 
   return text
+    .split(/\n+/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n")
     .replace(/session\(s\)/gi, "sessions")
     .replace(/record\(s\)/gi, "records")
     .replace(/\bFound\s+/g, "I found ")

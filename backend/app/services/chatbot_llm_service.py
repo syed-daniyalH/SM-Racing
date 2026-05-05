@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -22,8 +23,10 @@ CHATBOT_PERSONA_PROMPT = (
     "When the user gives a simple greeting like hi, hello, hey, or good morning, respond with a short warm welcome. "
     "When the user asks what you are, what you can do, or asks for help, respond with a fuller welcome "
     "and a clear capability statement. "
-    "For data-heavy responses, lead with a short executive summary, then present the most important insights first, "
-    "followed by structured details and a few relevant next prompts. "
+    "For data-heavy responses, write a concise executive summary followed by 1 to 3 short narrative paragraphs. "
+    "Explain what changed, why it matters, and the likely performance impact. "
+    "Use structured details only when they improve clarity, and keep the prose practical for race team users. "
+    "Close with a few relevant next prompts. "
     "If the backend response indicates ambiguity or missing context, explain that clearly and ask for only the missing detail. "
     "If the request is outside the supported scope, say so briefly and offer the closest supported actions."
 )
@@ -140,6 +143,29 @@ def _normalize_summary_text(value: Any) -> str:
 
     return (
         text.replace("session(s)", "sessions")
+        .replace("record(s)", "records")
+        .replace("submission(s)", "submissions")
+        .replace("event(s)", "events")
+    )
+
+
+def _normalize_summary_narrative(value: Any) -> str:
+    text = str(value or "").replace("\r\n", "\n").strip()
+    if not text:
+        return ""
+
+    paragraphs = []
+    for paragraph in re.split(r"\n+", text):
+        normalized = " ".join(paragraph.split()).strip()
+        if normalized:
+            paragraphs.append(normalized)
+
+    if not paragraphs:
+        return ""
+
+    return (
+        "\n\n".join(paragraphs)
+        .replace("session(s)", "sessions")
         .replace("record(s)", "records")
         .replace("submission(s)", "submissions")
         .replace("event(s)", "events")
@@ -408,7 +434,7 @@ def _default_response_type(response: ChatbotResponse) -> str:
 
 def fallback_plain_response(*, user_query: str, backend_response: ChatbotResponse) -> ChatbotLLMSummaryResult:
     record_count = len(backend_response.records_used or [])
-    summary = _normalize_summary_text(backend_response.summary or backend_response.answer)
+    summary = _normalize_summary_narrative(backend_response.summary or backend_response.answer)
     response_type = _default_response_type(backend_response)
 
     if response_type == "greeting":
@@ -473,7 +499,8 @@ def generate_summary_response(
         user_prompt=(
             f"User query: {user_query}\n"
             f"Backend result:\n{json.dumps(context, ensure_ascii=False)}\n"
-            "Return a concise premium assistant summary and up to four helpful next prompts."
+            "Return an executive summary followed by 1 to 3 short narrative paragraphs, "
+            "then up to four helpful next prompts."
         ),
         schema_name="sm_racing_chatbot_summary",
         schema=SUMMARY_RESPONSE_SCHEMA,
@@ -489,7 +516,7 @@ def generate_summary_response(
             error=error,
         )
 
-    summary = _normalize_summary_text(parsed.get("summary"))
+    summary = _normalize_summary_narrative(parsed.get("summary"))
     if not summary:
         return ChatbotLLMSummaryResult(
             summary=fallback.summary,
