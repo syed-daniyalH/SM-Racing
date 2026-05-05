@@ -7,7 +7,6 @@ import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import NoteAltRoundedIcon from "@mui/icons-material/NoteAltRounded";
 import PendingActionsRoundedIcon from "@mui/icons-material/PendingActionsRounded";
-import RecordVoiceOverRoundedIcon from "@mui/icons-material/RecordVoiceOverRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 
 import Loader from "../../../components/Common/Loader";
@@ -826,20 +825,10 @@ export default function VoiceSubmissionPage() {
     <ProtectedRoute requireMechanic={true}>
       <div className="voice-submission-page">
         <div className="voice-submission-shell">
-          <header className="voice-submission-hero">
-            <div className="voice-submission-hero-copy">
-              <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
-              <div className="voice-submission-eyebrow">
-                <RecordVoiceOverRoundedIcon fontSize="inherit" />
-                Voice Submission
-              </div>
-              <h1>{event.name}</h1>
-              <p>
-                Record a mechanic note, review the Deepgram transcript, and finalize it with minimal manual input.
-              </p>
-            </div>
+          <div className="voice-submission-topbar">
+            <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
 
-            <div className="voice-submission-hero-meta">
+            <div className="voice-submission-topbar-meta">
               <StatusBadge
                 label={submissionState.isOpen ? "Event Open" : "Event Closed"}
                 tone={submissionState.isOpen ? "success" : "neutral"}
@@ -847,9 +836,13 @@ export default function VoiceSubmissionPage() {
               <StatusBadge label={runGroupLabel || "Run Group Missing"} tone={runGroupLabel ? "accent" : "warning"} />
               <StatusBadge label={voiceStatusMeta.label} tone={voiceStatusMeta.tone} />
             </div>
-          </header>
+          </div>
 
           <section className="voice-submission-context-strip">
+            <div className="voice-submission-context-item">
+              <span>Event</span>
+              <strong>{event.name || "Unavailable"}</strong>
+            </div>
             <div className="voice-submission-context-item">
               <span>Track</span>
               <strong>{trackLabel || "Unavailable"}</strong>
@@ -1143,35 +1136,25 @@ export default function VoiceSubmissionPage() {
 
             <p className="voice-submission-status-note">{statusSummaryNote}</p>
 
-            <div className="voice-submission-panel">
-              <div className="voice-submission-panel-head">
-                <div>
-                  <p className="voice-submission-panel-eyebrow">Recorder</p>
-                  <h2>Record, review, and prepare the note</h2>
-                </div>
-                <StatusBadge label={voiceStatusMeta.label} tone={voiceStatusMeta.tone} />
-              </div>
-
-              <VoiceNoteComposer
-                key={`voice-submission-composer-${composerResetKey}`}
-                eventId={eventId}
-                runGroupId={runGroup?.id || ""}
-                eventOpen={submissionState.isOpen}
-                disabled={isFormReadOnly}
-                rawText={rawText}
-                onRawTextChange={setRawText}
-                onVoiceSessionChange={(nextSession) => {
-                  setVoiceSession(nextSession);
-                }}
-                onVoiceStateChange={setVoiceState}
-                onTranscriptApplied={() => {
-                  setError("");
-                }}
-                className="voice-submission-composer"
-                storageKey={sessionStorageKey}
-                initialVoiceSessionId={recoveredSessionSnapshot?.sessionId || null}
-              />
-            </div>
+            <VoiceNoteComposer
+              key={`voice-submission-composer-${composerResetKey}`}
+              eventId={eventId}
+              runGroupId={runGroup?.id || ""}
+              eventOpen={submissionState.isOpen}
+              disabled={isFormReadOnly}
+              rawText={rawText}
+              onRawTextChange={setRawText}
+              onVoiceSessionChange={(nextSession) => {
+                setVoiceSession(nextSession);
+              }}
+              onVoiceStateChange={setVoiceState}
+              onTranscriptApplied={() => {
+                setError("");
+              }}
+              className="voice-submission-composer"
+              storageKey={sessionStorageKey}
+              initialVoiceSessionId={recoveredSessionSnapshot?.sessionId || null}
+            />
 
             {shouldShowFinalNote ? (
               <div className="voice-submission-panel voice-submission-final-note-panel">

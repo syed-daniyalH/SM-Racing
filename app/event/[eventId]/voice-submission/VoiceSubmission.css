@@ -12,50 +12,19 @@
   padding: 2rem 1rem 3rem;
 }
 
-.voice-submission-hero {
+.voice-submission-topbar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
+  align-items: center;
+  gap: 0.9rem;
   margin-bottom: 1rem;
 }
 
-.voice-submission-hero-copy {
-  max-width: 62ch;
-}
-
-.voice-submission-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin: 0.9rem 0 0.65rem;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: #ffb08c;
-}
-
-.voice-submission-hero h1 {
-  margin: 0 0 0.55rem;
-  font-size: clamp(2.2rem, 4vw, 3.2rem);
-  line-height: 1.02;
-  font-weight: 900;
-  color: var(--color-text);
-}
-
-.voice-submission-hero p {
-  margin: 0;
-  color: var(--color-text-light);
-  line-height: 1.6;
-}
-
-.voice-submission-hero-meta {
+.voice-submission-topbar-meta {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.55rem;
-  max-width: 320px;
 }
 
 .voice-submission-context-strip,
@@ -66,7 +35,7 @@
 }
 
 .voice-submission-context-strip {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .voice-submission-context-item,
@@ -447,13 +416,14 @@
 }
 
 @media (max-width: 980px) {
-  .voice-submission-hero,
+  .voice-submission-topbar,
   .voice-submission-footer,
   .voice-submission-success-panel {
     flex-direction: column;
+    align-items: flex-start;
   }
 
-  .voice-submission-hero-meta,
+  .voice-submission-topbar-meta,
   .voice-submission-footer-actions {
     justify-content: flex-start;
     max-width: none;
