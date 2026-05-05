@@ -4,11 +4,7 @@
 
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import AssistantIcon from "./AssistantIcon"
-import {
-  BetterPromptHelper,
-  FeaturedPromptRow,
-  FollowUpPromptRow,
-} from "./PromptLibrary"
+import { FollowUpPromptRow } from "./PromptLibrary"
 
 function renderStateIcon(Icon) {
   if (!Icon) {
@@ -146,15 +142,6 @@ export function ChatEmptyState({
           <p>{description}</p>
         </div>
       </div>
-
-      <BetterPromptHelper className="chatbot-empty-helper" />
-
-      <FeaturedPromptRow
-        scope={scope}
-        onAction={onAction}
-        loading={loading}
-        className="chatbot-empty-featured-prompts"
-      />
 
       {loading ? (
         <div className="chatbot-empty-loading">
