@@ -48,9 +48,6 @@ def build_deepgram_request_options(
         "filler_words": _bool_param(settings.deepgram_filler_words),
     }
 
-    if settings.deepgram_endpointing:
-        options["endpointing"] = str(settings.deepgram_endpointing)
-
     if settings.deepgram_alternatives and settings.deepgram_alternatives > 1:
         options["alternatives"] = str(settings.deepgram_alternatives)
 
