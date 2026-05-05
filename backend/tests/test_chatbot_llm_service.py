@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from app.schemas.chatbot import ChatbotCard, ChatbotField, ChatbotQuery, ChatbotRecordReference, ChatbotResponse, ChatbotSection
 from app.services import chatbot_llm_service
-from app.services.chatbot_service import _intent_from_query
+from app.services.chatbot_service import _greeting_response, _intent_from_query
 
 
 def _response(**overrides):
@@ -151,10 +151,71 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
     def test_intent_from_query_recognizes_greeting_and_compare_variants(self) -> None:
         self.assertEqual(_intent_from_query("hello"), "greeting")
+        self.assertEqual(_intent_from_query("who are you"), "greeting")
+        self.assertEqual(_intent_from_query("good morning"), "greeting")
+        self.assertEqual(_intent_from_query("thanks"), "greeting")
         self.assertEqual(_intent_from_query("what changed from the last session?"), "compare")
         self.assertEqual(_intent_from_query("compare previous session with current"), "compare")
         self.assertEqual(_intent_from_query("which one is better"), "recommendation")
         self.assertEqual(_intent_from_query("how can I improve?"), "coaching")
+
+    def test_greeting_response_uses_short_variant_for_simple_hi(self) -> None:
+        response = _greeting_response("hi")
+
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.intent, "greeting")
+        self.assertEqual(response.summary, "Hello. How can I help with SM Racing data today?")
+        self.assertEqual(response.data["greeting_style"], "short")
+        self.assertEqual(response.follow_up[:2], ["Show latest sessions", "Show setup for latest session"])
+
+    def test_greeting_response_uses_full_intro_for_identity_question(self) -> None:
+        response = _greeting_response("what are you")
+
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.intent, "greeting")
+        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
+        self.assertEqual(response.data["greeting_style"], "intro")
+        self.assertEqual(response.follow_up[:2], ["Show latest sessions", "Show latest submissions"])
+
+    def test_greeting_response_uses_thanks_variant(self) -> None:
+        response = _greeting_response("thanks")
+
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.intent, "greeting")
+        self.assertTrue(response.summary.startswith("You're welcome."))
+        self.assertEqual(response.data["greeting_style"], "thanks")
+
+    def test_greeting_response_uses_time_based_variant(self) -> None:
+        response = _greeting_response("good evening")
+
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.intent, "greeting")
+        self.assertEqual(response.summary, "Good evening. How can I help with SM Racing data today?")
+        self.assertEqual(response.data["greeting_style"], "time_based")
+
+    def test_fallback_plain_response_uses_full_greeting_when_backend_summary_missing(self) -> None:
+        backend_response = _response(
+            kind="message",
+            title="AI Race Assistant",
+            summary="",
+            answer="",
+            data_found=True,
+            intent="greeting",
+            records_used=[],
+            sections=[],
+            follow_up=[],
+        )
+
+        fallback = chatbot_llm_service.fallback_plain_response(
+            user_query="what are you",
+            backend_response=backend_response,
+        )
+
+        self.assertEqual(
+            fallback.summary,
+            "Hello, and welcome to the SM Racing System. I can assist you with session analysis, setup data insights, performance comparisons, submission reviews, and driver or vehicle lookups. Please let me know how you would like to proceed.",
+        )
+        self.assertEqual(fallback.response_type, "greeting")
 
     def test_fallback_response_types_cover_recommendation_and_coaching(self) -> None:
         recommendation_response = _response(kind="recommendation", intent="recommendation")
