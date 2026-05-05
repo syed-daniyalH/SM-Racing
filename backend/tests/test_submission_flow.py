@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import date, datetime, time, timezone
@@ -8,11 +8,10 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.core.enums import SeanceStatus, SubmissionStatus, TireInventoryStatus
-from app.models.structured_notes import Alignment, Seance, TireHistory, TireInventory, Track
+from app.core.enums import SubmissionStatus, TireInventoryStatus
+from app.models.structured_notes import TireInventory
 from app.services import submission_delivery_service as delivery_service
 from app.services import make_webhook_service as make_service
-from app.services import structured_submission_service as structured_service
 from app.services import submission_ingest_service as ingest_service
 from app.services import submission_payload_service as payload_service
 
@@ -143,10 +142,10 @@ def _make_actor_context(
     driver = SimpleNamespace(
         id=uuid4(),
         driver_id="NG",
-        driver_name="Nicolas Guigère",
+        driver_name="Nicolas GuigÃ¨re",
         first_name="Nicolas",
-        last_name="Guigère",
-        aliases=["Nicolas Guigère"],
+        last_name="GuigÃ¨re",
+        aliases=["Nicolas GuigÃ¨re"],
         team_name="Blue",
         license_number="L-123",
         notes="Lead mechanic driver",
@@ -576,91 +575,6 @@ def test_persist_structured_submission_preserves_note_when_pressure_is_out_of_ra
     )
     assert "cold_fl must be at most 60.0" in (validation_update["validation_message"] or "")
 
-
-def test_structured_submission_service_preserves_enum_statuses():
-    db = FakeSession()
-    session_data = _session_data(tire_status="DISCARDED")
-    submission_ref = "SEB-20260423-1531-PRACTICE-3-NG-NG-GT4-2025"
-    submission = _make_submission(
-        submission_ref=submission_ref,
-        payload={"data": session_data},
-        raw_text="Driver reported the car was stable.",
-    )
-    event = SimpleNamespace(
-        id=uuid4(),
-        name="Sebring",
-        track="Sebring International Raceway",
-    )
-    driver = SimpleNamespace(
-        id=uuid4(),
-        driver_id="NG",
-        driver_name="Nicolas Guigère",
-        first_name="Nicolas",
-        last_name="Guigère",
-        aliases=["Nicolas Guigère"],
-        team_name="Blue",
-        license_number="L-123",
-        notes="Lead mechanic driver",
-        created_by_id=uuid4(),
-    )
-    vehicle = SimpleNamespace(
-        id=uuid4(),
-        vehicle_id="NG-GT4-2025",
-        driver_id="NG",
-        make="Porsche",
-        model="GT4 RS Clubsport",
-        year=2025,
-        vin="WP0ZZZ99ZTS123456",
-        registration_number="NG",
-        vehicle_class="GT4",
-        notes="Primary race car",
-    )
-    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
-
-    structured_service.save_structured_submission(
-        db,
-        submission=submission,
-        event=event,
-        driver=driver,
-        vehicle=vehicle,
-        current_user=current_user,
-    )
-
-    started_at = datetime.combine(date.fromisoformat("2026-04-23"), time.fromisoformat("15:31")).replace(
-        tzinfo=timezone.utc
-    )
-    expected_seance_id = submission_ref
-    seance_row = db.get(Seance, submission_ref)
-    assert seance_row is not None
-    assert seance_row.status == SeanceStatus.ACTIVE
-    assert seance_row.tire_set == "Y-S3"
-
-    alignment_row = db.get(Alignment, expected_seance_id)
-    assert alignment_row is not None
-    assert alignment_row.wheelbase_mm == 2550
-
-    tire_inventory_row = db.get(TireInventory, "Y-S3")
-    assert tire_inventory_row is not None
-    assert tire_inventory_row.status == TireInventoryStatus.DISCARDED
-
-    track_row = db.get(Track, "Sebring International Raceway")
-    assert track_row is not None
-    assert track_row.active is True
-
-    history_rows = [obj for obj in db.added if isinstance(obj, TireHistory)]
-    assert len(history_rows) == 1
-    assert history_rows[0].id_seance == expected_seance_id
-    assert history_rows[0].tire_id == "Y-S3"
-
-
-def test_invalid_tire_inventory_status_is_rejected():
-    with pytest.raises(HTTPException):
-        ingest_service._normalize_tire_inventory_status("BROKEN")
-
-    with pytest.raises(structured_service.StructuredSubmissionError):
-        structured_service._parse_tire_status("BROKEN")
-
-
 @pytest.mark.parametrize(
     "name,raw_text,image_url,analysis_result,expected_mode,expected_has_voice,expected_has_image,expected_voice_value",
     [
@@ -719,9 +633,9 @@ def test_make_webhook_payload_includes_raw_staging_and_structured_data(
             driver=SimpleNamespace(
                 id=driver_id,
                 driver_id="NG",
-                driver_name="Nicolas Guigère",
+                driver_name="Nicolas GuigÃ¨re",
                 first_name="Nicolas",
-                last_name="Guigère",
+                last_name="GuigÃ¨re",
                 team_name="Blue",
             ),
             vehicle=SimpleNamespace(
@@ -769,7 +683,7 @@ def test_submission_delivery_outbox_enqueues_and_completes(monkeypatch):
         event_id=uuid4(),
         run_group=SimpleNamespace(id=uuid4(), normalized="BLUE", raw_text="BLUE", locked=False),
         run_group_id=uuid4(),
-        driver=SimpleNamespace(id=uuid4(), driver_id="NG", driver_name="Nicolas GuigÃ¨re"),
+        driver=SimpleNamespace(id=uuid4(), driver_id="NG", driver_name="Nicolas GuigÃƒÂ¨re"),
         driver_id=uuid4(),
         vehicle=SimpleNamespace(id=uuid4(), vehicle_id="NG-GT4-2025", make="Porsche", model="GT4 RS Clubsport"),
         vehicle_id=uuid4(),

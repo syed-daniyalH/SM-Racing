@@ -7,6 +7,11 @@ class UserRole(str, Enum):
     ADMIN = "ADMIN"
 
 
+class UserApprovalStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+
+
 class SubmissionStatus(str, Enum):
     PENDING = "PENDING"
     SENT = "SENT"

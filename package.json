@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:frontend": "next dev",
+    "migrate:backend": "cd backend && python -m alembic upgrade head",
+    "dev:backend": "cd backend && python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:full": "node scripts/dev-all.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

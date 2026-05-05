@@ -1,83 +1,53 @@
-# Race Control - Frontend
+# Race Control
 
-🏁 **Race Control Minimal** - Professional motorsport management system frontend.
+Next.js frontend plus the canonical FastAPI backend used by local development,
+CI, and production deployment.
 
-## Theme
+## Source Of Truth
 
-- **Primary**: Black / Dark Gray
-- **Accent**: Racing Orange (#F05323)
-- **Text**: White / Light Gray
-- **Style**: Flat design, large buttons, high contrast, minimal animations
-- **Approach**: Mobile-first, backend-agnostic
+- Frontend app: `C:\Users\Tech\Desktop\Alex Racing\apps\frontend`
+- Backend app: `C:\Users\Tech\Desktop\Alex Racing\apps\frontend\backend`
 
-## Pages
+If you still have a sibling folder at `C:\Users\Tech\Desktop\Alex Racing\apps\backend`,
+treat it as a deprecated local leftover and do not edit or run it.
 
-1. **Login Page** (`/login`) - User authentication (UI only)
-2. **Signup Page** (`/signup`) - Create users (Admin/Owner use only)
-3. **Event List Page** (`/events`) - Select race event
-4. **Run Group Display Page** (`/run-group`) - Show assigned run group (read-only)
-
-## Getting Started
-
-### Install Dependencies
+## Install
 
 ```bash
 npm install
 ```
 
-### Run Development Server
+## Run Frontend Only
 
 ```bash
 npm run dev
 ```
 
-The app will be available at `http://localhost:3000`
+The frontend will be available at `http://localhost:3000`.
 
-### Build for Production
+## Run Backend Only
+
+```bash
+npm run dev:backend
+```
+
+The backend will be available at `http://127.0.0.1:8000`.
+
+## Run Frontend And Backend Together
+
+```bash
+npm run dev:full
+```
+
+## Build
 
 ```bash
 npm run build
-npm start
-```
-
-## Tech Stack
-
-- Next.js 14 (App Router)
-- React 18
-- Pure CSS (no frameworks)
-
-## Project Structure
-
-```
-app/
-  ├── layout.jsx          # Root layout with global styles
-  ├── page.jsx            # Home page (redirects to /login)
-  ├── login/
-  │   ├── page.jsx
-  │   └── Login.css
-  ├── signup/
-  │   ├── page.jsx
-  │   └── Signup.css
-  ├── events/
-  │   ├── page.jsx
-  │   └── EventList.css
-  └── run-group/
-      ├── page.jsx
-      └── RunGroupDisplay.css
+npm run start
 ```
 
 ## Notes
 
-- All pages are UI-only (no backend integration yet)
-- Backend API integration can be added easily later
-- Mobile-first responsive design
-- Clean, minimal motorsport aesthetic
-- Uses Next.js App Router for file-based routing
-- relase 23-01-2026
-
-## Vercel Deployment
-
-- Deploy this app on Vercel as a normal Next.js frontend, not as Vercel Services.
-- Set `NEXT_PUBLIC_API_URL` in Vercel to your Render backend URL, for example `https://sm-racing-api.onrender.com/api/v1`.
-- The `/api/v1` proxy rewrite is enabled only during local development.
-- Keep backend environment variables such as `DATABASE_URL`, `JWT_SECRET_KEY`, `ENVIRONMENT=production`, and CORS settings on Render.
+- Local, CI, and deploy should all use the backend inside this repo.
+- The local `/api/v1` rewrite proxies to `http://127.0.0.1:8000` by default.
+- Vercel should point `NEXT_PUBLIC_API_URL` at the deployed Render API URL.

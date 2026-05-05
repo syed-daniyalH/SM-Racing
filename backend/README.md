@@ -45,25 +45,22 @@ normalization, validation, security, and long-term maintainability in mind.
 
 ## Source Of Truth
 
-In this workspace, the live local backend runtime currently sits in the sibling
-folder `..\backend`, while the Git-tracked backend lives in this repository at
-`backend\`.
+This backend is now the single source of truth for:
 
-Until the project is migrated to a single repository root, treat:
+- local development
+- Git history
+- CI
+- Render deployment
 
-- `C:\Users\Tech\Desktop\Alex Racing\apps\backend` as the local runtime source
-- `C:\Users\Tech\Desktop\Alex Racing\apps\frontend\backend` as the pushable mirror
+Use and edit:
 
-Before committing backend changes from the live runtime folder, sync them into
-this tracked copy with:
+- `C:\Users\Tech\Desktop\Alex Racing\apps\frontend\backend`
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\backend\scripts\sync_runtime_backend.ps1
-```
+If a sibling folder still exists at `C:\Users\Tech\Desktop\Alex Racing\apps\backend`,
+treat it as a deprecated local leftover. Do not edit or run that copy.
 
-The sync is intentionally non-destructive. It copies new and changed files from
-the runtime backend without deleting repo-only files such as tests and
-developer tooling.
+The old sync workflow has been retired on purpose so we do not drift between
+two backend trees again.
 
 ## Project Structure
 

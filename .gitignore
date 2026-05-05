@@ -12,6 +12,7 @@ coverage/
 logs/
 **/logs/
 *.log
+.pytest_cache/
 
 # environment files
 .env
@@ -23,3 +24,7 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# python cache
+__pycache__/
+*.py[cod]

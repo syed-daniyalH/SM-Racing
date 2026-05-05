@@ -1,13 +1,13 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
 from app.core.database import get_db
-from app.core.enums import UserRole
+from app.core.enums import UserApprovalStatus, UserRole
 from app.models.chatbot_conversation import ChatbotConversation
 from app.models.driver import Driver
 from app.models.event import Event
@@ -95,7 +95,14 @@ def list_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
 ) -> list[User]:
-    return list(db.scalars(select(User).order_by(User.created_at.desc())).all())
+    return list(
+        db.scalars(
+            select(User).order_by(
+                (User.approval_status == UserApprovalStatus.PENDING).desc(),
+                User.created_at.desc(),
+            )
+        ).all()
+    )
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -108,6 +115,27 @@ def create_admin_user(
         return create_user(db, user_in, role=user_in.role)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.patch("/{user_id}/approve", response_model=UserRead)
+def approve_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+) -> User:
+    target_user = db.get(User, user_id)
+    if target_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    target_user.approval_status = UserApprovalStatus.APPROVED
+    target_user.is_active = True
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+    return target_user
 
 
 @router.patch("/{user_id}/role", response_model=UserRead)

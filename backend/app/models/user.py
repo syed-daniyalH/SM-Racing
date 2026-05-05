@@ -1,10 +1,11 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, DB_SCHEMA
-from app.core.enums import UserRole
+from app.core.enums import UserApprovalStatus, UserRole
 from app.models.base import TimestampMixin
 
 
@@ -20,7 +21,14 @@ class User(Base, TimestampMixin):
         default=UserRole.MECHANIC,
         nullable=False,
     )
+    approval_status: Mapped[UserApprovalStatus] = mapped_column(
+        Enum(UserApprovalStatus, name="user_approval_status", schema=DB_SCHEMA),
+        default=UserApprovalStatus.APPROVED,
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_logout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active_event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"), nullable=True)
 
     active_event = relationship("Event", foreign_keys=[active_event_id], lazy="joined")

@@ -1,8 +1,9 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import EmailStr, Field
 
-from app.core.enums import UserRole
+from app.core.enums import UserApprovalStatus, UserRole
 from app.schemas.common import ORMModel, TimestampedModel
 
 
@@ -36,7 +37,10 @@ class UserRead(TimestampedModel):
     name: str
     email: EmailStr
     role: UserRole
+    approval_status: UserApprovalStatus
     is_active: bool
+    last_login_at: datetime | None = None
+    last_logout_at: datetime | None = None
     active_event_id: UUID | None = None
 
 
