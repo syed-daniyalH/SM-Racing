@@ -28,6 +28,10 @@ class UserPasswordReset(ORMModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class UserRoleUpdate(ORMModel):
+    role: UserRole
+
+
 class UserRead(TimestampedModel):
     name: str
     email: EmailStr

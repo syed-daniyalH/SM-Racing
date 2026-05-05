@@ -30,6 +30,7 @@ import {
   deleteUser,
   getUsers,
   resetUserPassword,
+  updateUserRole,
 } from "../../utils/authApi";
 import "../fleet/fleetManagement.css";
 import "./UsersManagement.css";
@@ -64,6 +65,12 @@ const SORT_OPTIONS = [
   { value: "latest", label: "Latest" },
   { value: "oldest", label: "Oldest" },
   { value: "name", label: "Name" },
+];
+
+const ROLE_ASSIGNMENT_OPTIONS = [
+  { value: "MECHANIC", label: "Mechanic" },
+  { value: "ADMIN", label: "Admin" },
+  { value: "OWNER", label: "Owner" },
 ];
 
 const normalizeRole = (role) => String(role || "MECHANIC").toUpperCase();
@@ -157,6 +164,20 @@ const getApiErrorMessage = (error, fallback) => {
   return error.detail || error.message || error.error || fallback;
 };
 
+const getAssignableRoleOptions = (role) => {
+  const normalizedRole = normalizeRole(role);
+
+  if (normalizedRole === "OWNER") {
+    return ROLE_ASSIGNMENT_OPTIONS;
+  }
+
+  if (normalizedRole === "ADMIN") {
+    return ROLE_ASSIGNMENT_OPTIONS.filter((option) => option.value !== "OWNER");
+  }
+
+  return ROLE_ASSIGNMENT_OPTIONS.filter((option) => option.value === "MECHANIC");
+};
+
 export default function UsersManagement() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
@@ -177,6 +198,11 @@ export default function UsersManagement() {
   const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM_VALUES);
   const [passwordError, setPasswordError] = useState("");
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [roleTarget, setRoleTarget] = useState(null);
+  const [roleForm, setRoleForm] = useState("MECHANIC");
+  const [roleError, setRoleError] = useState("");
+  const [isUpdatingRole, setIsUpdatingRole] = useState(false);
+  const [rolePendingChange, setRolePendingChange] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [isApprovingUser, setIsApprovingUser] = useState(false);
@@ -266,6 +292,11 @@ export default function UsersManagement() {
     statusFilter !== "all" ||
     roleFilter !== "all" ||
     sortMode !== "latest";
+
+  const roleAssignmentOptions = useMemo(
+    () => getAssignableRoleOptions(currentUser?.role),
+    [currentUser?.role],
+  );
 
   const resetFilters = () => {
     setSearchQuery("");
@@ -361,6 +392,32 @@ export default function UsersManagement() {
     [currentUser],
   );
 
+  const canChangeRole = useCallback(
+    (targetUser) => {
+      const currentRole = normalizeRole(currentUser?.role);
+      const targetRole = normalizeRole(targetUser?.role);
+
+      if (!targetUser?.id || !currentUser?.id) {
+        return false;
+      }
+
+      if (targetUser.id === currentUser.id) {
+        return false;
+      }
+
+      if (currentRole === "OWNER") {
+        return true;
+      }
+
+      if (currentRole === "ADMIN") {
+        return targetRole !== "OWNER";
+      }
+
+      return false;
+    },
+    [currentUser],
+  );
+
   const canDeleteUser = useCallback(
     (targetUser) => {
       const currentRole = normalizeRole(currentUser?.role);
@@ -403,6 +460,26 @@ export default function UsersManagement() {
     return "You do not have access to reset this password";
   };
 
+  const getRoleActionTitle = (targetUser) => {
+    if (!targetUser?.id || !currentUser?.id) {
+      return "User is not available for role changes";
+    }
+
+    if (targetUser.id === currentUser.id) {
+      return "You cannot change your own access role";
+    }
+
+    if (canChangeRole(targetUser)) {
+      return `Change access role for ${targetUser.name}`;
+    }
+
+    if (normalizeRole(targetUser.role) === "OWNER") {
+      return "Only an owner can change an owner account";
+    }
+
+    return "You do not have access to change this role";
+  };
+
   const getDeleteActionTitle = (targetUser) => {
     if (canDeleteUser(targetUser)) {
       return `Delete ${targetUser.name}`;
@@ -425,6 +502,22 @@ export default function UsersManagement() {
     }
 
     return "You do not have access to delete this user";
+  };
+
+  const openRolePanel = (targetUser) => {
+    if (!canChangeRole(targetUser)) return;
+    setRoleTarget(targetUser);
+    setRoleForm(normalizeRole(targetUser.role));
+    setRoleError("");
+    setRolePendingChange(null);
+  };
+
+  const closeRolePanel = () => {
+    if (isUpdatingRole) return;
+    setRoleTarget(null);
+    setRoleForm("MECHANIC");
+    setRoleError("");
+    setRolePendingChange(null);
   };
 
   const openPasswordPanel = (targetUser) => {
@@ -536,6 +629,73 @@ export default function UsersManagement() {
       setPasswordError(getApiErrorMessage(error, "Failed to update password. Please try again."));
     } finally {
       setIsResettingPassword(false);
+    }
+  };
+
+  const handleRoleFormChange = (value) => {
+    setRoleForm(normalizeRole(value));
+
+    if (roleError) {
+      setRoleError("");
+    }
+  };
+
+  const handleRoleUpdate = async (event) => {
+    event.preventDefault();
+
+    if (!roleTarget) return;
+
+    const nextRole = normalizeRole(roleForm);
+    const currentRole = normalizeRole(roleTarget.role);
+
+    if (nextRole === currentRole) {
+      setRoleError("Select a different role before saving.");
+      return;
+    }
+
+    setRoleError("");
+    setRolePendingChange({
+      userId: roleTarget.id,
+      userName: roleTarget.name,
+      currentRole,
+      nextRole,
+    });
+  };
+
+  const closeRoleConfirmation = () => {
+    if (isUpdatingRole) return;
+    setRolePendingChange(null);
+  };
+
+  const confirmRoleUpdate = async () => {
+    if (!rolePendingChange) return;
+
+    const pendingChange = rolePendingChange;
+
+    try {
+      setIsUpdatingRole(true);
+      setRoleError("");
+      setRolePendingChange(null);
+
+      const response = await updateUserRole(pendingChange.userId, pendingChange.nextRole);
+      const updatedUser = response.user;
+
+      setUsers((current) =>
+        current.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user)),
+      );
+      setNotice({
+        tone: "success",
+        title: "Role updated",
+        message: `${updatedUser.name} now has ${formatRoleLabel(updatedUser.role)} access.`,
+      });
+      setRoleTarget(null);
+      setRoleForm("MECHANIC");
+      setRoleError("");
+    } catch (error) {
+      console.error("Failed to update role:", error);
+      setRoleError(getApiErrorMessage(error, "Failed to update role. Please try again."));
+    } finally {
+      setIsUpdatingRole(false);
     }
   };
 
@@ -943,6 +1103,17 @@ export default function UsersManagement() {
 
                         <div className="fleet-table-cell users-action-cell" data-label="Admin Actions">
                           <div className="users-action-group">
+                            <button
+                              type="button"
+                              className="users-role-action"
+                              onClick={() => openRolePanel(user)}
+                              disabled={!canChangeRole(user)}
+                              title={getRoleActionTitle(user)}
+                              aria-label={getRoleActionTitle(user)}
+                            >
+                              <AdminPanelSettingsOutlinedIcon sx={{ fontSize: 18 }} />
+                              Change Role
+                            </button>
                             {isPendingApproval(user) ? (
                               <button
                                 type="button"
@@ -1137,6 +1308,118 @@ export default function UsersManagement() {
               ) : null}
             </form>
           </DrawerShell>
+
+          <DrawerShell
+            open={Boolean(roleTarget)}
+            title="Change Account Role"
+            subtitle={
+              roleTarget
+                ? `Update access for ${roleTarget.name}. Role changes take effect immediately.`
+                : ""
+            }
+            onClose={isUpdatingRole || Boolean(rolePendingChange) ? undefined : closeRolePanel}
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-secondary"
+                  onClick={closeRolePanel}
+                  disabled={isUpdatingRole}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  form="user-role-update-form"
+                  className="fleet-btn fleet-btn-primary"
+                  disabled={
+                    isUpdatingRole ||
+                    Boolean(rolePendingChange) ||
+                    !roleTarget ||
+                    normalizeRole(roleForm) === normalizeRole(roleTarget.role)
+                  }
+                >
+                  <AdminPanelSettingsOutlinedIcon sx={{ fontSize: 18 }} />
+                  {isUpdatingRole ? "Updating..." : "Save Role"}
+                </button>
+              </>
+            }
+          >
+            <form id="user-role-update-form" className="users-role-form" onSubmit={handleRoleUpdate}>
+              <div className="users-role-target-card">
+                <div className="users-role-target-icon" aria-hidden="true">
+                  <AdminPanelSettingsOutlinedIcon fontSize="small" />
+                </div>
+                <div>
+                  <p className="users-role-target-label">Selected Account</p>
+                  <h3>{roleTarget?.name || "User"}</h3>
+                  <p>{roleTarget?.email || "-"}</p>
+                </div>
+                {roleTarget ? (
+                  <StatusBadge
+                    label={formatRoleLabel(roleTarget.role)}
+                    tone={getRoleTone(roleTarget.role)}
+                  />
+                ) : null}
+              </div>
+
+              <div className="fleet-field">
+                <label className="fleet-label" htmlFor="change-user-role">
+                  Account Access Role
+                </label>
+                <select
+                  id="change-user-role"
+                  className="fleet-select"
+                  value={roleForm}
+                  onChange={(event) => handleRoleFormChange(event.target.value)}
+                >
+                  {roleAssignmentOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <p className="users-role-helper">
+                Role changes update the user&apos;s access immediately. Owners can assign owner access,
+                while admins can manage mechanic and admin accounts only.
+              </p>
+
+              {roleError ? (
+                <div className="fleet-notice fleet-notice-danger users-role-error" role="alert">
+                  <div className="fleet-notice-icon" aria-hidden="true">
+                    <ErrorOutlineOutlinedIcon fontSize="inherit" />
+                  </div>
+                  <div className="fleet-notice-copy">
+                    <p className="fleet-notice-title">Role not updated</p>
+                    <p className="fleet-notice-message">{roleError}</p>
+                  </div>
+                </div>
+              ) : null}
+            </form>
+          </DrawerShell>
+
+          <ConfirmDialog
+            open={Boolean(rolePendingChange)}
+            title="Confirm role change"
+            message={
+              rolePendingChange
+                ? `Change ${rolePendingChange.userName}'s access from ${formatRoleLabel(rolePendingChange.currentRole)} to ${formatRoleLabel(rolePendingChange.nextRole)}? The update takes effect immediately.`
+                : ""
+            }
+            confirmLabel="Save Role"
+            cancelLabel="Back"
+            onConfirm={confirmRoleUpdate}
+            onCancel={closeRoleConfirmation}
+            busy={isUpdatingRole}
+            tone="warning"
+            confirmTitle={
+              rolePendingChange
+                ? `Save role change for ${rolePendingChange.userName}`
+                : "Confirm role change"
+            }
+          />
 
           <ConfirmDialog
             open={Boolean(deleteTarget)}

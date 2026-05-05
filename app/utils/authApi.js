@@ -147,6 +147,29 @@ export const approveUser = async (userId) => {
 };
 
 /**
+ * Change a user's access role from the admin area.
+ */
+export const updateUserRole = async (userId, role) => {
+  try {
+    const response = await axiosInstance.patch(`/users/${userId}/role`, {
+      role,
+    });
+
+    return {
+      success: true,
+      user: normalizeUser(response.data),
+    };
+  } catch (error) {
+    console.error("Admin role update API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to update role");
+  }
+};
+
+/**
  * List users for the admin area.
  */
 export const getUsers = async () => {

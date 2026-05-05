@@ -14,7 +14,7 @@ from app.models.run_group import RunGroup
 from app.models.submission import Submission
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserPasswordReset, UserRead
+from app.schemas.auth import UserCreate, UserPasswordReset, UserRead, UserRoleUpdate
 from app.services.auth_service import create_user
 
 
@@ -93,6 +93,46 @@ def create_admin_user(
         return create_user(db, user_in, role=user_in.role)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.patch("/{user_id}/role", response_model=UserRead)
+def update_user_role(
+    user_id: UUID,
+    role_in: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+) -> User:
+    target_user = db.get(User, user_id)
+    if target_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if target_user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot change your own role.",
+        )
+
+    if current_user.role != UserRole.OWNER:
+        if target_user.role == UserRole.OWNER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only an owner can change an owner account.",
+            )
+
+        if role_in.role == UserRole.OWNER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only an owner can assign owner access.",
+            )
+
+    target_user.role = role_in.role
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+    return target_user
 
 
 @router.patch("/{user_id}/password", response_model=UserRead)

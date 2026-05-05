@@ -258,6 +258,112 @@ def _is_greeting_query(value: str) -> bool:
     return normalized in greeting_phrases
 
 
+def _greeting_style_for_query(value: str) -> str:
+    normalized = _normalize_query_text(value)
+    if not normalized:
+        return "short"
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "what are you",
+            "who are you",
+            "what can you do",
+            "what do you do",
+            "how can you help",
+            "show help",
+            "need help",
+            "help",
+        )
+    ):
+        return "intro"
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "thanks",
+            "thank you",
+            "thank you so much",
+            "thank you very much",
+            "thanks a lot",
+            "much appreciated",
+            "appreciate it",
+        )
+    ):
+        return "thanks"
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "good night",
+        )
+    ):
+        return "time_based"
+
+    return "short"
+
+
+def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
+    style = _greeting_style_for_query(query)
+
+    if style == "intro":
+        return (
+            "Hello, and welcome to the SM Racing System. "
+            "I can assist you with session analysis, setup data insights, performance comparisons, "
+            "submission reviews, and driver or vehicle lookups. "
+            "Please let me know how you would like to proceed."
+        ), [
+            "Show latest sessions",
+            "Show latest submissions",
+            "Compare session 1 vs session 2",
+            "Show setup for latest session",
+        ]
+
+    if style == "thanks":
+        return (
+            "You're welcome. I can help with session analysis, setup data insights, performance comparisons, "
+            "submission reviews, and driver or vehicle lookups."
+        ), [
+            "Show latest sessions",
+            "Show setup for latest session",
+            "Show latest submissions",
+            "Compare session 1 vs session 2",
+        ]
+
+    if style == "time_based":
+        if "good morning" in normalized:
+            greeting_open = "Good morning"
+        elif "good afternoon" in normalized:
+            greeting_open = "Good afternoon"
+        elif "good evening" in normalized:
+            greeting_open = "Good evening"
+        elif "good night" in normalized:
+            greeting_open = "Good evening"
+        else:
+            greeting_open = "Hello"
+
+        return (
+            f"{greeting_open}. How can I help with SM Racing data today?"
+        ), [
+            "Show latest sessions",
+            "Show latest submissions",
+            "Show setup for latest session",
+            "Show driver and vehicle data",
+        ]
+
+    return (
+        "Hello. How can I help with SM Racing data today?"
+    ), [
+        "Show latest sessions",
+        "Show setup for latest session",
+        "Show latest submissions",
+        "Compare session 1 vs session 2",
+    ]
+
+
 def _setup_field_definitions() -> tuple[SetupFieldDefinition, ...]:
     definitions: list[SetupFieldDefinition] = []
     corner_labels = {
@@ -1543,13 +1649,8 @@ def _needs_context_response(
     )
 
 
-def _greeting_response() -> ChatbotResponse:
-    message = (
-        "Hello, and welcome to the SM Racing System. "
-        "I can assist you with session analysis, setup data insights, performance comparisons, "
-        "submission reviews, and driver or vehicle lookups. "
-        "Please let me know how you would like to proceed."
-    )
+def _greeting_response(query: str = "") -> ChatbotResponse:
+    message, follow_up = _greeting_message_for_query(query)
     return ChatbotResponse(
         kind="message",
         title="AI Race Assistant",
@@ -1560,13 +1661,12 @@ def _greeting_response() -> ChatbotResponse:
         data_found=True,
         intent="greeting",
         status="success",
-        data={"message": message, "response_type": "greeting"},
-        follow_up=[
-            "Show latest sessions",
-            "Show latest submissions",
-            "Compare session 1 vs session 2",
-            "Show setup for latest session",
-        ],
+        data={
+            "message": message,
+            "response_type": "greeting",
+            "greeting_style": _greeting_style_for_query(query),
+        },
+        follow_up=follow_up,
         generated_at=datetime.utcnow(),
     )
 
@@ -4654,7 +4754,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
     deterministic_intent = _intent_from_query(query, query_in)
     if deterministic_intent == "greeting":
         logger.info("Admin chatbot greeting response selected")
-        return _greeting_response()
+        return _greeting_response(query)
 
     nlp_result = _nlp_intent_from_query(query, deterministic_intent)
     settings = get_settings()
@@ -4746,7 +4846,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
 
     if intent in {"greeting", "help"}:
         logger.info("Admin chatbot greeting/help response selected")
-        return _greeting_response()
+        return _greeting_response(query)
 
     if intent == "unsupported":
         logger.info("Admin chatbot unsupported query: %s", query)
