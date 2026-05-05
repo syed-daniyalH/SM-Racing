@@ -218,6 +218,35 @@ def _with_side_aliases(side: str, terms: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(aliases))
 
 
+def _normalize_query_text(value: str) -> str:
+    text = str(value or "").lower().strip()
+    text = re.sub(r"[^\w\s']", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _is_greeting_query(value: str) -> bool:
+    normalized = _normalize_query_text(value)
+    if not normalized:
+        return False
+
+    greeting_phrases = {
+        "hi",
+        "hello",
+        "hey",
+        "greetings",
+        "help",
+        "hello there",
+        "hi there",
+        "hey there",
+        "what are you",
+        "who are you",
+        "what can you do",
+        "what do you do",
+        "can you help me",
+    }
+    return normalized in greeting_phrases
+
+
 def _setup_field_definitions() -> tuple[SetupFieldDefinition, ...]:
     definitions: list[SetupFieldDefinition] = []
     corner_labels = {
@@ -1505,18 +1534,22 @@ def _needs_context_response(
 
 def _greeting_response() -> ChatbotResponse:
     message = (
-        "I can help with recent sessions, setup data, comparisons, submissions, and driver or vehicle lookups."
+        "Hello, and welcome to the SM Racing System. "
+        "I can assist you with session analysis, setup data insights, performance comparisons, "
+        "submission reviews, and driver or vehicle lookups. "
+        "Please let me know how you would like to proceed."
     )
     return ChatbotResponse(
         kind="message",
         title="AI Race Assistant",
         summary=message,
         answer=message,
-        source_label=SOURCE_LABEL,
-        data_found=False,
+        data_source="SM Racing Assistant",
+        source_label="SM Racing Assistant",
+        data_found=True,
         intent="greeting",
         status="success",
-        data={"message": message},
+        data={"message": message, "response_type": "greeting"},
         follow_up=[
             "Show latest sessions",
             "Show latest submissions",
@@ -4308,13 +4341,12 @@ def _compare_response(
 
 
 def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
-    text = query.lower().strip()
+    text = _normalize_query_text(query)
     has_session_term = _has_session_term(text)
 
-    if text in {"hi", "hello", "hey", "thanks", "thank you", "help"} or any(
+    if _is_greeting_query(text) or any(
         phrase in text
         for phrase in [
-            "what can you do",
             "how can you help",
             "show help",
             "need help",
@@ -4609,6 +4641,10 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
     query = query_in.message.strip()
     logger.info("Admin chatbot raw message received: %s", query)
     deterministic_intent = _intent_from_query(query, query_in)
+    if deterministic_intent == "greeting":
+        logger.info("Admin chatbot greeting response selected")
+        return _greeting_response()
+
     nlp_result = _nlp_intent_from_query(query, deterministic_intent)
     settings = get_settings()
     nlp_accepted = (

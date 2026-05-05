@@ -282,6 +282,12 @@ export const buildResponseMetaItems = ({ response, scope = {}, recordCount }) =>
   const scopeLabel = buildScopeLabel(scope)
   const intentLabel = response?.intent ? humanizeLabel(response.intent) : ""
 
+  if (response?.intent === "greeting") {
+    items.push({ label: "Source", value: dataSource, tone: "accent" })
+    items.push({ label: "Status", value: statusLabel, tone: getResponseStateTone(state) })
+    return items.slice(0, 4)
+  }
+
   items.push({ label: "Data source", value: dataSource, tone: "accent" })
   items.push({ label: "Records", value: String(recordCount ?? getRecordCount(response)), tone: recordCount > 0 ? "success" : "neutral" })
   items.push({ label: "Status", value: statusLabel, tone: getResponseStateTone(state) })
@@ -297,6 +303,10 @@ export const buildResponseMetaItems = ({ response, scope = {}, recordCount }) =>
 
 export const buildResponseInsights = ({ response, scope = {}, recordCount }) => {
   if (response?.kind === "compare") {
+    return []
+  }
+
+  if (response?.intent === "greeting") {
     return []
   }
 
