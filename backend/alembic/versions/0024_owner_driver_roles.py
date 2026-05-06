@@ -20,9 +20,11 @@ depends_on = None
 TARGET_SCHEMA = "sm2racing"
 TABLE_NAME = "users"
 TYPE_NAME = "user_role"
+PUBLIC_USERS_VIEW = "public.users"
 
 
 def upgrade() -> None:
+    op.execute(f"DROP VIEW IF EXISTS {PUBLIC_USERS_VIEW}")
     op.execute(f"ALTER TABLE {TARGET_SCHEMA}.{TABLE_NAME} ALTER COLUMN role DROP DEFAULT")
     op.execute(
         f"""
@@ -50,9 +52,11 @@ def upgrade() -> None:
         ALTER COLUMN role SET DEFAULT 'DRIVER'::{TARGET_SCHEMA}.{TYPE_NAME}
         """
     )
+    op.execute(f"CREATE OR REPLACE VIEW {PUBLIC_USERS_VIEW} AS SELECT * FROM {TARGET_SCHEMA}.{TABLE_NAME}")
 
 
 def downgrade() -> None:
+    op.execute(f"DROP VIEW IF EXISTS {PUBLIC_USERS_VIEW}")
     op.execute(f"ALTER TABLE {TARGET_SCHEMA}.{TABLE_NAME} ALTER COLUMN role DROP DEFAULT")
     op.execute(
         f"""
@@ -79,3 +83,4 @@ def downgrade() -> None:
         ALTER COLUMN role SET DEFAULT 'MECHANIC'::{TARGET_SCHEMA}.{TYPE_NAME}
         """
     )
+    op.execute(f"CREATE OR REPLACE VIEW {PUBLIC_USERS_VIEW} AS SELECT * FROM {TARGET_SCHEMA}.{TABLE_NAME}")
