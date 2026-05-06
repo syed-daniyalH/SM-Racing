@@ -83,10 +83,10 @@ export default function Footer() {
 
   const isAuthPage =
     pathname === "/login" || pathname === "/admin/login" || pathname === "/signup";
-  const isAdminPortal = pathname.startsWith("/admin");
+  const isOwnerPortal = pathname.startsWith("/admin");
   const isSubmissionReportPage = pathname.startsWith("/admin/submissions/report/");
 
-  if (isAuthPage || isAdminPortal || isSubmissionReportPage) {
+  if (isAuthPage || isOwnerPortal || isSubmissionReportPage) {
     return null;
   }
 

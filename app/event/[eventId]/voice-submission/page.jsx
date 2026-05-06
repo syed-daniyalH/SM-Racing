@@ -1237,7 +1237,7 @@ export default function VoiceSubmissionPage() {
                 </div>
                 <h2>Voice session finalized into the standard submission pipeline</h2>
                 <p>
-                  Submission <strong>{submittedSubmission.submissionId || submittedSubmission.submission_ref}</strong> now carries the linked <code>voice_session_id</code> and stays visible in the admin review screens with protected audio playback.
+                  Submission <strong>{submittedSubmission.submissionId || submittedSubmission.submission_ref}</strong> now carries the linked <code>voice_session_id</code> and stays visible in the owner review screens with protected audio playback.
                 </p>
               </div>
               <div className="voice-submission-success-actions">

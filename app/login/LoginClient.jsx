@@ -154,8 +154,8 @@ export default function LoginContent({ mode = "standard" } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
-  const isAdminPortal = mode === "admin";
-  const portalTargetPath = isAdminPortal ? "/login" : "/admin/login";
+  const isOwnerPortal = mode === "admin";
+  const portalTargetPath = isOwnerPortal ? "/login" : "/admin/login";
 
   const backgroundStyle = useMemo(
     () => ({
@@ -182,7 +182,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
       return () => window.clearTimeout(timer);
     }
 
-    if (isAdminPortal && accessStatus === "denied") {
+    if (isOwnerPortal && accessStatus === "denied") {
       setPortalNotice("This portal requires an OWNER account.");
       router.replace("/admin/login", { scroll: false });
       const timer = window.setTimeout(() => {
@@ -193,7 +193,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     }
 
     return undefined;
-  }, [isAdminPortal, searchParams, router]);
+  }, [isOwnerPortal, searchParams, router]);
 
   useEffect(() => {
     if (!user) {
@@ -203,7 +203,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     const currentRole = String(user.role || "").toUpperCase();
     const hasOwnerAccess = currentRole === "OWNER";
 
-    if (isAdminPortal) {
+    if (isOwnerPortal) {
       if (hasOwnerAccess) {
         router.replace("/admin/users");
       }
@@ -211,7 +211,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     }
 
     router.replace(hasOwnerAccess ? "/admin/users" : "/events");
-  }, [isAdminPortal, router, user]);
+  }, [isOwnerPortal, router, user]);
 
   const handlePortalSwitch = () => {
     const destination = user
@@ -251,7 +251,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     }
 
     try {
-      const loginAction = isAdminPortal ? loginOwnerUser : loginUser;
+      const loginAction = isOwnerPortal ? loginOwnerUser : loginUser;
       const response = await loginAction({ email, password });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
@@ -259,7 +259,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
       if (userData) {
         login(userData, token);
         const userRole = userData.role || userData.roleName;
-        const redirectPath = isAdminPortal
+        const redirectPath = isOwnerPortal
           ? "/admin/users"
           : userRole === "OWNER"
             ? "/admin/users"
@@ -322,24 +322,24 @@ export default function LoginContent({ mode = "standard" } = {}) {
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
           <p className="login-hero__subtitle">
-                {isAdminPortal ? "Owner Portal Access" : "Race Operations Platform"}
+                {isOwnerPortal ? "Owner Portal Access" : "Race Operations Platform"}
           </p>
           <div className="login-portal-switch" role="group" aria-label="Switch login portal">
             <button
               type="button"
-              className={`login-portal-switch__button ${!isAdminPortal ? "is-active" : ""}`}
+              className={`login-portal-switch__button ${!isOwnerPortal ? "is-active" : ""}`}
               onClick={handlePortalSwitch}
-              disabled={!isAdminPortal}
-              aria-current={!isAdminPortal ? "page" : undefined}
+              disabled={!isOwnerPortal}
+              aria-current={!isOwnerPortal ? "page" : undefined}
             >
               Driver Login
             </button>
             <button
               type="button"
-              className={`login-portal-switch__button ${isAdminPortal ? "is-active" : ""}`}
+              className={`login-portal-switch__button ${isOwnerPortal ? "is-active" : ""}`}
               onClick={handlePortalSwitch}
-              disabled={isAdminPortal}
-              aria-current={isAdminPortal ? "page" : undefined}
+              disabled={isOwnerPortal}
+              aria-current={isOwnerPortal ? "page" : undefined}
             >
               Owner Login
             </button>
@@ -353,13 +353,13 @@ export default function LoginContent({ mode = "standard" } = {}) {
                 <AlertIcon tone="success" />
                 <h2 className="login-state__title">
                   {successTitle ||
-                    (isAdminPortal
+                    (isOwnerPortal
                       ? "Owner authentication successful"
                       : "Authentication successful")}
                 </h2>
                 <p className="login-state__text">
                   {success ||
-                    (isAdminPortal
+                    (isOwnerPortal
                       ? "Redirecting to the owner dashboard..."
                       : "Redirecting to dashboard...")}
                 </p>
@@ -398,7 +398,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                       name="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder={isAdminPortal ? "owner@smracing.com" : "driver@smracing.com"}
+                      placeholder={isOwnerPortal ? "owner@smracing.com" : "driver@smracing.com"}
                       className="login-input"
                       autoComplete="email"
                       autoCapitalize="none"
@@ -470,7 +470,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
 
         {!success && (
           <section className="login-cta" aria-label="Signup link">
-            {isAdminPortal ? (
+            {isOwnerPortal ? (
               <p className="login-cta__text">
                 {user ? (
                   <>
