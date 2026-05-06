@@ -129,6 +129,7 @@ export default function Footer() {
 
   const currentYear = new Date().getFullYear();
   const showPortalLinkColumns = adminMode;
+  const showPortalSocialRow = adminMode;
 
   return (
     <footer className="footer footer-modern">
@@ -156,28 +157,30 @@ export default function Footer() {
               structured submissions, and audit-ready admin workflows.
             </p>
 
-            <div className="footer-social-row" aria-label="Social links">
-              <SocialLink
-                href={buildMailto("support@sm2racing.local", "SM-2 Support")}
-                label="Email"
-                icon={EmailOutlinedIcon}
-              />
-              <SocialLink
-                href="https://www.linkedin.com/"
-                label="LinkedIn"
-                icon={LinkedInIcon}
-              />
-              <SocialLink
-                href="https://x.com/"
-                label="Twitter"
-                icon={TwitterIcon}
-              />
-              <SocialLink
-                href="https://github.com/"
-                label="GitHub"
-                icon={GitHubIcon}
-              />
-            </div>
+            {showPortalSocialRow ? (
+              <div className="footer-social-row" aria-label="Social links">
+                <SocialLink
+                  href={buildMailto("support@sm2racing.local", "SM-2 Support")}
+                  label="Email"
+                  icon={EmailOutlinedIcon}
+                />
+                <SocialLink
+                  href="https://www.linkedin.com/"
+                  label="LinkedIn"
+                  icon={LinkedInIcon}
+                />
+                <SocialLink
+                  href="https://x.com/"
+                  label="Twitter"
+                  icon={TwitterIcon}
+                />
+                <SocialLink
+                  href="https://github.com/"
+                  label="GitHub"
+                  icon={GitHubIcon}
+                />
+              </div>
+            ) : null}
           </section>
 
           {showPortalLinkColumns ? (
