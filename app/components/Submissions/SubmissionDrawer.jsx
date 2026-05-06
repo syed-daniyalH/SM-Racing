@@ -8,13 +8,18 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "../../context/AuthContext";
 import SubmissionPreview from "./SubmissionPreview";
 import { getSubmissionById } from "../../utils/submissionApi"; // path adjust karo
 import Button from "@mui/material/Button";
 import DownloadIcon from "@mui/icons-material/Download";
+import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import { downloadSubmissionPDF } from "../../utils/pdfUtils";
 
 export default function SubmissionDrawer({ open, onClose, submissionId }) {
+  const router = useRouter();
+  const { user, isAdmin } = useAuth();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -42,6 +47,11 @@ export default function SubmissionDrawer({ open, onClose, submissionId }) {
   const previewId = useMemo(
     () => `submission-preview-${submissionId}`,
     [submissionId],
+  );
+  const currentUserId = String(user?.id || user?._id || user?.userId || "").trim();
+  const canEditSubmission = Boolean(
+    data &&
+      (isAdmin() || (currentUserId && String(data?.userId || data?.created_by_id || "") === currentUserId)),
   );
 
   return (
@@ -78,14 +88,34 @@ export default function SubmissionDrawer({ open, onClose, submissionId }) {
           <SubmissionPreview data={data} previewId={previewId} />
         )}
         {data && (
-          <Button
-            variant="contained"
-            startIcon={<DownloadIcon />}
-            sx={{ mb: 2 }}
-            onClick={() => downloadSubmissionPDF(previewId)}
-          >
-            Download PDF
-          </Button>
+          <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mb: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={<DownloadIcon />}
+              onClick={() => downloadSubmissionPDF(previewId)}
+            >
+              Download PDF
+            </Button>
+            {canEditSubmission ? (
+              <Button
+                variant="outlined"
+                startIcon={<EditRoundedIcon />}
+                onClick={() => {
+                  const eventId = data?.eventId || data?.event_id || data?.event?.id;
+                  if (!eventId) return;
+                  const tab = String(data?.submissionMode || data?.analysis_result?.submission_mode || "")
+                    .trim()
+                    .toLowerCase() === "detail"
+                    ? "detail"
+                    : "quick";
+                  router.push(`/event/${eventId}/notes?submissionId=${data.id || data._id || submissionId}&tab=${tab}`);
+                  onClose?.();
+                }}
+              >
+                Overwrite
+              </Button>
+            ) : null}
+          </Box>
         )}
       </Box>
     </Drawer>

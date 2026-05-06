@@ -201,6 +201,44 @@ def _load_submission(db: Session, submission_id: UUID) -> Submission | None:
     return db.scalar(stmt)
 
 
+def _validate_submission_update_relations(
+    db: Session,
+    submission_in: SubmissionUpdate,
+) -> tuple[Driver | None, Vehicle | None]:
+    driver_code = normalize_optional_text(submission_in.driver_id)
+    vehicle_code = normalize_optional_text(submission_in.vehicle_id)
+
+    if bool(driver_code) ^ bool(vehicle_code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Driver and vehicle must be updated together",
+        )
+
+    driver = None
+    vehicle = None
+
+    if driver_code and vehicle_code:
+        driver = db.scalar(select(Driver).where(Driver.driver_id == driver_code))
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        if not driver.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Driver is archived")
+
+        vehicle = db.scalar(select(Vehicle).where(Vehicle.vehicle_id == vehicle_code))
+        if not vehicle:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+        if not vehicle.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vehicle is archived")
+
+        if vehicle.driver_id != driver.driver_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vehicle does not belong to the selected driver",
+            )
+
+    return driver, vehicle
+
+
 def _validate_submission_relations(
     db: Session,
     submission_in: SubmissionCreate,
@@ -1194,23 +1232,159 @@ def retry_submission(
 def update_submission(
     submission_id: UUID,
     submission_in: SubmissionUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(get_current_user),
 ) -> Submission:
     submission = _load_submission(db, submission_id)
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
-    data = submission_in.model_dump(exclude_unset=True)
-    for key, value in data.items():
+    if current_user.role not in (UserRole.OWNER, UserRole.ADMIN) and submission.created_by_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    update_data = submission_in.model_dump(exclude_unset=True)
+    driver = submission.driver
+    vehicle = submission.vehicle
+    driver_code = normalize_optional_text(submission_in.driver_id)
+    vehicle_code = normalize_optional_text(submission_in.vehicle_id)
+    if driver_code or vehicle_code:
+        driver, vehicle = _validate_submission_update_relations(db, submission_in)
+        if driver is not None:
+            update_data["driver_id"] = driver.id
+        if vehicle is not None:
+            update_data["vehicle_id"] = vehicle.id
+    else:
+        update_data.pop("driver_id", None)
+        update_data.pop("vehicle_id", None)
+
+    previous_state = {
+        "driver_id": str(submission.driver_id) if submission.driver_id else None,
+        "vehicle_id": str(submission.vehicle_id) if submission.vehicle_id else None,
+        "raw_text": submission.raw_text,
+        "image_url": submission.image_url,
+        "payload": submission.payload,
+        "analysis_result": submission.analysis_result,
+        "status": submission.status.value if hasattr(submission.status, "value") else submission.status,
+        "error_message": submission.error_message,
+    }
+
+    for key, value in update_data.items():
         setattr(submission, key, value)
 
-    db.commit()
+    submission_input_id = None
+    try:
+        session_payload = get_session_payload(submission.payload)
+        if session_payload:
+            try:
+                structured_result = persist_structured_submission(
+                    db,
+                    submission=submission,
+                    event=submission.event,
+                    run_group=submission.run_group,
+                    driver=driver or submission.driver,
+                    vehicle=vehicle or submission.vehicle,
+                    current_user=current_user,
+                )
+                submission_input_id = structured_result.submission_input_id
+                submission.structured_ingest_status = structured_result.status
+                submission.structured_ingest_warnings = structured_result.warnings
+            except Exception:
+                submission.structured_ingest_status = "skipped"
+                submission.structured_ingest_warnings = [
+                    {
+                        "section": "structured_ingest",
+                        "code": "STRUCTURED_INGEST_FAILED",
+                        "message": "Structured normalization failed unexpectedly while overwriting the submission.",
+                    }
+                ]
+                logger.exception(
+                    "Structured submission overwrite failed; continuing with canonical update only (%s)",
+                    _submission_log_summary(
+                        submission_ref=submission.submission_ref,
+                        correlation_id=submission.correlation_id,
+                        event_id=submission.event_id,
+                        run_group_id=submission.run_group_id,
+                        driver_id=getattr(submission.driver, "driver_id", None),
+                        vehicle_id=getattr(submission.vehicle, "vehicle_id", None),
+                        current_user_id=current_user.id,
+                        payload=submission.payload,
+                    ),
+                )
+        else:
+            submission.structured_ingest_status = "skipped"
+            submission.structured_ingest_warnings = []
+
+        db.add(submission)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if not _is_integrity_duplicate_error(exc):
+            logger.exception("Unexpected submission integrity error while overwriting")
+            raise _submission_error(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "SUBMISSION_SAVE_FAILED",
+                "Failed to save submission",
+            ) from exc
+
+        raise _submission_error(
+            status.HTTP_409_CONFLICT,
+            "SUBMISSION_DUPLICATE",
+            "Submission already exists or conflicts with an existing session",
+        ) from exc
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Unexpected submission overwrite failure")
+        raise _submission_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "SUBMISSION_SAVE_FAILED",
+            "Failed to save submission",
+        ) from exc
+
     db.refresh(submission)
     loaded_submission = _load_submission(db, submission_id)
     if loaded_submission is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load submission")
-    return loaded_submission
+
+    finalized_submission = _finalize_delivery(
+        db,
+        loaded_submission,
+        submission_input_id=submission_input_id,
+        background_tasks=background_tasks,
+    )
+
+    _write_audit_log(
+        db,
+        action="submission.overwrite",
+        status="SUCCESS",
+        message=f"Overwrote submission {submission.submission_ref}",
+        payload={
+            "submission_id": str(submission.id),
+            "submission_ref": submission.submission_ref,
+            "correlation_id": submission.correlation_id,
+            "actor_user_id": str(current_user.id),
+            "actor_role": current_user.role.value,
+            "before": previous_state,
+            "after": {
+                "driver_id": str(finalized_submission.driver_id) if finalized_submission.driver_id else None,
+                "vehicle_id": str(finalized_submission.vehicle_id) if finalized_submission.vehicle_id else None,
+                "raw_text": finalized_submission.raw_text,
+                "image_url": finalized_submission.image_url,
+                "payload": finalized_submission.payload,
+                "analysis_result": finalized_submission.analysis_result,
+                "status": finalized_submission.status.value if hasattr(finalized_submission.status, "value") else finalized_submission.status,
+                "error_message": finalized_submission.error_message,
+            },
+            "submission_input_id": submission_input_id,
+        },
+        user=current_user.name or current_user.email or str(current_user.id),
+    )
+    db.commit()
+
+    return finalized_submission
 
 
 @router.delete("/{submission_id}", status_code=status.HTTP_204_NO_CONTENT)

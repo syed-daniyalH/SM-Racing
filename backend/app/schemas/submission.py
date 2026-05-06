@@ -40,6 +40,10 @@ class RawSubmissionCreate(ORMModel):
 
 
 class SubmissionUpdate(ORMModel):
+    driver_id: str | None = Field(default=None, max_length=32)
+    vehicle_id: str | None = Field(default=None, max_length=64)
+    raw_text: str | None = None
+    image_url: str | None = None
     payload: dict[str, Any] | None = None
     analysis_result: dict[str, Any] | None = None
     status: SubmissionStatus | None = None

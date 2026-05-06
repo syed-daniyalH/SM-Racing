@@ -164,6 +164,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
   const isAdminPortal = mode === "admin";
+  const portalTargetPath = isAdminPortal ? "/login" : "/admin/login";
 
   const backgroundStyle = useMemo(
     () => ({
@@ -220,6 +221,14 @@ export default function LoginContent({ mode = "standard" } = {}) {
 
     router.replace(hasAdminAccess ? "/admin/users" : "/events");
   }, [isAdminPortal, router, user]);
+
+  const handlePortalSwitch = () => {
+    const destination = user
+      ? `/admin/signout?next=${encodeURIComponent(portalTargetPath)}`
+      : portalTargetPath;
+
+    router.push(destination);
+  };
 
   const emailError = useMemo(() => {
     if (!error) return "";
@@ -324,6 +333,26 @@ export default function LoginContent({ mode = "standard" } = {}) {
           <p className="login-hero__subtitle">
             {isAdminPortal ? "Admin Portal Access" : "Race Weekend Operations Platform"}
           </p>
+          <div className="login-portal-switch" role="group" aria-label="Switch login portal">
+            <button
+              type="button"
+              className={`login-portal-switch__button ${!isAdminPortal ? "is-active" : ""}`}
+              onClick={handlePortalSwitch}
+              disabled={!isAdminPortal}
+              aria-current={!isAdminPortal ? "page" : undefined}
+            >
+              Driver Login
+            </button>
+            <button
+              type="button"
+              className={`login-portal-switch__button ${isAdminPortal ? "is-active" : ""}`}
+              onClick={handlePortalSwitch}
+              disabled={isAdminPortal}
+              aria-current={isAdminPortal ? "page" : undefined}
+            >
+              Admin Login
+            </button>
+          </div>
         </section>
 
         <section className="login-card" aria-label="Login form">
@@ -452,17 +481,17 @@ export default function LoginContent({ mode = "standard" } = {}) {
           <section className="login-cta" aria-label="Signup link">
             {isAdminPortal ? (
               <p className="login-cta__text">
-                {user ? (
-                  <>
-                    Signed in as <strong>{user.name || user.email}</strong>.{" "}
-                    <button
-                      type="button"
-                      className="login-cta__link"
-                      onClick={() => router.push("/admin/signout?next=/admin/login")}
-                    >
-                      Switch account
-                    </button>
-                  </>
+              {user ? (
+                <>
+                  Signed in as <strong>{user.name || user.email}</strong>.{" "}
+                  <button
+                    type="button"
+                    className="login-cta__link"
+                    onClick={() => router.push("/admin/signout?next=/login")}
+                  >
+                    Switch account
+                  </button>
+                </>
                 ) : (
                   "Owners and admins can sign in here to reach the portal."
                 )}

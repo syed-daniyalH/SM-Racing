@@ -650,4 +650,108 @@ test.describe("submission flow", () => {
       expect(body.analysis_result.submission_mode).toBe("quick");
     }
   });
+
+  test("existing submissions can be reopened and overwritten from the notes screen", async ({
+    page,
+  }) => {
+    await mockSubmissionApp(page);
+
+    const existingSubmission = {
+      id: "submission-1",
+      submission_ref: "SUB-1",
+      correlation_id: "corr-1",
+      event_id: EVENT_ID,
+      run_group_id: "run-group-1",
+      created_by_id: "user-1",
+      raw_text: "Initial short note",
+      image_url: null,
+      payload: {
+        data: {
+          ...makeSessionData(),
+          session_id: "20260423-1531-NG-S3",
+        },
+      },
+      analysis_result: {
+        submission_mode: "detail",
+        has_structured_data: true,
+        confidence: 0.91,
+      },
+      status: "SENT",
+      structured_ingest_status: "saved",
+      structured_ingest_warnings: [],
+      event: {
+        id: EVENT_ID,
+        name: "Sebring",
+        track: TRACK_NAME,
+        start_date: "2026-04-20T00:00:00.000Z",
+        end_date: "2026-05-01T00:00:00.000Z",
+        is_active: true,
+      },
+      run_group: {
+        id: "run-group-1",
+        event_id: EVENT_ID,
+        normalized: "BLUE",
+        raw_text: "BLUE",
+      },
+      driver: {
+        id: "driver-1",
+        driver_id: "NG",
+        first_name: "Nicolas",
+        last_name: "GuigÃ¨re",
+        driver_name: "Nicolas GuigÃ¨re",
+        team_name: "Blue",
+        is_active: true,
+      },
+      vehicle: {
+        id: "vehicle-1",
+        vehicle_id: "NG-GT4-2025",
+        driver_id: "NG",
+        make: "Porsche",
+        model: "GT4 RS Clubsport",
+        year: 2025,
+        is_active: true,
+      },
+    };
+    const overwriteRequests = [];
+
+    await page.route("**/api/v1/submissions/submission-1", async (route) => {
+      const request = route.request();
+      if (request.method() === "GET") {
+        return route.fulfill({ json: { submission: existingSubmission } });
+      }
+
+      if (request.method() === "PUT") {
+        const body = request.postDataJSON();
+        overwriteRequests.push(body);
+        return route.fulfill({
+          json: {
+            submission: {
+              ...existingSubmission,
+              raw_text: body.raw_text,
+              image_url: body.image_url,
+              payload: body.payload,
+              analysis_result: body.analysis_result,
+              updated_at: new Date().toISOString(),
+            },
+          },
+        });
+      }
+
+      return route.fulfill({ status: 200, json: {} });
+    });
+
+    await page.goto(`/event/${EVENT_ID}/notes?submissionId=submission-1&tab=detail`);
+    await expect(page.getByText("Overwrite mode enabled.")).toBeVisible();
+    await expect(page.getByTestId("detail-raw-notes")).toHaveValue("Initial short note");
+
+    await page.getByTestId("detail-raw-notes").fill("Updated short note");
+    await page.getByRole("button", { name: "Overwrite Notes" }).click();
+
+    await expect(
+      page.getByText("Notes overwritten successfully! Redirecting..."),
+    ).toBeVisible();
+    expect(overwriteRequests).toHaveLength(1);
+    expect(overwriteRequests[0].raw_text).toBe("Updated short note");
+    expect(overwriteRequests[0].payload.session_id).toBe("20260423-1531-NG-S3");
+  });
 });

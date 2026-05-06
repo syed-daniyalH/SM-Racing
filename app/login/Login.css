@@ -223,6 +223,65 @@
   color: var(--login-text-muted);
 }
 
+.login-portal-switch {
+  width: min(100%, 448px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(72, 82, 102, 0.55);
+  background: rgba(9, 13, 19, 0.72);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.login-portal-switch__button {
+  min-height: 2.85rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--login-text-muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.login-portal-switch__button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  color: #ffffff;
+  background: rgba(255, 107, 53, 0.12);
+  border-color: rgba(255, 107, 53, 0.22);
+  box-shadow: 0 10px 18px rgba(255, 107, 53, 0.08);
+}
+
+.login-portal-switch__button.is-active,
+.login-portal-switch__button:disabled {
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.96), rgba(255, 138, 61, 0.96));
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 22px rgba(255, 107, 53, 0.22);
+  opacity: 1;
+  cursor: default;
+}
+
+.login-portal-switch__button:disabled {
+  pointer-events: none;
+}
+
+.login-portal-switch__button:focus-visible {
+  outline: 2px solid rgba(255, 138, 79, 0.9);
+  outline-offset: 2px;
+}
+
 .login-card {
   position: relative;
   width: min(100%, 448px);
@@ -694,6 +753,10 @@
     font-size: 0.9rem;
   }
 
+  .login-portal-switch {
+    width: min(100%, 420px);
+  }
+
   .login-card__inner {
     padding: 1.55rem 1.15rem 1.25rem;
   }
@@ -710,6 +773,17 @@
 
   .login-card {
     border-radius: 1.15rem;
+  }
+
+  .login-portal-switch {
+    gap: 0.42rem;
+    padding: 0.38rem;
+  }
+
+  .login-portal-switch__button {
+    min-height: 2.55rem;
+    font-size: 0.74rem;
+    letter-spacing: 0.09em;
   }
 
   .login-input {
@@ -743,7 +817,8 @@
   .login-input,
   .login-button,
   .login-cta__link,
-  .login-input__icon {
+  .login-input__icon,
+  .login-portal-switch__button {
     transition: none;
   }
 }

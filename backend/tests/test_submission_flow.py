@@ -6,14 +6,16 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
+from app.api.v1.endpoints import submissions as submissions_endpoints
 from app.core.enums import SubmissionStatus, TireInventoryStatus
 from app.models.structured_notes import TireInventory
 from app.services import submission_delivery_service as delivery_service
 from app.services import make_webhook_service as make_service
 from app.services import submission_ingest_service as ingest_service
 from app.services import submission_payload_service as payload_service
+from app.schemas.submission import SubmissionUpdate
 
 
 def _dt(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
@@ -201,9 +203,13 @@ class FakeSession:
         self.executed: list[tuple[str, dict]] = []
         self.storage: dict[tuple[type, object], object] = {}
         self.added: list[object] = []
+        self.commits = 0
 
     def _identity_key(self, obj):
-        mapper = obj.__class__.__mapper__
+        mapper = getattr(obj.__class__, "__mapper__", None)
+        if mapper is None:
+            return (obj.__class__, getattr(obj, "id", id(obj)))
+
         pk_values = tuple(getattr(obj, column.key) for column in mapper.primary_key)
         return (obj.__class__, pk_values[0] if len(pk_values) == 1 else pk_values)
 
@@ -257,14 +263,14 @@ class FakeSession:
         return None
 
     def commit(self):
-        return None
-
-    def rollback(self):
+        self.commits += 1
         return None
 
     def refresh(self, obj):
-        return None
+        self.storage[self._identity_key(obj)] = obj
 
+    def rollback(self):
+        return None
 
 class _DeliveryResult:
     def __init__(self, *, scalar_value=None, row=None):
@@ -757,3 +763,101 @@ def test_quick_hybrid_notes_still_persist_structured_data():
     assert analysis["source_type"] == "quick_hybrid"
     assert analysis["has_structured_data"] is True
     assert payload_service.should_persist_structured_submission(analysis) is True
+
+
+def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        name="Mechanic One",
+        email="mechanic@example.com",
+        role=SimpleNamespace(value="MECHANIC"),
+    )
+    submission = SimpleNamespace(
+        id=uuid4(),
+        submission_ref="SUB-123",
+        correlation_id="corr-123",
+        created_by_id=current_user.id,
+        driver_id=None,
+        vehicle_id=None,
+        raw_text="original note",
+        image_url=None,
+        payload={"data": {"session_id": "SEB-1", "track": "Sebring International Raceway"}},
+        analysis_result={"submission_mode": "quick", "has_structured_data": False},
+        status=SubmissionStatus.SENT,
+        error_message=None,
+        structured_ingest_status="skipped",
+        structured_ingest_warnings=[],
+        event=SimpleNamespace(id=uuid4()),
+        run_group=SimpleNamespace(id=uuid4()),
+        driver=None,
+        vehicle=None,
+    )
+    session = FakeSession()
+
+    monkeypatch.setattr(submissions_endpoints, "_load_submission", lambda _db, _submission_id: submission)
+    monkeypatch.setattr(submissions_endpoints, "_finalize_delivery", lambda _db, loaded_submission, **_kwargs: loaded_submission)
+    monkeypatch.setattr(submissions_endpoints, "_write_audit_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(submissions_endpoints, "should_persist_structured_submission", lambda *_args, **_kwargs: False)
+
+    result = submissions_endpoints.update_submission(
+        submission.id,
+        SubmissionUpdate(
+            raw_text="updated short note",
+            image_url="data:image/png;base64,AAAA",
+            payload={"session_id": "SEB-1", "track": "Sebring International Raceway"},
+            analysis_result={"submission_mode": "quick", "has_structured_data": False},
+        ),
+        BackgroundTasks(),
+        session,
+        current_user,
+    )
+
+    assert result.raw_text == "updated short note"
+    assert result.image_url == "data:image/png;base64,AAAA"
+    assert result.payload["session_id"] == "SEB-1"
+    assert submission.raw_text == "updated short note"
+    assert session.commits == 2
+
+
+def test_submission_update_blocks_non_creator_non_admin(monkeypatch):
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        name="Mechanic Two",
+        email="mechanic2@example.com",
+        role=SimpleNamespace(value="MECHANIC"),
+    )
+    submission = SimpleNamespace(
+        id=uuid4(),
+        submission_ref="SUB-456",
+        correlation_id="corr-456",
+        created_by_id=uuid4(),
+        driver_id=None,
+        vehicle_id=None,
+        raw_text="original note",
+        image_url=None,
+        payload={"data": {"session_id": "SEB-2"}},
+        analysis_result={"submission_mode": "quick", "has_structured_data": False},
+        status=SubmissionStatus.SENT,
+        error_message=None,
+        structured_ingest_status="skipped",
+        structured_ingest_warnings=[],
+        event=SimpleNamespace(id=uuid4()),
+        run_group=SimpleNamespace(id=uuid4()),
+        driver=None,
+        vehicle=None,
+    )
+    session = FakeSession()
+
+    monkeypatch.setattr(submissions_endpoints, "_load_submission", lambda _db, _submission_id: submission)
+
+    with pytest.raises(HTTPException) as exc_info:
+        submissions_endpoints.update_submission(
+            submission.id,
+            SubmissionUpdate(raw_text="should not save"),
+            BackgroundTasks(),
+            session,
+            current_user,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert session.commits == 0

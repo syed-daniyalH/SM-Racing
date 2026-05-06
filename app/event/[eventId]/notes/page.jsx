@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext";
 import ProtectedRoute from "../../../components/ProtectedRoute";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
 import { generateUUID } from "../../../utils/uuid";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
-import { createSubmission, shouldUseRawSubmissionRoute } from "../../../utils/submissionApi";
+import {
+  createSubmission,
+  getSubmissionById,
+  shouldUseRawSubmissionRoute,
+  updateSubmission,
+} from "../../../utils/submissionApi";
 import { getTrackCatalog } from "../../../utils/trackCatalogApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
@@ -248,7 +253,7 @@ const getSubmissionFailureMessage = (errorLike) => {
   return message || "Failed to submit notes. Please try again.";
 };
 
-const getSubmissionSuccessState = (submission) => {
+const getSubmissionSuccessState = (submission, { overwrite = false } = {}) => {
   if (submission?.rawSubmissionMessage) {
     return {
       status: "sent",
@@ -265,8 +270,9 @@ const getSubmissionSuccessState = (submission) => {
   if (structuredStatus === "saved_with_warnings" && structuredWarnings.length) {
     return {
       status: "sent_with_warnings",
-      message:
-        "Note saved. Some structured fields could not be normalized, so review the warnings below.",
+      message: overwrite
+        ? "Note overwritten. Some structured fields could not be normalized, so review the warnings below."
+        : "Note saved. Some structured fields could not be normalized, so review the warnings below.",
       warnings: structuredWarnings,
     };
   }
@@ -274,15 +280,18 @@ const getSubmissionSuccessState = (submission) => {
   if (structuredStatus === "skipped" && structuredWarnings.length) {
     return {
       status: "sent_with_warnings",
-      message:
-        "Note saved, but structured normalization was skipped for some fields. Review the warnings below.",
+      message: overwrite
+        ? "Note overwritten, but structured normalization was skipped for some fields. Review the warnings below."
+        : "Note saved, but structured normalization was skipped for some fields. Review the warnings below.",
       warnings: structuredWarnings,
     };
   }
 
   return {
     status: "sent",
-    message: "Notes submitted successfully! Redirecting...",
+    message: overwrite
+      ? "Notes overwritten successfully! Redirecting..."
+      : "Notes submitted successfully! Redirecting...",
     warnings: [],
   };
 };
@@ -365,6 +374,126 @@ const createDetailFormState = () => ({
   },
 });
 
+const toInputValue = (value) => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+};
+
+const buildPressureFormState = (pressures = {}) => ({
+  unit: String(pressures?.unit || "psi"),
+  cold: {
+    fl: toInputValue(pressures?.cold?.fl),
+    fr: toInputValue(pressures?.cold?.fr),
+    rl: toInputValue(pressures?.cold?.rl),
+    rr: toInputValue(pressures?.cold?.rr),
+  },
+  hot: {
+    fl: toInputValue(pressures?.hot?.fl),
+    fr: toInputValue(pressures?.hot?.fr),
+    rl: toInputValue(pressures?.hot?.rl),
+    rr: toInputValue(pressures?.hot?.rr),
+  },
+});
+
+const buildBaseFormStateFromSession = (sessionData = {}) => ({
+  ...createBaseFormState(),
+  date: toInputValue(sessionData?.date),
+  time: toInputValue(sessionData?.time),
+  session_id: toInputValue(sessionData?.session_id),
+  track: toInputValue(sessionData?.track),
+  driver_id: toInputValue(sessionData?.driver_id),
+  vehicle_id: toInputValue(sessionData?.vehicle_id),
+  session_type: toInputValue(sessionData?.session_type) || "Practice",
+  session_number: toInputValue(sessionData?.session_number) || 1,
+  duration_min: toInputValue(sessionData?.duration_min) || 30,
+  tire_set: toInputValue(sessionData?.tire_set),
+  wheelbase_mm: toInputValue(sessionData?.wheelbase_mm),
+  pressures: buildPressureFormState(sessionData?.pressures),
+});
+
+const buildDetailFormStateFromSession = (sessionData = {}) => ({
+  ...createDetailFormState(),
+  ...buildBaseFormStateFromSession(sessionData),
+  suspension: {
+    rebound_fl: toInputValue(sessionData?.suspension?.rebound_fl),
+    rebound_fr: toInputValue(sessionData?.suspension?.rebound_fr),
+    rebound_rl: toInputValue(sessionData?.suspension?.rebound_rl),
+    rebound_rr: toInputValue(sessionData?.suspension?.rebound_rr),
+    bump_fl: toInputValue(sessionData?.suspension?.bump_fl),
+    bump_fr: toInputValue(sessionData?.suspension?.bump_fr),
+    bump_rl: toInputValue(sessionData?.suspension?.bump_rl),
+    bump_rr: toInputValue(sessionData?.suspension?.bump_rr),
+    sway_bar_f: toInputValue(sessionData?.suspension?.sway_bar_f),
+    sway_bar_r: toInputValue(sessionData?.suspension?.sway_bar_r),
+    wing_angle_deg: toInputValue(sessionData?.suspension?.wing_angle_deg),
+  },
+  alignment: {
+    camber_fl: toInputValue(sessionData?.alignment?.camber_fl),
+    camber_fr: toInputValue(sessionData?.alignment?.camber_fr),
+    camber_rl: toInputValue(sessionData?.alignment?.camber_rl),
+    camber_rr: toInputValue(sessionData?.alignment?.camber_rr),
+    toe_front: toInputValue(sessionData?.alignment?.toe_front),
+    toe_rear: toInputValue(sessionData?.alignment?.toe_rear),
+    caster_l: toInputValue(sessionData?.alignment?.caster_l),
+    caster_r: toInputValue(sessionData?.alignment?.caster_r),
+    ride_height_f: toInputValue(sessionData?.alignment?.ride_height_f),
+    ride_height_r: toInputValue(sessionData?.alignment?.ride_height_r),
+    corner_weight_fl: toInputValue(sessionData?.alignment?.corner_weight_fl),
+    corner_weight_fr: toInputValue(sessionData?.alignment?.corner_weight_fr),
+    corner_weight_rl: toInputValue(sessionData?.alignment?.corner_weight_rl),
+    corner_weight_rr: toInputValue(sessionData?.alignment?.corner_weight_rr),
+    cross_weight_pct: toInputValue(sessionData?.alignment?.cross_weight_pct),
+    rake_mm: toInputValue(sessionData?.alignment?.rake_mm),
+  },
+  tire_temperatures: {
+    fl_in: toInputValue(sessionData?.tire_temperatures?.fl_in),
+    fl_mid: toInputValue(sessionData?.tire_temperatures?.fl_mid),
+    fl_out: toInputValue(sessionData?.tire_temperatures?.fl_out),
+    fr_in: toInputValue(sessionData?.tire_temperatures?.fr_in),
+    fr_mid: toInputValue(sessionData?.tire_temperatures?.fr_mid),
+    fr_out: toInputValue(sessionData?.tire_temperatures?.fr_out),
+    rl_in: toInputValue(sessionData?.tire_temperatures?.rl_in),
+    rl_mid: toInputValue(sessionData?.tire_temperatures?.rl_mid),
+    rl_out: toInputValue(sessionData?.tire_temperatures?.rl_out),
+    rr_in: toInputValue(sessionData?.tire_temperatures?.rr_in),
+    rr_mid: toInputValue(sessionData?.tire_temperatures?.rr_mid),
+    rr_out: toInputValue(sessionData?.tire_temperatures?.rr_out),
+  },
+  tire_inventory: {
+    tire_id: toInputValue(sessionData?.tire_inventory?.tire_id),
+    manufacturer: toInputValue(sessionData?.tire_inventory?.manufacturer),
+    model: toInputValue(sessionData?.tire_inventory?.model),
+    size: toInputValue(sessionData?.tire_inventory?.size),
+    purchase_date: toInputValue(sessionData?.tire_inventory?.purchase_date),
+    heat_cycles: toInputValue(sessionData?.tire_inventory?.heat_cycles),
+    track_time_min: toInputValue(sessionData?.tire_inventory?.track_time_min),
+    status: toInputValue(sessionData?.tire_inventory?.status) || "ACTIVE",
+  },
+});
+
+const getSubmissionMode = (submission) =>
+  String(
+    submission?.submissionMode ||
+      submission?.analysis_result?.submission_mode ||
+      submission?.analysisResult?.submissionMode ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+
+const getSubmissionEditText = (submission) =>
+  submission?.raw_text ||
+  submission?.rawText ||
+  submission?.payload?.notes ||
+  submission?.data?.notes ||
+  submission?.analysis_result?.summary ||
+  submission?.analysis_result?.message ||
+  submission?.analysisResult?.summary ||
+  "";
+
 const buildDriverOption = (driver) => ({
   id: String(driver.driverCode || driver.id || "").trim(),
   label:
@@ -391,8 +520,11 @@ const buildVehicleOption = (vehicle) => ({
 export default function NotesSubmission() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const eventId = params.eventId;
   const { user, isMechanic } = useAuth();
+  const submissionIdParam = String(searchParams?.get("submissionId") || "").trim();
+  const submissionTabParam = String(searchParams?.get("tab") || "").trim().toLowerCase();
   const [event, setEvent] = useState(null);
   const [activeTab, setActiveTab] = useState("quick"); // 'quick' | 'detail'
   const [eventRunGroup, setEventRunGroup] = useState("");
@@ -410,13 +542,20 @@ export default function NotesSubmission() {
   const [detailAction, setDetailAction] = useState("ADD_SEANCE");
   const [quickConfidence, setQuickConfidence] = useState(0.85);
   const [detailConfidence, setDetailConfidence] = useState(0.85);
+  const [quickDraftStatus, setQuickDraftStatus] = useState("idle");
+  const [quickDraftReady, setQuickDraftReady] = useState(false);
   const [detailDraftStatus, setDetailDraftStatus] = useState("idle");
   const [detailDraftReady, setDetailDraftReady] = useState(false);
   const [quickImage, setQuickImage] = useState(null);
   const [detailImage, setDetailImage] = useState(null);
   const quickRawTextRef = useRef(null);
+  const quickDraftHydratedRef = useRef(false);
+  const quickDraftSaveTimeoutRef = useRef(null);
   const detailDraftHydratedRef = useRef(false);
   const detailDraftSaveTimeoutRef = useRef(null);
+  const [editingSubmission, setEditingSubmission] = useState(null);
+  const [editingSubmissionLoading, setEditingSubmissionLoading] = useState(false);
+  const [editingSubmissionError, setEditingSubmissionError] = useState("");
 
   const [quickForm, setQuickForm] = useState(() => createBaseFormState());
 
@@ -491,13 +630,24 @@ export default function NotesSubmission() {
 
     return resolveUserKey(user) || "anonymous";
   }, [user]);
+  const draftScopeKey = useMemo(
+    () => (submissionIdParam ? `edit:${submissionIdParam}` : "new"),
+    [submissionIdParam],
+  );
+  const quickDraftStorageKey = useMemo(() => {
+    if (!eventId || !currentUserStorageKey) {
+      return null;
+    }
+
+    return `sm2:submission-draft:quick:${eventId}:${currentUserStorageKey}:${draftScopeKey}`;
+  }, [currentUserStorageKey, draftScopeKey, eventId]);
   const detailDraftStorageKey = useMemo(() => {
     if (!eventId || !currentUserStorageKey) {
       return null;
     }
 
-    return `sm2:submission-draft:${eventId}:${currentUserStorageKey}`;
-  }, [currentUserStorageKey, eventId]);
+    return `sm2:submission-draft:detail:${eventId}:${currentUserStorageKey}:${draftScopeKey}`;
+  }, [currentUserStorageKey, draftScopeKey, eventId]);
 
   useEffect(() => {
     // Load event from API
@@ -545,6 +695,7 @@ export default function NotesSubmission() {
 
   useEffect(() => {
     let isActive = true;
+    const allowArchivedSelections = Boolean(submissionIdParam);
 
     const loadFleetOptions = async () => {
       try {
@@ -556,13 +707,23 @@ export default function NotesSubmission() {
         if (!isActive) return;
 
         const liveDrivers = (driversResponse?.drivers || [])
-          .filter((driver) => driver?.isActive !== false)
-          .map(buildDriverOption)
+          .filter((driver) => allowArchivedSelections || driver?.isActive !== false)
+          .map((driver) => {
+            const option = buildDriverOption(driver);
+            return driver?.isActive === false
+              ? { ...option, label: `${option.label} (archived)` }
+              : option;
+          })
           .filter((option) => option.id);
 
         const liveVehicles = (vehiclesResponse?.vehicles || [])
-          .filter((vehicle) => vehicle?.isActive !== false)
-          .map(buildVehicleOption)
+          .filter((vehicle) => allowArchivedSelections || vehicle?.isActive !== false)
+          .map((vehicle) => {
+            const option = buildVehicleOption(vehicle);
+            return vehicle?.isActive === false
+              ? { ...option, label: `${option.label} (archived)` }
+              : option;
+          })
           .filter((option) => option.id);
 
         setDriverOptions(liveDrivers.length ? liveDrivers : DRIVER_OPTIONS);
@@ -580,7 +741,198 @@ export default function NotesSubmission() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [submissionIdParam]);
+
+  const clearQuickDraft = () => {
+    if (!quickDraftStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem(quickDraftStorageKey);
+    } catch (error) {
+      console.warn("Failed to clear quick draft:", error);
+    }
+
+    if (quickDraftSaveTimeoutRef.current) {
+      window.clearTimeout(quickDraftSaveTimeoutRef.current);
+      quickDraftSaveTimeoutRef.current = null;
+    }
+
+    quickDraftHydratedRef.current = false;
+    setQuickDraftReady(false);
+    setQuickDraftStatus("idle");
+  };
+
+  const persistQuickDraftSnapshot = useCallback((snapshot) => {
+    if (!quickDraftStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        quickDraftStorageKey,
+        JSON.stringify({
+          quickForm: snapshot.quickForm,
+          quickRawText: snapshot.quickRawText,
+          pressureTypeQuick: snapshot.pressureTypeQuick,
+          quickAction: snapshot.quickAction,
+          quickConfidence: snapshot.quickConfidence,
+          quickImage: snapshot.quickImage,
+          trackSelection: snapshot.trackSelection,
+          savedAt: new Date().toISOString(),
+        }),
+      );
+      quickDraftHydratedRef.current = true;
+      setQuickDraftReady(true);
+      setQuickDraftStatus("saved");
+    } catch (error) {
+      console.warn("Failed to save quick draft:", error);
+    }
+  }, [quickDraftStorageKey]);
+
+  useEffect(() => {
+    quickDraftHydratedRef.current = false;
+    setQuickDraftReady(false);
+
+    if (!quickDraftStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedDraft = window.localStorage.getItem(quickDraftStorageKey);
+      if (!storedDraft) {
+        quickDraftHydratedRef.current = true;
+        setQuickDraftReady(true);
+        setQuickDraftStatus("idle");
+        return;
+      }
+
+      const parsedDraft = JSON.parse(storedDraft);
+      if (!parsedDraft || typeof parsedDraft !== "object") {
+        quickDraftHydratedRef.current = true;
+        setQuickDraftReady(true);
+        setQuickDraftStatus("idle");
+        return;
+      }
+
+      if (parsedDraft.quickForm && typeof parsedDraft.quickForm === "object") {
+        const restoredGeneratedSessionId = buildGeneratedSessionId(
+          parsedDraft.quickForm.date,
+          parsedDraft.quickForm.time,
+          parsedDraft.quickForm.driver_id,
+          parsedDraft.quickForm.session_number,
+        );
+        const restoredSessionId = String(parsedDraft.quickForm.session_id || "").trim();
+        setSessionIdMode((prev) => ({
+          ...prev,
+          quick:
+            restoredSessionId &&
+            restoredSessionId !== restoredGeneratedSessionId
+              ? "manual"
+              : "auto",
+        }));
+
+        setQuickForm((prev) => ({
+          ...prev,
+          ...parsedDraft.quickForm,
+          pressures: {
+            ...prev.pressures,
+            ...parsedDraft.quickForm.pressures,
+            cold: {
+              ...prev.pressures.cold,
+              ...parsedDraft.quickForm.pressures?.cold,
+            },
+            hot: {
+              ...prev.pressures.hot,
+              ...parsedDraft.quickForm.pressures?.hot,
+            },
+          },
+        }));
+      }
+
+      if (typeof parsedDraft.quickRawText === "string") {
+        setQuickRawText(parsedDraft.quickRawText);
+      }
+      if (typeof parsedDraft.quickAction === "string") {
+        setQuickAction(parsedDraft.quickAction);
+      }
+      if (typeof parsedDraft.quickConfidence === "number") {
+        setQuickConfidence(parsedDraft.quickConfidence);
+      }
+      if (typeof parsedDraft.quickImage === "string") {
+        setQuickImage(parsedDraft.quickImage);
+      }
+      if (typeof parsedDraft.pressureTypeQuick === "string") {
+        setPressureTypeQuick(parsedDraft.pressureTypeQuick);
+      }
+      if (typeof parsedDraft.trackSelection === "string") {
+        setTrackSelection(parsedDraft.trackSelection);
+      }
+
+      quickDraftHydratedRef.current = true;
+      setQuickDraftReady(true);
+      setQuickDraftStatus("restored");
+    } catch (error) {
+      console.warn("Failed to load quick draft:", error);
+      quickDraftHydratedRef.current = true;
+      setQuickDraftReady(true);
+      setQuickDraftStatus("idle");
+    }
+  }, [quickDraftStorageKey]);
+
+  useEffect(() => {
+    if (quickDraftSaveTimeoutRef.current) {
+      window.clearTimeout(quickDraftSaveTimeoutRef.current);
+      quickDraftSaveTimeoutRef.current = null;
+    }
+
+    if (
+      activeTab !== "quick" ||
+      !quickDraftStorageKey ||
+      typeof window === "undefined" ||
+      !quickDraftHydratedRef.current ||
+      !quickDraftReady
+    ) {
+      return undefined;
+    }
+
+    setQuickDraftStatus("saving");
+    quickDraftSaveTimeoutRef.current = window.setTimeout(() => {
+      try {
+        persistQuickDraftSnapshot({
+          quickForm,
+          quickRawText,
+          pressureTypeQuick,
+          quickAction,
+          quickConfidence,
+          quickImage,
+          trackSelection,
+        });
+      } catch (error) {
+        console.warn("Failed to save quick draft:", error);
+      }
+    }, 800);
+
+    return () => {
+      if (quickDraftSaveTimeoutRef.current) {
+        window.clearTimeout(quickDraftSaveTimeoutRef.current);
+        quickDraftSaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    activeTab,
+    persistQuickDraftSnapshot,
+    pressureTypeQuick,
+    quickAction,
+    quickConfidence,
+    quickDraftReady,
+    quickDraftStorageKey,
+    quickForm,
+    quickImage,
+    quickRawText,
+    trackSelection,
+  ]);
 
   const clearDetailDraft = () => {
     if (!detailDraftStorageKey || typeof window === "undefined") {
@@ -623,9 +975,11 @@ export default function NotesSubmission() {
           detailDraftStorageKey,
           JSON.stringify({
             detailForm: nextDetailForm,
+            detailRawText,
             pressureTypeDetail,
             detailAction,
             detailConfidence,
+            detailImage,
             savedAt: new Date().toISOString(),
           }),
         );
@@ -648,14 +1002,17 @@ export default function NotesSubmission() {
 
     try {
       const storedDraft = window.localStorage.getItem(detailDraftStorageKey);
-      if (!storedDraft) {
+      const legacyDraftKey = `sm2:submission-draft:${eventId}:${currentUserStorageKey}`;
+      const fallbackDraft =
+        storedDraft || window.localStorage.getItem(legacyDraftKey);
+      if (!fallbackDraft) {
         detailDraftHydratedRef.current = true;
         setDetailDraftReady(true);
         setDetailDraftStatus("idle");
         return;
       }
 
-      const parsedDraft = JSON.parse(storedDraft);
+      const parsedDraft = JSON.parse(fallbackDraft);
       if (!parsedDraft || typeof parsedDraft !== "object") {
         detailDraftHydratedRef.current = true;
         setDetailDraftReady(true);
@@ -732,6 +1089,12 @@ export default function NotesSubmission() {
       if (typeof parsedDraft.detailConfidence === "number") {
         setDetailConfidence(parsedDraft.detailConfidence);
       }
+      if (typeof parsedDraft.detailRawText === "string") {
+        setDetailRawText(parsedDraft.detailRawText);
+      }
+      if (typeof parsedDraft.detailImage === "string") {
+        setDetailImage(parsedDraft.detailImage);
+      }
 
       detailDraftHydratedRef.current = true;
       setDetailDraftReady(true);
@@ -742,7 +1105,7 @@ export default function NotesSubmission() {
       setDetailDraftReady(true);
       setDetailDraftStatus("idle");
     }
-  }, [detailDraftStorageKey, event?.track]);
+  }, [currentUserStorageKey, detailDraftStorageKey, event?.track, eventId]);
 
   useEffect(() => {
     if (
@@ -798,10 +1161,12 @@ export default function NotesSubmission() {
           detailDraftStorageKey,
           JSON.stringify({
             detailForm,
+            detailRawText,
             trackSelection,
             pressureTypeDetail,
             detailAction,
             detailConfidence,
+            detailImage,
             savedAt: new Date().toISOString(),
           }),
         );
@@ -824,6 +1189,8 @@ export default function NotesSubmission() {
     detailDraftStorageKey,
     detailDraftReady,
     detailForm,
+    detailImage,
+    detailRawText,
     pressureTypeDetail,
     trackSelection,
   ]);
@@ -853,22 +1220,171 @@ export default function NotesSubmission() {
     };
   }, []);
 
+  useEffect(() => {
+    let isActive = true;
+
+    const loadSubmissionForOverwrite = async () => {
+      if (!submissionIdParam) {
+        setEditingSubmission(null);
+        setEditingSubmissionError("");
+        setEditingSubmissionLoading(false);
+        return;
+      }
+
+      setEditingSubmissionLoading(true);
+      setEditingSubmissionError("");
+
+      try {
+        const response = await getSubmissionById(submissionIdParam);
+        if (!isActive) return;
+
+        const submissionData =
+          response?.submissionId || response?.id || response?._id
+            ? response
+            : response?.submission || response;
+        if (!submissionData) {
+          throw new Error("Submission not found");
+        }
+
+        const sessionData =
+          submissionData?.data ||
+          submissionData?.payload?.data ||
+          submissionData?.payload ||
+          {};
+        const submissionMode = getSubmissionMode(submissionData);
+        const nextTab =
+          submissionTabParam === "detail" || submissionTabParam === "quick"
+            ? submissionTabParam
+            : submissionMode === "detail"
+              ? "detail"
+              : "quick";
+        const submissionTrack = toInputValue(sessionData?.track);
+        const eventTrack = toInputValue(event?.track);
+        const noteText = getSubmissionEditText(submissionData);
+        const submissionImage = toInputValue(
+          submissionData?.image_url ||
+            submissionData?.imageUrl ||
+            submissionData?.image ||
+            "",
+        );
+        const quickGeneratedSessionId = buildGeneratedSessionId(
+          sessionData?.date,
+          sessionData?.time,
+          sessionData?.driver_id,
+          sessionData?.session_number,
+        );
+        const detailGeneratedSessionId = quickGeneratedSessionId;
+
+        setEditingSubmission(submissionData);
+        setActiveTab(nextTab);
+        setQuickForm(buildBaseFormStateFromSession(sessionData));
+        setDetailForm(buildDetailFormStateFromSession(sessionData));
+        setQuickRawText(noteText);
+        setDetailRawText(noteText);
+        setQuickAction(
+          String(
+            submissionData?.analysis_result?.action ||
+              submissionData?.analysisResult?.action ||
+              "ADD_SEANCE",
+          ),
+        );
+        setDetailAction(
+          String(
+            submissionData?.analysis_result?.action ||
+              submissionData?.analysisResult?.action ||
+              "ADD_SEANCE",
+          ),
+        );
+        setQuickConfidence(
+          Number(
+            submissionData?.analysis_result?.confidence ||
+              submissionData?.analysisResult?.confidence ||
+              0.85,
+          ) || 0.85,
+        );
+        setDetailConfidence(
+          Number(
+            submissionData?.analysis_result?.confidence ||
+              submissionData?.analysisResult?.confidence ||
+              0.85,
+          ) || 0.85,
+        );
+        setQuickImage(submissionImage || null);
+        setDetailImage(submissionImage || null);
+        setPressureTypeQuick("cold");
+        setPressureTypeDetail("cold");
+        setSessionIdMode((prev) => ({
+          ...prev,
+          quick:
+            String(sessionData?.session_id || "").trim() &&
+            String(sessionData?.session_id || "").trim() !== quickGeneratedSessionId
+              ? "manual"
+              : "auto",
+          detail:
+            String(sessionData?.session_id || "").trim() &&
+            String(sessionData?.session_id || "").trim() !== detailGeneratedSessionId
+              ? "manual"
+              : "auto",
+        }));
+
+        if (submissionTrack) {
+          setTrackSelection(
+            submissionTrack.toLowerCase() === eventTrack.toLowerCase()
+              ? eventTrack || submissionTrack
+              : "__OTHER__",
+          );
+          if (submissionTrack.toLowerCase() !== eventTrack.toLowerCase()) {
+            setQuickForm((prev) => ({ ...prev, track: submissionTrack }));
+            setDetailForm((prev) => ({ ...prev, track: submissionTrack }));
+          }
+        }
+      } catch (error) {
+        if (!isActive) return;
+        console.error("Failed to load submission for overwrite:", error);
+        setEditingSubmission(null);
+        setEditingSubmissionError(
+          error?.message ||
+            error?.error ||
+            "Failed to load this submission for overwrite.",
+        );
+      } finally {
+        if (isActive) {
+          setEditingSubmissionLoading(false);
+        }
+      }
+    };
+
+    loadSubmissionForOverwrite();
+
+    return () => {
+      isActive = false;
+    };
+  }, [event?.track, submissionIdParam, submissionTabParam]);
+
   const submissionState = useMemo(() => getEventSubmissionState(event), [event]);
-  const canSubmitNotes = submissionState.isOpen;
-  const submissionUnavailableMessage = submissionState.isUpcoming
-    ? "Submission notes will open when the event start date arrives."
-    : submissionState.hasEnded
-      ? "Submission notes close after the event end date."
-      : submissionState.isArchived
-        ? "Submission notes are unavailable for archived events."
-        : "Submission notes are unavailable until the event schedule is ready.";
-  const submitButtonLabel = canSubmitNotes
-    ? "Submit Notes"
+  const canOverwriteSubmission = Boolean(editingSubmission) && !editingSubmissionLoading;
+  const isEditAttempt = Boolean(submissionIdParam);
+  const canSubmitNotes = (submissionState.isOpen && !isEditAttempt) || canOverwriteSubmission;
+  const submissionUnavailableMessage = canOverwriteSubmission
+    ? ""
     : submissionState.isUpcoming
-      ? "Opens At Event Start"
+      ? "Submission notes will open when the event start date arrives."
       : submissionState.hasEnded
-        ? "Event Closed"
-        : "Notes Unavailable";
+        ? "Submission notes close after the event end date."
+        : submissionState.isArchived
+          ? "Submission notes are unavailable for archived events."
+          : "Submission notes are unavailable until the event schedule is ready.";
+  const submitButtonLabel = canOverwriteSubmission
+    ? "Overwrite Notes"
+    : isEditAttempt
+      ? "Overwrite Unavailable"
+    : canSubmitNotes
+      ? "Submit Notes"
+      : submissionState.isUpcoming
+        ? "Opens At Event Start"
+        : submissionState.hasEnded
+          ? "Event Closed"
+          : "Notes Unavailable";
 
   const updateQuickForm = (key, value) => {
     setQuickForm((prev) => ({ ...prev, [key]: value }));
@@ -1047,11 +1563,11 @@ export default function NotesSubmission() {
     const isQuick = activeTab === "quick";
     const tabKey = isQuick ? "quick" : "detail";
     const formState = isQuick ? quickForm : detailForm;
-    const rawTextValue = isQuick ? quickRawText : null;
-    const imageValue = isQuick ? quickImage : null;
+    const isOverwrite = Boolean(editingSubmission);
+    const rawTextValue = isQuick ? quickRawText : detailRawText;
+    const imageValue = isQuick ? quickImage : detailImage;
     const actionValue = isQuick ? quickAction : detailAction;
     const confidenceValue = isQuick ? quickConfidence : detailConfidence;
-    const pressureType = isQuick ? pressureTypeQuick : pressureTypeDetail;
     const submissionErrors = validateSubmissionFields({
       formState,
       trackValue,
@@ -1081,14 +1597,9 @@ export default function NotesSubmission() {
     setSubmissionWarnings([]);
 
     try {
-      const submissionId = String(formState.session_id || "").trim() || generateUUID();
-      const correlationId = generateUUID();
-      const eventIdToSend = event?._id || event?.id || eventId;
-
-      // Ensure track comes from dropdown unless "Other"
       const normalizedFormState = {
         ...formState,
-        session_id: submissionId,
+        session_id: String(formState.session_id || "").trim() || generateUUID(),
         track: trackValue,
       };
 
@@ -1097,13 +1608,13 @@ export default function NotesSubmission() {
         Object.assign(data, buildDetailExtensions(normalizedFormState));
       }
 
-      const payload = {
-        submissionId,
-        session_id: submissionId,
-        correlation_id: correlationId,
+      const createPayload = {
+        submissionId: normalizedFormState.session_id,
+        session_id: normalizedFormState.session_id,
+        correlation_id: generateUUID(),
         source: "pwa",
         created_by: currentUserSubmissionLabel || undefined,
-        eventId: eventIdToSend,
+        eventId: event?._id || event?.id || eventId,
         runGroup: eventRunGroup || undefined,
         action: actionValue,
         confidence: Number(confidenceValue),
@@ -1114,18 +1625,33 @@ export default function NotesSubmission() {
           run_group: eventRunGroup || undefined,
           submission_mode: isQuick ? "quick" : "detail",
         },
-        ...(isQuick
-          ? {
-              raw_text: rawTextValue ?? undefined,
-              image_url: imageValue || undefined,
-            }
-          : {}),
+        raw_text: rawTextValue?.trim() ? rawTextValue : undefined,
+        image_url: imageValue || undefined,
       };
 
-      const response = await createSubmission(payload);
+      const overwritePayload = {
+        driver_id: normalizedFormState.driver_id || null,
+        vehicle_id: normalizedFormState.vehicle_id || null,
+        raw_text: rawTextValue?.trim() ? rawTextValue : null,
+        image_url: imageValue || null,
+        payload: data,
+        analysis_result: {
+          action: actionValue,
+          confidence: Number(confidenceValue),
+          run_group: eventRunGroup || undefined,
+          submission_mode: isQuick ? "quick" : "detail",
+        },
+      };
+
+      const response = isOverwrite
+        ? await updateSubmission(editingSubmission.id || editingSubmission._id || submissionIdParam, overwritePayload)
+        : await createSubmission(createPayload);
 
       if (response.success) {
-        const successState = getSubmissionSuccessState(response.submission);
+        const successState = getSubmissionSuccessState(response.submission, {
+          overwrite: isOverwrite,
+        });
+        clearQuickDraft();
         clearDetailDraft();
         setSubmissionStatus(successState.status);
         setQuickRawText("");
@@ -1432,6 +1958,29 @@ export default function NotesSubmission() {
             </button>
           </div>
 
+          {isQuickTab && quickDraftStorageKey ? (
+            <p
+              style={{
+                marginTop: "0.75rem",
+                color:
+                  quickDraftStatus === "saving"
+                    ? "#f0b429"
+                    : quickDraftStatus === "saved" || quickDraftStatus === "restored"
+                      ? "#7ddc95"
+                      : "#9aa4b2",
+                fontSize: "0.85rem",
+              }}
+            >
+              {quickDraftStatus === "saving"
+                ? "Saving quick note locally..."
+                : quickDraftStatus === "saved"
+                  ? "Quick note saved locally on this device."
+                  : quickDraftStatus === "restored"
+                    ? "Quick note restored from this device."
+                    : "Quick note autosave is enabled for this device."}
+            </p>
+          ) : null}
+
           {!isQuickTab && detailDraftStorageKey ? (
             <p
               style={{
@@ -1451,8 +2000,29 @@ export default function NotesSubmission() {
                   ? "Draft saved locally on this device."
                   : detailDraftStatus === "restored"
                     ? "Draft restored from this device."
-                    : "Draft autosave is enabled for the detailed form."}
+                : "Draft autosave is enabled for the detailed form."}
             </p>
+          ) : null}
+
+          {editingSubmissionLoading ? (
+            <div className="status-message status-pending" style={{ marginTop: "0.75rem" }}>
+              <strong>Overwrite mode.</strong>
+              <span>Loading the existing submission so you can update it.</span>
+            </div>
+          ) : null}
+
+          {editingSubmissionError ? (
+            <div className="status-message status-failed" style={{ marginTop: "0.75rem" }}>
+              <strong>Overwrite unavailable.</strong>
+              <span>{editingSubmissionError}</span>
+            </div>
+          ) : null}
+
+          {editingSubmission && !editingSubmissionLoading ? (
+            <div className="status-message status-pending" style={{ marginTop: "0.75rem" }}>
+              <strong>Overwrite mode enabled.</strong>
+              <span>This will update your saved submission instead of creating a new one.</span>
+            </div>
           ) : null}
 
           <form onSubmit={handleSubmit} className="notes-form">
@@ -1877,6 +2447,31 @@ export default function NotesSubmission() {
 
             {!isQuickTab && (
               <>
+                <div className="form-group">
+                  <div className="raw-notes-header">
+                    <label className="form-label">Short Notes (Raw Text)</label>
+                  </div>
+                  <textarea
+                    data-testid="detail-raw-notes"
+                    className="textarea raw-notes-textarea"
+                    placeholder="Add a short summary or overwrite note here..."
+                    value={detailRawText}
+                    onChange={(e) => setDetailRawText(e.target.value)}
+                    rows={4}
+                  />
+
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <label className="form-label sub-label">Photo</label>
+                    <input
+                      data-testid="detail-photo-input"
+                      className="input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleImageChange(e, setImageValue)}
+                    />
+                  </div>
+                </div>
+
                 <div className="form-group">
                   <label className="form-label">Suspension</label>
                   <div className="grid-2">
