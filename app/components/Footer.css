@@ -81,6 +81,30 @@
   align-items: start;
 }
 
+.footer-main-grid-compact {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  text-align: center;
+}
+
+.footer-main-grid-compact .footer-brand-panel {
+  width: 100%;
+  justify-items: center;
+}
+
+.footer-main-grid-compact .footer-brand-row {
+  justify-content: center;
+}
+
+.footer-main-grid-compact .footer-description {
+  max-width: 60ch;
+  margin-inline: auto;
+}
+
+.footer-main-grid-compact .footer-social-row {
+  justify-content: center;
+}
+
 .footer-brand-panel {
   display: grid;
   gap: 1rem;

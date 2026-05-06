@@ -102,7 +102,6 @@ export default function Footer() {
       ]
     : [
         { label: "Events", href: "/events" },
-        { label: "My Submissions", href: "/events" },
         { label: "Support", href: buildMailto("support@sm2racing.local", "SM-2 Support") },
         { label: "System Status", href: buildMailto("support@sm2racing.local", "SM-2 System Status") },
       ];
@@ -129,6 +128,7 @@ export default function Footer() {
   ];
 
   const currentYear = new Date().getFullYear();
+  const showPortalLinkColumns = adminMode;
 
   return (
     <footer className="footer footer-modern">
@@ -139,7 +139,7 @@ export default function Footer() {
       <div className="footer-divider footer-divider-top" aria-hidden="true" />
 
       <div className="footer-container">
-        <div className="footer-main-grid">
+        <div className={`footer-main-grid ${showPortalLinkColumns ? "" : "footer-main-grid-compact"}`}>
           <section className="footer-brand-panel">
             <div className="footer-brand-row">
               <div className="footer-brand-mark" aria-hidden="true">
@@ -180,10 +180,14 @@ export default function Footer() {
             </div>
           </section>
 
-          <FooterLinkColumn title="Product" items={productLinks} />
-          <FooterLinkColumn title="Resources" items={resourceLinks} />
-          <FooterLinkColumn title="Company" items={companyLinks} />
-          <FooterLinkColumn title="Legal" items={legalLinks} />
+          {showPortalLinkColumns ? (
+            <>
+              <FooterLinkColumn title="Product" items={productLinks} />
+              <FooterLinkColumn title="Resources" items={resourceLinks} />
+              <FooterLinkColumn title="Company" items={companyLinks} />
+              <FooterLinkColumn title="Legal" items={legalLinks} />
+            </>
+          ) : null}
         </div>
 
         <div className="footer-divider footer-divider-middle" aria-hidden="true" />
