@@ -21,6 +21,7 @@
   justify-content: center;
   overflow: hidden;
   isolation: isolate;
+  color-scheme: dark;
   background:
     radial-gradient(circle at 50% 20%, rgba(255, 107, 53, 0.05), transparent 22%),
     linear-gradient(180deg, var(--login-bg) 0%, var(--login-bg-deep) 100%);
@@ -477,6 +478,7 @@
   border: 1px solid var(--login-border-soft);
   background: rgba(10, 14, 21, 0.94);
   color: var(--login-text);
+  caret-color: var(--login-orange-soft);
   font-size: 0.97rem;
   line-height: 1;
   outline: none;
@@ -489,6 +491,11 @@
 
 .login-input::placeholder {
   color: #697382;
+}
+
+.login-input::selection {
+  background: rgba(255, 107, 53, 0.28);
+  color: var(--login-text);
 }
 
 .login-input:hover {
@@ -513,6 +520,7 @@
 .login-input:-webkit-autofill:focus,
 .login-input:-webkit-autofill:active {
   -webkit-text-fill-color: var(--login-text);
+  caret-color: var(--login-orange-soft);
   box-shadow: 0 0 0 1000px rgba(10, 14, 21, 0.96) inset;
   transition: background-color 9999s ease-in-out 0s;
 }
