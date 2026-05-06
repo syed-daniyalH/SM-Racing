@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import UserApprovalStatus, UserRole
-from app.core.security import hash_password, verify_password
+from app.core.security import hash_password, password_needs_rehash, verify_password
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserSignup
 
@@ -86,6 +86,11 @@ def authenticate_user(
     user = ensure_canonical_owner_access(db, user)
     if not verify_password(password, user.hashed_password):
         return None
+    if password_needs_rehash(user.hashed_password):
+        user.hashed_password = hash_password(password)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     if not allow_inactive and (
         not user.is_active or user.approval_status != UserApprovalStatus.APPROVED
     ):
