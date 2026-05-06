@@ -205,7 +205,27 @@ VEHICLE_SCOPED_INTENTS = {
     "coaching",
 }
 
-NLP_ALLOWED_INTENTS = ["compare", "recommendation", "coaching", "unsupported"]
+NLP_ALLOWED_INTENTS = [
+    "greeting",
+    "help_services",
+    "thanks",
+    "list_events",
+    "latest_sessions",
+    "latest_submissions",
+    "setup_latest_session",
+    "tire_pressures_by_session",
+    "tire_temperatures_by_session",
+    "tire_history_by_session",
+    "suspension_data",
+    "alignment_by_car",
+    "sessions_by_event",
+    "sessions_by_driver",
+    "driver_vehicle_data",
+    "compare",
+    "recommendation",
+    "coaching",
+    "unsupported",
+]
 
 
 @dataclass(slots=True)
@@ -1323,6 +1343,23 @@ def _nlp_intent_from_query(query: str, deterministic_intent: str) -> NLPIntentRe
         filters=result.filters,
         explanation=result.explanation,
     )
+
+
+def _resolve_chatbot_intent(
+    query: str,
+    query_in: ChatbotQuery | None = None,
+) -> tuple[str, str, NLPIntentResult | None, dict[str, str]]:
+    deterministic_intent = _intent_from_query(query, query_in)
+    nlp_result = _nlp_intent_from_query(query, deterministic_intent)
+    settings = get_settings()
+    nlp_accepted = (
+        nlp_result is not None
+        and nlp_result.intent in NLP_ALLOWED_INTENTS
+        and nlp_result.confidence >= settings.openai_intent_confidence_threshold
+    )
+    intent = nlp_result.intent if nlp_accepted and nlp_result is not None else deterministic_intent
+    nlp_filters = nlp_result.filters if nlp_accepted and nlp_result is not None else {}
+    return intent, deterministic_intent, nlp_result, nlp_filters
 
 
 def _event_match_text(event: Event, run_group: RunGroup | None) -> str:
@@ -4795,20 +4832,7 @@ def build_chatbot_context(db: Session, *, limit: int = 10) -> ChatbotContextResp
 def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: User | None = None) -> ChatbotResponse:
     query = query_in.message.strip()
     logger.info("Admin chatbot raw message received: %s", query)
-    deterministic_intent = _intent_from_query(query, query_in)
-    if deterministic_intent in {"greeting", "help_services", "thanks"}:
-        logger.info("Admin chatbot preset response selected: intent=%s", deterministic_intent)
-        return _greeting_response(query, intent=deterministic_intent)
-
-    nlp_result = _nlp_intent_from_query(query, deterministic_intent) if deterministic_intent == "unsupported" else None
-    settings = get_settings()
-    nlp_accepted = (
-        nlp_result is not None
-        and nlp_result.intent != "unsupported"
-        and nlp_result.confidence >= settings.openai_intent_confidence_threshold
-    )
-    intent = nlp_result.intent if nlp_accepted and nlp_result is not None else deterministic_intent
-    nlp_filters = nlp_result.filters if nlp_accepted and nlp_result is not None else {}
+    intent, deterministic_intent, nlp_result, nlp_filters = _resolve_chatbot_intent(query, query_in)
     logger.info(
         "Admin chatbot intent detected: intent=%s deterministic=%s nlp_intent=%s nlp_confidence=%s query=%s",
         intent,
@@ -4817,6 +4841,10 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         nlp_result.confidence if nlp_result else None,
         query,
     )
+
+    if intent in {"greeting", "help_services", "thanks"}:
+        logger.info("Admin chatbot preset response selected: intent=%s", intent)
+        return _greeting_response(query, intent=intent)
 
     event_rows = _load_event_rows(db, limit=None)
     event = db.get(Event, query_in.event_id) if query_in.event_id else None
@@ -4887,10 +4915,6 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         time_window,
         query_in.limit,
     )
-
-    if intent in {"greeting", "help_services", "thanks"}:
-        logger.info("Admin chatbot preset response selected after NLP reconciliation: intent=%s", intent)
-        return _greeting_response(query, intent=intent)
 
     if intent == "unsupported":
         logger.info("Admin chatbot unsupported query: %s", query)

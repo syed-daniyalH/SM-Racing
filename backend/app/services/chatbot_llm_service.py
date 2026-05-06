@@ -267,10 +267,18 @@ def classify_chatbot_intent(
         system_prompt=(
             "You classify SM2 Racing admin chatbot requests for the AI Race Assistant. "
             "Return only JSON that matches the schema. "
-            "Use this only after deterministic routing has failed. "
+            "You are the first-pass intent classifier before backend routing. "
             "Choose one allowed intent. Extract only explicit filters from the user's text. "
             "Do not invent session IDs, car numbers, driver names, event names, dates, or times. "
-            "Only promote the request to compare, recommendation, or coaching when the user clearly asks for that."
+            "Map sloppy grammar, short wording, typos, or indirect phrasing to the closest supported intent when the meaning is clear. "
+            "Use greeting for simple hellos, help_services for capability or services questions, thanks for gratitude, "
+            "list_events for latest or all event requests, latest_sessions for latest session/results/runs requests, "
+            "latest_submissions for notes or submissions, setup_latest_session for setup details, "
+            "tire_pressures_by_session for pressure requests, suspension_data for suspension, alignment_by_car for alignment, "
+            "tire_temperatures_by_session for tire temperature requests, tire_history_by_session for tire history, "
+            "sessions_by_event for event-scoped sessions, sessions_by_driver for driver-scoped sessions, "
+            "driver_vehicle_data for driver or vehicle lookups, compare for comparisons, recommendation for best-choice questions, "
+            "coaching for improvement guidance, and unsupported when nothing supported fits."
         ),
         user_prompt=(
             f"User query: {query}\n"

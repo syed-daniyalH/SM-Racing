@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from app.schemas.chatbot import ChatbotCard, ChatbotField, ChatbotQuery, ChatbotRecordReference, ChatbotResponse, ChatbotSection
 from app.services import chatbot_llm_service
-from app.services.chatbot_service import _greeting_response, _intent_from_query
+from app.services.chatbot_service import _greeting_response, _intent_from_query, _resolve_chatbot_intent
 
 
 def _response(**overrides):
@@ -283,6 +283,31 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         self.assertFalse(summary_result.used_openai)
         self.assertTrue(summary_result.fallback_used)
         self.assertEqual(summary_result.summary, "I found 2 recent sessions in the SM2 Racing database.")
+
+    def test_resolve_chatbot_intent_uses_openai_first_for_sloppy_known_queries(self) -> None:
+        settings = SimpleNamespace(
+            openai_intent_confidence_threshold=0.7,
+        )
+        nlp_result = SimpleNamespace(
+            intent="latest_sessions",
+            confidence=0.93,
+            filters={},
+            explanation="Mapped 'latest results' to the latest sessions intent.",
+        )
+
+        with (
+            patch("app.services.chatbot_service.get_settings", return_value=settings),
+            patch("app.services.chatbot_service._nlp_intent_from_query", return_value=nlp_result),
+        ):
+            intent, deterministic_intent, resolved_nlp_result, nlp_filters = _resolve_chatbot_intent(
+                "Okay. So show me the all the latest results",
+                ChatbotQuery(message="Okay. So show me the all the latest results"),
+            )
+
+        self.assertEqual(deterministic_intent, "unsupported")
+        self.assertEqual(intent, "latest_sessions")
+        self.assertIsNotNone(resolved_nlp_result)
+        self.assertEqual(nlp_filters, {})
 
     def test_fallback_plain_response_preserves_narrative_paragraph_breaks(self) -> None:
         backend_response = _response(
