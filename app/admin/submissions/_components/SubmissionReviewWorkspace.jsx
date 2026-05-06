@@ -150,9 +150,9 @@ const buildTimeline = ({ record, submissionType, statusLabel, actionLabel }) => 
       timeline.push({
         id: "voice-confirmed",
         action: "Voice Confirmed",
-        note: "Mechanic confirmed the transcript before submission.",
+        note: "Driver confirmed the transcript before submission.",
         timestamp: voiceSession.confirmedAt,
-        actor: "Mechanic",
+        actor: "Driver",
         tone: "success",
       })
     }
@@ -242,7 +242,7 @@ const buildAttachments = (record = {}, analysisResult = {}, imageUrl = null) => 
             url: voiceSession.audioDownloadUrl || voiceSession.audio_download_url || null,
             voiceSessionId: voiceSession.id || voiceSession.voiceSessionId || null,
             name: voiceSession.audioFileName || "Voice recording",
-            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Mechanic voice capture.",
+            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Driver voice capture.",
             mimeType: voiceSession.audioContentType || voiceSession.audio_content_type || "audio/webm",
           },
         ]
@@ -587,7 +587,7 @@ export const buildWorkspaceFromRecord = (record) => {
       recommendation: record.recommendation,
       issueCards,
       adminNote: {
-        title: "Admin Feedback",
+        title: "Owner Feedback",
         description: "Add correction notes, validation remarks, or follow-up instructions.",
         value:
           record.analysisResult?.admin_comment ||
@@ -600,7 +600,7 @@ export const buildWorkspaceFromRecord = (record) => {
     },
     raw: {
       title: "Exact Raw Content and Media",
-      description: "Review the exact text or media submitted by the driver. Raw content is preserved as submitted while admin notes remain editable.",
+      description: "Review the exact text or media submitted by the driver. Raw content is preserved as submitted while owner notes remain editable.",
       cards: rawCards,
     },
     parsedSections,
@@ -1179,7 +1179,7 @@ export default function SubmissionReviewWorkspace({
               </div>
 
               <div className="submission-detail-admin-note-readonly">
-                {workspace.validation.adminNote.value || "No admin feedback saved yet."}
+                {workspace.validation.adminNote.value || "No owner feedback saved yet."}
               </div>
             </div>
           </Section>

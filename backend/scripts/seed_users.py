@@ -18,16 +18,16 @@ from app.models.user import User
 
 SEED_USERS = [
     {
-        "name": "Admin",
-        "email": "admin@smracing.com",
+        "name": "Owner",
+        "email": "owner@smracing.com",
         "password": "123456",
-        "role": UserRole.ADMIN,
+        "role": UserRole.OWNER,
     },
     {
-        "name": "Mechanic",
-        "email": "mec@smracing.com",
+        "name": "Driver",
+        "email": "driver@smracing.com",
         "password": "123456",
-        "role": UserRole.MECHANIC,
+        "role": UserRole.DRIVER,
     },
 ]
 

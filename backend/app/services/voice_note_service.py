@@ -503,7 +503,7 @@ def process_voice_transcription(
             f"Deepgram confidence {confidence:.2f} is below the review threshold of "
             f"{settings.voice_transcription_confidence_threshold:.2f}."
             if confidence is not None and confidence < settings.voice_transcription_confidence_threshold
-            else "Transcript is ready for mechanic review."
+            else "Transcript is ready for driver review."
         )
         voice_session.last_error_code = None
         voice_session.last_error_message = None
@@ -627,7 +627,7 @@ def confirm_voice_session(
 
     voice_session.status = VoiceNoteStatus.CONFIRMED
     voice_session.validation_status = validation_status
-    voice_session.validation_message = "Transcript confirmed by the mechanic."
+    voice_session.validation_message = "Transcript confirmed by the driver."
     voice_session.confirmed_at = datetime.now(timezone.utc)
     voice_session.last_error_code = None
     voice_session.last_error_message = None

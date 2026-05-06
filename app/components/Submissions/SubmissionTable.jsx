@@ -357,7 +357,7 @@ export default function SubmissionTable({ submissions = [], loading, onView }) {
                               maxWidth: 420,
                             }}
                           >
-                            Once a mechanic submits notes for this event, the feed will
+                            Once a driver submits notes for this event, the feed will
                             appear here in the same row format you see in the reference
                             screenshot.
                           </Typography>

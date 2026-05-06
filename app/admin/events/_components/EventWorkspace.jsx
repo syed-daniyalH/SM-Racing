@@ -377,7 +377,7 @@ export default function EventWorkspace() {
               </h1>
               <p className="admin-page-subtitle">
                 Inspect the event, review lifecycle status, and keep the
-                mechanic-facing run group normalized and ready for the race
+                driver-facing run group normalized and ready for the race
                 weekend.
               </p>
             </div>
@@ -449,7 +449,7 @@ export default function EventWorkspace() {
                       <p className="workspace-panel-subtitle">
                         Event operations should stay visible, audited, and easy
                         to update. This section keeps the core facts aligned for
-                        the admin team.
+                        the owner team.
                       </p>
                     </div>
 
@@ -524,7 +524,7 @@ export default function EventWorkspace() {
                       <div className="admin-page-eyebrow">Operational Context</div>
                       <h2 className="workspace-panel-title">Event record</h2>
                       <p className="workspace-panel-subtitle">
-                        Keep this screen aligned with the backend so the admin
+                        Keep this screen aligned with the backend so the owner
                         team always works from the same source of truth.
                       </p>
                     </div>
@@ -553,11 +553,11 @@ export default function EventWorkspace() {
                     <div>
                       <div className="admin-page-eyebrow">Run Group Management</div>
                       <h2 className="workspace-panel-title">
-                        Normalize the mechanic-facing label
+                        Normalize the driver-facing label
                       </h2>
                       <p className="workspace-panel-subtitle">
                         Enter the raw run-group value, review the uppercase
-                        preview, and save it as a properly normalized mechanic
+                        preview, and save it as a properly normalized driver
                         label.
                       </p>
                     </div>
@@ -656,11 +656,11 @@ export default function EventWorkspace() {
                 <section className="workspace-panel">
                   <div className="workspace-panel-header">
                     <div>
-                      <div className="admin-page-eyebrow">Admin Notes</div>
+                      <div className="admin-page-eyebrow">Owner Notes</div>
                       <h2 className="workspace-panel-title">Operational reminders</h2>
                       <p className="workspace-panel-subtitle">
                         Keep event data and run-group behavior aligned with the
-                        backend contract so the admin experience stays reliable.
+                        backend contract so the owner experience stays reliable.
                       </p>
                     </div>
                   </div>

@@ -18,7 +18,7 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role", schema=DB_SCHEMA),
-        default=UserRole.MECHANIC,
+        default=UserRole.DRIVER,
         nullable=False,
     )
     approval_status: Mapped[UserApprovalStatus] = mapped_column(

@@ -734,7 +734,7 @@ export default function SubmissionReviewPage() {
       icon: PendingActionsOutlinedIcon,
       label: "Total Submissions",
       value: summaryCounts.total,
-      helper: "All submissions visible to the admin monitor.",
+      helper: "All submissions visible to the owner monitor.",
       tone: "accent",
     },
     {
@@ -901,7 +901,7 @@ export default function SubmissionReviewPage() {
 
         <header className="submission-monitor-header">
           <div className="submission-monitor-copy">
-            <p className="submission-monitor-eyebrow">Admin Operations</p>
+            <p className="submission-monitor-eyebrow">Owner Operations</p>
             <h1>Submission Review</h1>
             <p className="submission-monitor-subtitle">
               Inspect Make.com bulk submissions in an Excel-style sheet, monitor system state, and open a polished right-side drawer for full detail.
@@ -1187,7 +1187,7 @@ export default function SubmissionReviewPage() {
             <EmptyStatePanel
               icon={PendingActionsOutlinedIcon}
               title="No submissions yet"
-              description="Incoming mechanic submissions will appear here with validation and sync state once they arrive."
+              description="Incoming driver submissions will appear here with validation and sync state once they arrive."
               action={
                 <button
                   type="button"
@@ -1237,7 +1237,7 @@ export default function SubmissionReviewPage() {
         title="Delete Submission"
         message={
           deleteTarget
-            ? `Delete ${deleteTarget.submissionId || deleteTarget.submission_ref || getSubmissionId(deleteTarget)}? This removes the submission review record and its normalized structured detail rows from the admin system.`
+            ? `Delete ${deleteTarget.submissionId || deleteTarget.submission_ref || getSubmissionId(deleteTarget)}? This removes the submission review record and its normalized structured detail rows from the owner system.`
             : "Delete this submission?"
         }
         confirmLabel={busyAction === `delete:${deleteTarget?.id}` ? "Working..." : "Delete Submission"}

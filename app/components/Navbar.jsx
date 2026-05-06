@@ -17,6 +17,11 @@ import "./Navbar.css"
 const BRAND_ICON_SRC = "/icons/sm-racing-checkered-flag.svg"
 const ASSISTANT_ICON_SRC = "/icons/sm-ai-assistant-icon.png"
 
+const formatRoleLabel = (role) => {
+  const normalized = String(role || "").toUpperCase()
+  return normalized ? `${normalized.charAt(0)}${normalized.slice(1).toLowerCase()}` : ""
+}
+
 const getEventId = (event) =>
   event?.id || event?._id || event?.eventId || event?.event_id || null
 
@@ -42,7 +47,7 @@ const readStoredActiveEventId = () => {
 export default function Navbar() {
   const router = useRouter()
   const pathname = usePathname()
-  const { user, isAdmin, logout } = useAuth()
+  const { user, isOwner, logout } = useAuth()
   const [activeEventId, setActiveEventId] = useState(null)
 
   const isAuthPage =
@@ -56,7 +61,7 @@ export default function Navbar() {
   const currentEventId = currentEventIdMatch?.[1] || null
 
   useEffect(() => {
-    if (!user || isAdmin()) {
+    if (!user || isOwner()) {
       setActiveEventId(null)
       return
     }
@@ -72,14 +77,14 @@ export default function Navbar() {
       readStoredActiveEventId()
 
     setActiveEventId(userActiveEventId || null)
-  }, [currentEventId, isAdmin, user])
+  }, [currentEventId, isOwner, user])
 
   if (isAuthPage || isSubmissionReportPage || !user) {
     return null
   }
 
   const handleLogout = async () => {
-    if (isAdmin()) {
+    if (isOwner()) {
       router.push("/admin/signout?next=/admin/login")
       return
     }
@@ -88,7 +93,7 @@ export default function Navbar() {
     router.push("/login")
   }
 
-  const handleMechanicSubmissions = () => {
+  const handleDriverSubmissions = () => {
     const targetEventId = currentEventId || activeEventId
 
     if (targetEventId) {
@@ -100,14 +105,14 @@ export default function Navbar() {
   }
 
   const handleDashboard = () => {
-    if (isAdmin()) {
+    if (isOwner()) {
       router.push("/admin/users")
     } else {
       router.push("/events")
     }
   }
 
-  const showChatbotLauncher = isAdmin() && pathname.startsWith("/admin") && pathname !== "/admin/chatbot"
+  const showChatbotLauncher = isOwner() && pathname.startsWith("/admin") && pathname !== "/admin/chatbot"
 
   const adminNavItems = [
     {
@@ -180,7 +185,7 @@ export default function Navbar() {
 
           <div className="navbar-content">
             <div className="navbar-menu">
-                {isAdmin() ? (
+                {isOwner() ? (
                   adminNavItems.map((item) => {
                   const Icon = item.icon
 
@@ -224,7 +229,7 @@ export default function Navbar() {
                   </button>
                   <button
                     className={`nav-link ${pathname.startsWith("/event/") && pathname.endsWith("/submissions") ? "active" : ""}`}
-                    onClick={handleMechanicSubmissions}
+                    onClick={handleDriverSubmissions}
                     title={activeEventId ? "Open submissions for the active event" : "Select an event first to view submissions"}
                   >
                     <span className="nav-link-icon" aria-hidden="true">
@@ -239,7 +244,7 @@ export default function Navbar() {
             <div className="navbar-user">
               <div className="user-info">
                 <div className="user-name">{user.name || user.email}</div>
-                <div className="user-role">{user.role}</div>
+                <div className="user-role">{formatRoleLabel(user.role)}</div>
               </div>
               <button
                 className="nav-link logout"

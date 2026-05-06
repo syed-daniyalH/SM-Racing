@@ -465,7 +465,7 @@ export default function EventsManagementPage() {
           ) : (
             <div className="admin-event-card-callout">
               Run group is missing. Open Edit Event to configure it before
-              mechanics begin submissions.
+              drivers begin submissions.
             </div>
           )}
 
@@ -498,7 +498,7 @@ export default function EventsManagementPage() {
         <div className="admin-page-shell">
           <header className="admin-page-header">
             <div className="admin-page-header-copy">
-              <div className="admin-page-eyebrow">Admin Operations</div>
+              <div className="admin-page-eyebrow">Owner Operations</div>
               <h1 className="admin-page-title">Event Management</h1>
               <p className="admin-page-subtitle">
                 Create, filter, archive, and configure race events from a

@@ -5,6 +5,8 @@ import { getMe, logoutUser as logoutApi } from '../utils/authApi'
 
 const AuthContext = createContext()
 
+const normalizeRole = (role) => String(role || '').toUpperCase()
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -77,19 +79,19 @@ export function AuthProvider({ children }) {
     return { success }
   }
 
-  const isAdmin = useCallback(() => {
-    return user?.role === 'OWNER' || user?.role === 'ADMIN'
+  const isOwner = useCallback(() => {
+    return normalizeRole(user?.role) === 'OWNER'
   }, [user?.role])
 
-  const isMechanic = useCallback(() => {
-    return user?.role === 'MECHANIC' || user?.role === 'WORKER'
+  const isDriver = useCallback(() => {
+    return ['DRIVER', 'MECHANIC', 'WORKER'].includes(normalizeRole(user?.role))
   }, [user?.role])
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, isMechanic }}>
-      {children}
-    </AuthContext.Provider>
-  )
+  const isAdmin = isOwner
+
+  const isMechanic = isDriver
+
+  return <AuthContext.Provider value={{ user, login, logout, loading, isOwner, isDriver, isAdmin, isMechanic }}>{children}</AuthContext.Provider>
 }
 
 export const useAuth = () => {

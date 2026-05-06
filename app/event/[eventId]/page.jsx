@@ -173,7 +173,7 @@ export default function EventDetail() {
               </div>
               <div className="event-detail-eyebrow">
                 <FlagRoundedIcon fontSize="inherit" />
-                Mechanic Operations
+                Driver Operations
               </div>
               <h1 className="event-detail-title">Event unavailable</h1>
               <p className="event-detail-subtitle">{error}</p>
@@ -206,7 +206,7 @@ export default function EventDetail() {
               </div>
               <div className="event-detail-eyebrow">
                 <FlagRoundedIcon fontSize="inherit" />
-                Mechanic Operations
+                Driver Operations
               </div>
               <h1 className="event-detail-title">Event not found</h1>
               <p className="event-detail-subtitle">
@@ -244,7 +244,7 @@ export default function EventDetail() {
           : "Waiting for event schedule"
     : "Run group missing";
   const accessLabel = canCaptureNotes
-    ? "Mechanic ready"
+    ? "Driver ready"
     : submissionState.isUpcoming
       ? "Opens at start"
       : submissionState.hasEnded
@@ -256,7 +256,7 @@ export default function EventDetail() {
       ? "Submission notes will open when the event start date arrives."
       : submissionState.hasEnded
         ? "This event window has ended. View Submissions to review the captured history."
-        : "Confirm the event schedule and run group before mechanics begin capturing notes.";
+      : "Confirm the event schedule and run group before drivers begin capturing notes.";
 
   return (
     <ProtectedRoute requireMechanic={true}>
@@ -271,7 +271,7 @@ export default function EventDetail() {
 
               <div className="event-detail-eyebrow">
                 <FlagRoundedIcon fontSize="inherit" />
-                Mechanic Operations
+                Driver Operations
               </div>
               <h1 className="event-detail-title">{event.name}</h1>
               <p className="event-detail-subtitle">
@@ -310,7 +310,7 @@ export default function EventDetail() {
               </div>
               <div className="event-detail-summary-label">Date Range</div>
               <div className="event-detail-summary-value">{eventDates}</div>
-              <div className="event-detail-summary-note">Event window visible to mechanics.</div>
+              <div className="event-detail-summary-note">Event window visible to drivers.</div>
             </article>
 
             <article className="event-detail-summary-card status">
@@ -333,7 +333,7 @@ export default function EventDetail() {
               <div className="event-detail-summary-label">Run Group</div>
               <div className="event-detail-summary-value">{hasRunGroup ? runGroupValue : "Not Configured"}</div>
               <div className="event-detail-summary-note">
-                {hasRunGroup ? "Visible exactly as mechanics will see it." : "This event still needs a run group."}
+                {hasRunGroup ? "Visible exactly as drivers will see it." : "This event still needs a run group."}
               </div>
             </article>
           </section>
@@ -344,8 +344,8 @@ export default function EventDetail() {
               <div className="event-detail-run-group-value">{hasRunGroup ? runGroupValue : "Not Assigned Yet"}</div>
               <p className="event-detail-run-group-copy">
                 {hasRunGroup
-                  ? "Mechanics will see this label on every note submission."
-                  : "Ask admin to configure the event before mechanics begin capturing submissions."}
+                  ? "Drivers will see this label on every note submission."
+                  : "Ask the owner to configure the event before drivers begin capturing submissions."}
               </p>
               <div className="event-detail-run-group-footer">
                 <StatusBadge
@@ -392,7 +392,7 @@ export default function EventDetail() {
               <div className="event-detail-action-copy">
                 <span className="event-detail-action-label">Primary</span>
                 <h2>Submit Notes</h2>
-                <p>Open the mechanic note flow for this event.</p>
+                <p>Open the driver note flow for this event.</p>
               </div>
               <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
             </button>

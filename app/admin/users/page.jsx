@@ -39,7 +39,7 @@ const INITIAL_FORM_VALUES = {
   name: "",
   email: "",
   password: "",
-  role: "MECHANIC",
+  role: "DRIVER",
 };
 
 const INITIAL_PASSWORD_FORM_VALUES = {
@@ -57,8 +57,7 @@ const STATUS_FILTER_OPTIONS = [
 const ROLE_FILTER_OPTIONS = [
   { value: "all", label: "All Roles" },
   { value: "owner", label: "Owner" },
-  { value: "admin", label: "Admin" },
-  { value: "mechanic", label: "Mechanic" },
+  { value: "driver", label: "Driver" },
 ];
 
 const SORT_OPTIONS = [
@@ -68,12 +67,11 @@ const SORT_OPTIONS = [
 ];
 
 const ROLE_ASSIGNMENT_OPTIONS = [
-  { value: "MECHANIC", label: "Mechanic" },
-  { value: "ADMIN", label: "Admin" },
   { value: "OWNER", label: "Owner" },
+  { value: "DRIVER", label: "Driver" },
 ];
 
-const normalizeRole = (role) => String(role || "MECHANIC").toUpperCase();
+const normalizeRole = (role) => String(role || "DRIVER").toUpperCase();
 
 const normalizeApprovalStatus = (value) => String(value || "APPROVED").toUpperCase();
 
@@ -88,7 +86,7 @@ const getRoleTone = (role) => {
   switch (normalizeRole(role)) {
     case "OWNER":
       return "accent";
-    case "ADMIN":
+    case "DRIVER":
       return "success";
     default:
       return "neutral";
@@ -171,11 +169,7 @@ const getAssignableRoleOptions = (role) => {
     return ROLE_ASSIGNMENT_OPTIONS;
   }
 
-  if (normalizedRole === "ADMIN") {
-    return ROLE_ASSIGNMENT_OPTIONS.filter((option) => option.value !== "OWNER");
-  }
-
-  return ROLE_ASSIGNMENT_OPTIONS.filter((option) => option.value === "MECHANIC");
+  return ROLE_ASSIGNMENT_OPTIONS.filter((option) => option.value === "DRIVER");
 };
 
 export default function UsersManagement() {
@@ -199,7 +193,7 @@ export default function UsersManagement() {
   const [passwordError, setPasswordError] = useState("");
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [roleTarget, setRoleTarget] = useState(null);
-  const [roleForm, setRoleForm] = useState("MECHANIC");
+  const [roleForm, setRoleForm] = useState("DRIVER");
   const [roleError, setRoleError] = useState("");
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
   const [rolePendingChange, setRolePendingChange] = useState(null);
@@ -242,9 +236,7 @@ export default function UsersManagement() {
     const inactiveUsers = users.filter(
       (user) => user.isActive === false && !isPendingApproval(user),
     ).length;
-    const elevatedUsers = users.filter((user) =>
-      ["OWNER", "ADMIN"].includes(normalizeRole(user.role)),
-    ).length;
+    const elevatedUsers = users.filter((user) => ["OWNER"].includes(normalizeRole(user.role))).length;
 
     return {
       total: users.length,
@@ -379,7 +371,7 @@ export default function UsersManagement() {
         return false;
       }
 
-      return currentRole === "ADMIN";
+      return currentRole === "OWNER";
     },
     [currentUser],
   );
@@ -409,10 +401,6 @@ export default function UsersManagement() {
         return true;
       }
 
-      if (currentRole === "ADMIN") {
-        return targetRole !== "OWNER";
-      }
-
       return false;
     },
     [currentUser],
@@ -439,7 +427,7 @@ export default function UsersManagement() {
         return true;
       }
 
-      return currentRole === "ADMIN" && targetRole === "MECHANIC";
+      return currentRole === "OWNER" && targetRole === "DRIVER";
     },
     [currentUser],
   );
@@ -497,8 +485,8 @@ export default function UsersManagement() {
       return "Owner accounts cannot be deleted";
     }
 
-    if (normalizeRole(currentUser.role) === "ADMIN") {
-      return "Admins can only delete mechanic accounts";
+    if (normalizeRole(currentUser.role) === "OWNER") {
+      return "Owners can only delete driver accounts";
     }
 
     return "You do not have access to delete this user";
@@ -515,7 +503,7 @@ export default function UsersManagement() {
   const closeRolePanel = () => {
     if (isUpdatingRole) return;
     setRoleTarget(null);
-    setRoleForm("MECHANIC");
+    setRoleForm("DRIVER");
     setRoleError("");
     setRolePendingChange(null);
   };
@@ -689,7 +677,7 @@ export default function UsersManagement() {
         message: `${updatedUser.name} now has ${formatRoleLabel(updatedUser.role)} access.`,
       });
       setRoleTarget(null);
-      setRoleForm("MECHANIC");
+      setRoleForm("DRIVER");
       setRoleError("");
     } catch (error) {
       console.error("Failed to update role:", error);
@@ -739,7 +727,7 @@ export default function UsersManagement() {
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
-              <p className="users-page-eyebrow">Admin Operations</p>
+              <p className="users-page-eyebrow">Owner Operations</p>
               <h1 className="fleet-page-title">User Management</h1>
               <p className="fleet-page-subtitle">
                 Manage system users, access roles, and account status from a single high-trust
@@ -803,7 +791,7 @@ export default function UsersManagement() {
                 icon={PeopleAltOutlinedIcon}
                 value={summaryCounts.total}
                 label="Total Users"
-                helper="All accounts with access to the admin system."
+                helper="All accounts with access to the owner system."
                 tone="accent"
               />
               <MetricCard
@@ -817,14 +805,14 @@ export default function UsersManagement() {
                 icon={ArchiveOutlinedIcon}
                 value={summaryCounts.pending}
                 label="Pending Approvals"
-                helper="Signup requests waiting for admin review."
+                helper="Signup requests waiting for owner review."
                 tone="accent"
               />
               <MetricCard
                 icon={AdminPanelSettingsOutlinedIcon}
                 value={summaryCounts.elevated}
                 label="Elevated Roles"
-                helper="Owner and admin access holders."
+                helper="Owner access holders."
                 tone="neutral"
               />
             </div>
@@ -999,13 +987,12 @@ export default function UsersManagement() {
                     <select
                       id="user-role"
                       className="fleet-select"
-                      value={formData.role}
-                      onChange={(event) => handleFormChange("role", event.target.value)}
-                    >
-                      <option value="MECHANIC">MECHANIC</option>
-                      <option value="ADMIN">ADMIN</option>
+                    value={formData.role}
+                    onChange={(event) => handleFormChange("role", event.target.value)}
+                  >
+                      <option value="DRIVER">DRIVER</option>
                       <option value="OWNER">OWNER</option>
-                    </select>
+                  </select>
                   </div>
                 </div>
 
@@ -1067,7 +1054,7 @@ export default function UsersManagement() {
                       <div className="fleet-table-header-cell">Role</div>
                       <div className="fleet-table-header-cell">Status</div>
                       <div className="fleet-table-header-cell">Created</div>
-                      <div className="fleet-table-header-cell">Admin Actions</div>
+                      <div className="fleet-table-header-cell">Owner Actions</div>
                     </div>
 
                     {filteredUsers.map((user) => (
@@ -1101,7 +1088,7 @@ export default function UsersManagement() {
                           {formatDate(user.createdAt)}
                         </div>
 
-                        <div className="fleet-table-cell users-action-cell" data-label="Admin Actions">
+                        <div className="fleet-table-cell users-action-cell" data-label="Owner Actions">
                           <div className="users-action-group">
                             <button
                               type="button"
@@ -1162,7 +1149,7 @@ export default function UsersManagement() {
                     description={
                       hasFilters
                         ? "Adjust the search or filters to surface more accounts, or reset the view to show everything."
-                        : "Create the first access account to start managing the admin directory."
+                        : "Create the first access account to start managing the owner directory."
                     }
                     action={
                       hasFilters ? (
@@ -1382,8 +1369,8 @@ export default function UsersManagement() {
               </div>
 
               <p className="users-role-helper">
-                Role changes update the user&apos;s access immediately. Owners can assign owner access,
-                while admins can manage mechanic and admin accounts only.
+                Role changes update the user&apos;s access immediately. Owners can assign owner or
+                driver access.
               </p>
 
               {roleError ? (

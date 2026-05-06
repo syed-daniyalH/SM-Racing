@@ -881,7 +881,7 @@ export default function VoiceNoteComposer({
       <div className="voice-note-header">
         <div>
           <p className="voice-note-eyebrow">Voice Submission</p>
-          <h4>Capture a mechanic note with audio and transcript review</h4>
+          <h4>Capture a driver note with audio and transcript review</h4>
           <p className="voice-note-copy">
             Record a short voice note, let Deepgram convert it to text, then review or edit the transcript before it is submitted.
           </p>

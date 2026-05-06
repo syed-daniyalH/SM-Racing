@@ -164,6 +164,10 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         self.assertEqual(_intent_from_query("which one is better"), "recommendation")
         self.assertEqual(_intent_from_query("how can I improve?"), "coaching")
         self.assertEqual(_intent_from_query("show latest events"), "list_events")
+        self.assertEqual(_intent_from_query("show latest drivers"), "driver_vehicle_data")
+        self.assertEqual(_intent_from_query("show vehicle info"), "driver_vehicle_data")
+        self.assertEqual(_intent_from_query("show user data"), "driver_vehicle_data")
+        self.assertEqual(_intent_from_query("list users"), "driver_vehicle_data")
 
     def test_greeting_response_uses_short_welcome_for_simple_hi(self) -> None:
         response = _greeting_response("hi")

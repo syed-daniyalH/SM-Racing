@@ -74,7 +74,7 @@ def test_login_rejects_pending_signup(monkeypatch):
         auth_endpoints.login(UserLogin(email=user.email, password="password123"), session)
 
     assert exc_info.value.status_code == 403
-    assert "pending admin approval" in exc_info.value.detail.lower()
+    assert "pending owner approval" in exc_info.value.detail.lower()
     assert session.commits == 0
 
 

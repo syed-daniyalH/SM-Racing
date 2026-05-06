@@ -93,7 +93,7 @@ def _delete_user_history(db: Session, target_user_id: UUID) -> dict[str, int]:
 @router.get("", response_model=list[UserRead])
 def list_users(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> list[User]:
     return list(
         db.scalars(
@@ -109,7 +109,7 @@ def list_users(
 def create_admin_user(
     user_in: UserCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> User:
     try:
         return create_user(db, user_in, role=user_in.role)
@@ -121,7 +121,7 @@ def create_admin_user(
 def approve_user(
     user_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> User:
     target_user = db.get(User, user_id)
     if target_user is None:
@@ -143,7 +143,7 @@ def update_user_role(
     user_id: UUID,
     role_in: UserRoleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> User:
     target_user = db.get(User, user_id)
     if target_user is None:
@@ -183,7 +183,7 @@ def reset_user_password(
     user_id: UUID,
     password_in: UserPasswordReset,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> User:
     target_user = db.get(User, user_id)
     if target_user is None:
@@ -209,7 +209,7 @@ def reset_user_password(
 def delete_user(
     user_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.OWNER)),
 ) -> None:
     target_user = db.get(User, user_id)
     if target_user is None:
@@ -230,10 +230,10 @@ def delete_user(
             detail="Owner accounts cannot be deleted.",
         )
 
-    if current_user.role == UserRole.ADMIN and target_user.role != UserRole.MECHANIC:
+    if target_user.role != UserRole.DRIVER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admins can only delete mechanic accounts.",
+            detail="Owners can only delete driver accounts.",
         )
 
     try:

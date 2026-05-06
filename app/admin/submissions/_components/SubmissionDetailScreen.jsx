@@ -460,9 +460,9 @@ const buildAuditTimeline = (record, analysisResult = {}) => {
     if (voiceSession.confirmedAt) {
       fallback.push({
         action: "Voice Confirmed",
-        note: "Mechanic confirmed the transcript before final submission.",
+        note: "Driver confirmed the transcript before final submission.",
         timestamp: voiceSession.confirmedAt,
-        actor: "Mechanic",
+        actor: "Driver",
         tone: "success",
       });
     }
@@ -483,7 +483,7 @@ const buildAuditTimeline = (record, analysisResult = {}) => {
       action: "Archived",
       note: "Submission archived for audit history.",
       timestamp: analysisResult.archived_at || analysisResult.archivedAt,
-      actor: analysisResult.reviewed_by_name || "Admin",
+      actor: analysisResult.reviewed_by_name || "Owner",
       tone: "neutral",
     });
   }
@@ -556,7 +556,7 @@ const buildAttachmentList = (record, draftAnalysis = {}) => {
             url: voiceSession.audioDownloadUrl || voiceSession.audio_download_url || null,
             voiceSessionId: voiceSession.id || voiceSession.voiceSessionId || null,
             name: voiceSession.audioFileName || "Voice recording",
-            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Mechanic voice capture.",
+            description: voiceSession.transcriptEditedText || voiceSession.transcriptText || "Driver voice capture.",
             mimeType: voiceSession.audioContentType || voiceSession.audio_content_type || "audio/webm",
           },
         ]
@@ -978,11 +978,11 @@ export default function SubmissionDetailScreen({
     nextAnalysis.audit_log = appendAuditEntry(
       nextAnalysis,
       "Edited",
-      "Manual corrections and feedback were saved from the detailed admin view.",
+      "Manual corrections and feedback were saved from the detailed owner view.",
       "info",
     );
     nextAnalysis.last_edited_at = new Date().toISOString();
-    nextAnalysis.last_edited_by = user?.name || user?.email || "Admin";
+    nextAnalysis.last_edited_by = user?.name || user?.email || "Owner";
 
     await persistUpdate(
       {
@@ -994,7 +994,7 @@ export default function SubmissionDetailScreen({
           analysis_result: nextAnalysis,
         },
       },
-      "Submission data and admin notes were saved.",
+      "Submission data and owner notes were saved.",
     );
   };
 
@@ -1039,10 +1039,10 @@ export default function SubmissionDetailScreen({
   };
 
   const handleApprove = () =>
-    handleReviewAction("APPROVED", "Approved from the detailed admin view.", "Submission approved.");
+    handleReviewAction("APPROVED", "Approved from the detailed owner view.", "Submission approved.");
 
   const handleReject = () =>
-    handleReviewAction("FLAGGED", "Rejected from the detailed admin view.", "Submission flagged for correction.");
+    handleReviewAction("FLAGGED", "Rejected from the detailed owner view.", "Submission flagged for correction.");
 
   const handleExport = () => {
     if (!record) return;
@@ -1370,7 +1370,7 @@ export default function SubmissionDetailScreen({
               <div className="submission-detail-admin-note">
                 <div className="submission-detail-admin-note-header">
                   <div>
-                    <div className="submission-detail-group-title">Admin Feedback</div>
+                    <div className="submission-detail-group-title">Owner Feedback</div>
                     <p className="submission-detail-group-copy">
                       Add correction notes, validation remarks, or follow-up instructions.
                     </p>
@@ -1387,11 +1387,11 @@ export default function SubmissionDetailScreen({
                     rows={5}
                     value={draftComment}
                     onChange={(event) => setFeedback(event.target.value)}
-                    placeholder="Leave correction notes for the mechanic or the next reviewer."
+                    placeholder="Leave correction notes for the driver or the next reviewer."
                   />
                 ) : (
                   <div className="submission-detail-admin-note-readonly">
-                    {draftComment ? draftComment : "No admin feedback saved yet."}
+                    {draftComment ? draftComment : "No owner feedback saved yet."}
                   </div>
                 )}
               </div>
@@ -1406,7 +1406,7 @@ export default function SubmissionDetailScreen({
                   </span>
                   <h3>Exact Raw Content and Media</h3>
                   <p>
-                    Review the exact text or media submitted by the driver. Raw content is preserved as submitted while admin notes remain editable.
+                    Review the exact text or media submitted by the driver. Raw content is preserved as submitted while owner notes remain editable.
                   </p>
                 </div>
 

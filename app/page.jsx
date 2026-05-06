@@ -6,7 +6,7 @@ import { useAuth } from './context/AuthContext'
 
 export default function Home() {
   const router = useRouter()
-  const { user, loading, isAdmin } = useAuth()
+  const { user, loading, isOwner } = useAuth()
 
   useEffect(() => {
     // Wait for auth to finish loading
@@ -14,7 +14,7 @@ export default function Home() {
 
     if (user) {
       // Redirect to appropriate dashboard
-      if (isAdmin()) {
+      if (isOwner()) {
         router.push('/admin/users')
       } else {
         router.push('/events')
@@ -22,7 +22,7 @@ export default function Home() {
     } else {
       router.push('/login')
     }
-  }, [user, loading, isAdmin, router])
+  }, [user, loading, isOwner, router])
 
   return null
 }

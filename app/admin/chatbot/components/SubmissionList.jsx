@@ -57,7 +57,7 @@ export default function SubmissionList({ section }) {
       listTitle="Latest submissions"
       listSubtitle="Recent records in a compact queue, with the selected submission expanded on the right."
       detailTitle="Submission review"
-      detailSubtitle="The selected row opens in the same review workspace style used across the admin portal."
+      detailSubtitle="The selected row opens in the same review workspace style used across the owner portal."
       emptyTitle="No submissions"
       emptyMessage="No submission records were available for this response."
       renderRow={({ item, selected, onSelect }) => (

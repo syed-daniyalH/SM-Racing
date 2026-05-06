@@ -962,7 +962,7 @@ export default function ChatbotPage() {
             <div className="chatbot-hero-copy">
               <div className="chatbot-eyebrow">
                 <AdminPanelSettingsOutlinedIcon fontSize="inherit" />
-                <span>Admin Operations</span>
+                <span>Owner Operations</span>
               </div>
               <div className="chatbot-hero-brand">
                 <div className="chatbot-hero-icon" aria-hidden="true">

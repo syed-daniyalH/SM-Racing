@@ -10,7 +10,7 @@ from app.schemas.auth import UserCreate, UserSignup
 def create_user(
     db: Session,
     user_in: UserCreate | UserSignup,
-    role: UserRole = UserRole.MECHANIC,
+    role: UserRole = UserRole.DRIVER,
     is_active: bool = True,
     approval_status: UserApprovalStatus | None = None,
 ) -> User:

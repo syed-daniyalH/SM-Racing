@@ -3,8 +3,21 @@ from enum import Enum
 
 class UserRole(str, Enum):
     OWNER = "OWNER"
-    MECHANIC = "MECHANIC"
-    ADMIN = "ADMIN"
+    DRIVER = "DRIVER"
+
+    ADMIN = OWNER
+    MECHANIC = DRIVER
+    WORKER = DRIVER
+
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"OWNER", "ADMIN"}:
+                return cls.OWNER
+            if normalized in {"DRIVER", "MECHANIC", "WORKER"}:
+                return cls.DRIVER
+        return None
 
 
 class UserApprovalStatus(str, Enum):

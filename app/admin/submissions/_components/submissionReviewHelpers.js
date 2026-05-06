@@ -1124,7 +1124,7 @@ export const mockSubmissions = [
       registration_number: "MIA-444",
     },
     created_by_id: "usr_mock_003",
-    raw_text: "archived admin review note",
+    raw_text: "archived owner review note",
     image_url: null,
     payload: {
       date: "2026-09-18",

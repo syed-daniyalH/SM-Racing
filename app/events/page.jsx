@@ -318,7 +318,7 @@ export default function EventList() {
       setNotice({
         type: "warning",
         message:
-          "This event does not have a run group yet. Please ask admin to complete setup before selecting it.",
+          "This event does not have a run group yet. Please ask the owner to complete setup before selecting it.",
       });
       return;
     }
@@ -430,14 +430,14 @@ export default function EventList() {
             {runGroup.configured ? (
               <>
                 <CheckCircleRoundedIcon fontSize="inherit" />
-                Mechanics will see <strong>{runGroup.value}</strong> as the
+                Drivers will see <strong>{runGroup.value}</strong> as the
                 current run-group label.
               </>
             ) : (
               <>
                 <WarningAmberRoundedIcon fontSize="inherit" />
                 Run group is not configured yet. This event cannot be selected
-                until admin setup is complete.
+                until owner setup is complete.
               </>
             )}
           </div>
@@ -469,7 +469,7 @@ export default function EventList() {
             <div className="events-hero-copy">
               <div className="events-page-eyebrow">
                 <FlagRoundedIcon fontSize="inherit" />
-                Mechanic Operations
+                Driver Operations
               </div>
               <h1 className="events-page-title">Select Your Event</h1>
               <p className="events-page-subtitle">
@@ -516,7 +516,7 @@ export default function EventList() {
               <div className="summary-card-label">Total Events</div>
               <div className="summary-card-value">{summaryCounts.total}</div>
               <div className="summary-card-note">
-                Active race weekends available to mechanics.
+                Active race weekends available to drivers.
               </div>
             </div>
 

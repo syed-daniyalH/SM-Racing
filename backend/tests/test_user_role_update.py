@@ -38,58 +38,54 @@ def build_user(role: UserRole) -> SimpleNamespace:
     )
 
 
-def test_admin_can_change_user_role():
-    target_user = build_user(UserRole.MECHANIC)
-    current_user = build_user(UserRole.ADMIN)
+def test_owner_can_change_user_role():
+    target_user = build_user(UserRole.DRIVER)
+    current_user = build_user(UserRole.OWNER)
     session = DummySession(scalar_result=target_user)
 
     updated_user = users_endpoints.update_user_role(
         target_user.id,
-        UserRoleUpdate(role=UserRole.ADMIN),
+        UserRoleUpdate(role=UserRole.OWNER),
         session,
         current_user,
     )
 
-    assert updated_user.role == UserRole.ADMIN
+    assert updated_user.role == UserRole.OWNER
     assert session.commits == 1
     assert target_user in session.added
     assert target_user in session.refreshed
 
 
-def test_admin_cannot_assign_owner_role():
-    target_user = build_user(UserRole.MECHANIC)
-    current_user = build_user(UserRole.ADMIN)
+def test_owner_can_assign_owner_role():
+    target_user = build_user(UserRole.DRIVER)
+    current_user = build_user(UserRole.OWNER)
     session = DummySession(scalar_result=target_user)
 
-    with pytest.raises(HTTPException) as exc_info:
-        users_endpoints.update_user_role(
-            target_user.id,
-            UserRoleUpdate(role=UserRole.OWNER),
-            session,
-            current_user,
-        )
+    updated_user = users_endpoints.update_user_role(
+        target_user.id,
+        UserRoleUpdate(role=UserRole.OWNER),
+        session,
+        current_user,
+    )
 
-    assert exc_info.value.status_code == 403
-    assert "owner" in exc_info.value.detail.lower()
-    assert session.commits == 0
+    assert updated_user.role == UserRole.OWNER
+    assert session.commits == 1
 
 
-def test_admin_cannot_change_owner_account_role():
+def test_owner_can_change_owner_account_role():
     target_user = build_user(UserRole.OWNER)
-    current_user = build_user(UserRole.ADMIN)
+    current_user = build_user(UserRole.OWNER)
     session = DummySession(scalar_result=target_user)
 
-    with pytest.raises(HTTPException) as exc_info:
-        users_endpoints.update_user_role(
-            target_user.id,
-            UserRoleUpdate(role=UserRole.ADMIN),
-            session,
-            current_user,
-        )
+    updated_user = users_endpoints.update_user_role(
+        target_user.id,
+        UserRoleUpdate(role=UserRole.DRIVER),
+        session,
+        current_user,
+    )
 
-    assert exc_info.value.status_code == 403
-    assert "owner account" in exc_info.value.detail.lower()
-    assert session.commits == 0
+    assert updated_user.role == UserRole.DRIVER
+    assert session.commits == 1
 
 
 def test_owner_cannot_change_own_role():
@@ -99,7 +95,7 @@ def test_owner_cannot_change_own_role():
     with pytest.raises(HTTPException) as exc_info:
         users_endpoints.update_user_role(
             current_user.id,
-            UserRoleUpdate(role=UserRole.ADMIN),
+            UserRoleUpdate(role=UserRole.DRIVER),
             session,
             current_user,
         )

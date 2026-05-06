@@ -917,7 +917,7 @@ export default function VoiceSubmissionPage() {
                   <h2>Only the essentials before recording</h2>
                 </div>
                 <StatusBadge
-                  label={submissionState.isOpen ? "Mechanic Ready" : "Read Only"}
+                  label={submissionState.isOpen ? "Driver Ready" : "Read Only"}
                   tone={submissionState.isOpen ? "success" : "neutral"}
                 />
               </div>

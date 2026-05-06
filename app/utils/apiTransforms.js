@@ -25,7 +25,7 @@ export const normalizeUser = (user) => {
     ...user,
     id,
     _id: id,
-    role: user.role || user.userRole || "MECHANIC",
+    role: user.role || user.userRole || "DRIVER",
     approvalStatus,
     isPendingApproval: approvalStatus === "PENDING",
     isActive,

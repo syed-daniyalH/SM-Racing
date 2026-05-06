@@ -38,7 +38,7 @@ def register_user(user_in: UserSignup, db: Session = Depends(get_db)) -> User:
         return create_user(
             db,
             user_in,
-            role=UserRole.MECHANIC,
+            role=UserRole.DRIVER,
             is_active=False,
             approval_status=UserApprovalStatus.PENDING,
         )
@@ -61,13 +61,13 @@ def login(
     if user.approval_status == UserApprovalStatus.PENDING:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is pending admin approval. Please wait for an owner or admin to approve your request.",
+            detail="Your account is pending owner approval. Please wait for an owner to approve your request.",
         )
 
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is inactive. Please contact an owner or admin to restore access.",
+            detail="This account is inactive. Please contact an owner to restore access.",
         )
 
     return _issue_login_token(db, user)
@@ -88,7 +88,7 @@ def admin_login(
     if user.approval_status == UserApprovalStatus.PENDING:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is pending admin approval and cannot access the admin portal yet.",
+            detail="This account is pending owner approval and cannot access the owner portal yet.",
         )
 
     if not user.is_active:
@@ -97,10 +97,10 @@ def admin_login(
             detail="This account is inactive. Please contact an owner to restore access.",
         )
 
-    if user.role not in {UserRole.OWNER, UserRole.ADMIN}:
+    if user.role != UserRole.OWNER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin portal access requires an owner or admin account",
+            detail="Owner portal access requires an owner account",
         )
 
     return _issue_login_token(db, user)

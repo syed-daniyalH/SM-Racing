@@ -93,7 +93,7 @@ const fetchCurrentUserWithToken = async (token) => {
 };
 
 /**
- * Register a new mechanic account.
+ * Register a new driver account.
  */
 export const registerUser = async (userData) => {
   try {
@@ -289,7 +289,7 @@ export const loginUser = async (credentials, loginPath = "/auth/login") => {
 };
 
 /**
- * Login an owner or admin account through the admin portal entry point.
+ * Login an owner account through the owner portal entry point.
  */
 export const loginAdminUser = async (credentials) => loginUser(credentials, "/auth/admin-login");
 

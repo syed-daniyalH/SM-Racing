@@ -277,7 +277,7 @@ def classify_chatbot_intent(
             "tire_pressures_by_session for pressure requests, suspension_data for suspension, alignment_by_car for alignment, "
             "tire_temperatures_by_session for tire temperature requests, tire_history_by_session for tire history, "
             "sessions_by_event for event-scoped sessions, sessions_by_driver for driver-scoped sessions, "
-            "driver_vehicle_data for driver or vehicle lookups, compare for comparisons, recommendation for best-choice questions, "
+            "driver_vehicle_data for driver, user, or vehicle lookups, compare for comparisons, recommendation for best-choice questions, "
             "coaching for improvement guidance, and unsupported when nothing supported fits."
         ),
         user_prompt=(

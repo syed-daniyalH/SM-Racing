@@ -24,6 +24,11 @@ const resolveNextPath = (value) => {
   return nextPath;
 };
 
+const formatRoleLabel = (role) => {
+  const normalized = String(role || "").toUpperCase();
+  return normalized ? `${normalized.charAt(0)}${normalized.slice(1).toLowerCase()}` : "";
+};
+
 function BrandFlag() {
   return (
     <div className="login-brand__flag" aria-hidden="true">
@@ -157,7 +162,7 @@ export default function SignoutClient() {
             <span className="login-brand__white">-2</span>
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
-          <p className="login-hero__subtitle">Admin Portal Sign Out</p>
+          <p className="login-hero__subtitle">Owner Portal Sign Out</p>
         </section>
 
         <section className="login-card" aria-label="Sign out status">
@@ -175,13 +180,15 @@ export default function SignoutClient() {
                   <div className="login-alert__copy">
                     <p className="login-alert__title">Session closed for</p>
                     <p className="login-alert__text">
-                      {sessionUser.name || sessionUser.email} · {sessionUser.role}
+                      {sessionUser.name || sessionUser.email} · {formatRoleLabel(sessionUser.role)}
                     </p>
                   </div>
                 </div>
               ) : null}
 
-              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", justifyContent: "center" }}>
+              <div
+                style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", justifyContent: "center" }}
+              >
                 <button
                   type="button"
                   className="login-button"

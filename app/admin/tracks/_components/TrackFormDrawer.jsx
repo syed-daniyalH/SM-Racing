@@ -129,7 +129,7 @@ export default function TrackFormDrawer({
         <p className="tracks-preview-note">
           {shortCodeValue === "Not configured"
             ? "Short codes are normalized to uppercase before saving."
-            : `Mechanics and filters will reference ${shortCodeValue} in a standardized format.`}
+            : `Drivers and filters will reference ${shortCodeValue} in a standardized format.`}
         </p>
       </div>
 

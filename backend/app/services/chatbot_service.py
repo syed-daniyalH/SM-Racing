@@ -61,6 +61,9 @@ DETERMINISTIC_PROMPTS = [
     "Show tire temperatures",
     "Show tire history",
     "Show driver and vehicle data",
+    "Show latest drivers",
+    "Show latest vehicles",
+    "Show users",
     "Show sessions for this event",
     "Show sessions for driver Alex",
     "Show alignment for Car 12",
@@ -169,11 +172,12 @@ INTENT_ROUTING_TABLE = {
 UNSUPPORTED_MESSAGE = (
     "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
     "alignment, tire temperatures, tire history, chat-based notes, setup updates, submissions, "
-    "drivers, vehicles, recommendations, and improvement coaching. Please ask one of those questions."
+    "drivers, users, vehicles, recommendations, and improvement coaching. Please ask one of those questions."
 )
 PLEASE_SELECT_EVENT_MESSAGE = "Please select an event or include the event name so I can show its sessions."
 NO_EVENTS_MESSAGE = "No events were found in the SM2 Racing database."
 NO_DRIVER_MATCH_MESSAGE = "No driver matching '{term}' was found in the database."
+NO_USER_MATCH_MESSAGE = "No user matching '{term}' was found in the database."
 NO_VEHICLE_MATCH_MESSAGE = "No vehicle matching Car {term} was found in the database."
 MULTIPLE_DRIVER_MATCH_MESSAGE = "I found multiple drivers matching '{term}'. Please choose the correct driver."
 MULTIPLE_VEHICLE_MATCH_MESSAGE = "I found multiple vehicles matching Car {term}. Please choose the correct vehicle."
@@ -935,6 +939,29 @@ def _load_driver_rows(
     return list(db.execute(stmt).scalars().all())
 
 
+def _load_user_rows(
+    db: Session,
+    *,
+    limit: int = 8,
+    active_only: bool | None = None,
+) -> list[User]:
+    stmt = select(User)
+
+    if active_only is True:
+        stmt = stmt.where(User.is_active.is_(True))
+    elif active_only is False:
+        stmt = stmt.where(User.is_active.is_(False))
+
+    stmt = stmt.order_by(
+        User.is_active.desc(),
+        User.name.asc(),
+        User.email.asc(),
+    )
+    if limit:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
 def _load_vehicle_rows(
     db: Session,
     *,
@@ -1077,6 +1104,17 @@ def _driver_name(driver: Driver | None, fallback: str | None = None) -> str:
         if part and part.strip()
     ).strip()
     return combined or _text(driver.driver_id)
+
+
+def _user_name(user: User | None, fallback: str | None = None) -> str:
+    if user is None:
+        return _text(fallback)
+
+    candidate = _text(user.name, "")
+    if candidate != "Not available":
+        return candidate
+
+    return _text(user.email, fallback or "Not available")
 
 
 def _vehicle_name(vehicle: Vehicle | None, fallback: str | None = None) -> str:
@@ -1408,6 +1446,19 @@ def _vehicle_match_text(vehicle: Vehicle) -> str:
     )
 
 
+def _user_match_text(user: User) -> str:
+    return " ".join(
+        part
+        for part in [
+            user.name,
+            user.email,
+            _enum_text(user.role),
+            _enum_text(user.approval_status),
+        ]
+        if part
+    )
+
+
 def _load_event_rows(db: Session, *, limit: int | None = None) -> list[tuple[Event, RunGroup | None]]:
     stmt = (
         select(Event, RunGroup)
@@ -1444,6 +1495,20 @@ def _find_driver_matches(
 
     rows = _load_driver_rows(db, limit=50)
     matches = [driver for driver in rows if _query_phrase_matches(_driver_match_text(driver), search_text)]
+    return matches[:limit]
+
+
+def _find_user_matches(
+    db: Session,
+    search_text: str,
+    *,
+    limit: int = 5,
+) -> list[User]:
+    if not search_text.strip():
+        return []
+
+    rows = _load_user_rows(db, limit=50)
+    matches = [user for user in rows if _query_phrase_matches(_user_match_text(user), search_text)]
     return matches[:limit]
 
 
@@ -1504,6 +1569,22 @@ def _extract_driver_query(query: str) -> str | None:
         if match:
             value = match.group(1).strip()
             value = re.sub(r"[\s.,;:]+$", "", value)
+            if value:
+                return value
+    return None
+
+
+def _extract_user_query(query: str) -> str | None:
+    patterns = [
+        r"(?:for\s+user|for\s+account)\s+(.+)$",
+        r"(?:show|list|get)\s+(?:latest\s+)?(?:users|user|accounts|account)\s+(?:for|named|called)?\s+(.+)$",
+        r"(?:user|account)\s+(?:details?|info|information|data)\s+(?:for)?\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            value = re.sub(r"[\s.,;:?!]+$", "", value)
             if value:
                 return value
     return None
@@ -3052,12 +3133,14 @@ def _fleet_response(
     session_bundle: SessionBundle | None,
     driver_id: str | None = None,
     vehicle_id: str | None = None,
+    user_rows: list[User] | None = None,
 ) -> ChatbotResponse:
     driver_rows = _load_driver_rows(db, limit=8, driver_id=driver_id)
     vehicle_rows = _load_vehicle_rows(db, limit=8, vehicle_id=vehicle_id)
+    user_rows = user_rows if user_rows is not None else _load_user_rows(db, limit=8)
 
-    if not driver_rows and not vehicle_rows and session_bundle is None:
-        return _not_found_response("Driver and Vehicle Data", NO_DATA_MESSAGE, intent="driver_vehicle_data")
+    if not driver_rows and not vehicle_rows and not user_rows and session_bundle is None:
+        return _not_found_response("Driver, User, and Vehicle Data", NO_DATA_MESSAGE, intent="driver_vehicle_data")
 
     driver_map = {driver.driver_id: driver for driver in driver_rows}
     if session_bundle is not None and session_bundle.driver is not None:
@@ -3119,6 +3202,31 @@ def _fleet_response(
 
     sections.append(
         _section(
+            "Users",
+            subtitle="System user accounts with role and approval status.",
+            variant="cards",
+            icon_key="default",
+            cards=[
+                _card(
+                    _user_name(user),
+                    subtitle=user.email,
+                    badge="Active" if user.is_active else "Inactive",
+                    badge_tone=_tone_for_active(user.is_active),
+                    icon_key="default",
+                    fields=[
+                        _field("Role", _humanize_enum(user.role)),
+                        _field("Approval", _humanize_enum(user.approval_status)),
+                        _field("Last login", _datetime_text(user.last_login_at)),
+                        _field("Created", _datetime_text(user.created_at)),
+                    ],
+                )
+                for user in user_rows
+            ],
+        )
+    )
+
+    sections.append(
+        _section(
             "Vehicles",
             subtitle="Vehicle directory cards with status and driver links.",
             variant="cards",
@@ -3154,6 +3262,15 @@ def _fleet_response(
     ]
     records_used.extend(
         _record_reference(
+            "user",
+            str(user.id),
+            _user_name(user),
+            details=f"{_humanize_enum(user.role)} | {user.email}",
+        )
+        for user in user_rows
+    )
+    records_used.extend(
+        _record_reference(
             "vehicle",
             vehicle.vehicle_id,
             _vehicle_name(vehicle),
@@ -3172,31 +3289,32 @@ def _fleet_response(
         )
 
     summary_parts = [
-        f"Loaded {len(driver_rows)} driver(s) and {len(vehicle_rows)} vehicle(s).",
-        "Showing the current roster cards below.",
+        f"Loaded {len(driver_rows)} driver(s), {len(user_rows)} user account(s), and {len(vehicle_rows)} vehicle(s).",
+        "Showing the current roster data from the SM Racing database below.",
     ]
     if session_bundle is not None:
         summary_parts.append(f"Session pairing anchored to {_session_heading(session_bundle.session)}.")
 
     logger.info(
-        "Admin chatbot fleet response built: drivers=%s vehicles=%s session=%s",
+        "Admin chatbot fleet response built: drivers=%s users=%s vehicles=%s session=%s",
         len(driver_rows),
+        len(user_rows),
         len(vehicle_rows),
         session_bundle is not None,
     )
 
     return ChatbotResponse(
         kind="fleet",
-        title="Driver and Vehicle Data",
+        title="Driver, User, and Vehicle Data",
         summary="\n\n".join(summary_parts),
         answer="\n\n".join(summary_parts),
         source_label=SOURCE_LABEL,
-        data_found=bool(driver_rows or vehicle_rows or session_bundle is not None),
+        data_found=bool(driver_rows or user_rows or vehicle_rows or session_bundle is not None),
         records_used=records_used,
         intent="driver_vehicle_data",
         data=_response_data(sections=sections, records_used=records_used),
         sections=sections,
-        follow_up=["Show latest sessions", "Show all events", "Show setup for latest session"],
+        follow_up=["Show latest sessions", "Show latest submissions", "Show setup for latest session"],
         generated_at=datetime.utcnow(),
     )
 
@@ -4634,6 +4752,27 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
             "show drivers and vehicles",
             "driver vehicle mapping",
             "cars and drivers",
+            "show latest drivers",
+            "show latest vehicles",
+            "show users",
+            "show user data",
+            "show driver data",
+            "show vehicle data",
+            "show driver info",
+            "show vehicle info",
+            "show user info",
+            "driver information",
+            "vehicle information",
+            "user information",
+            "driver details",
+            "vehicle details",
+            "user details",
+            "list drivers",
+            "list vehicles",
+            "list users",
+            "driver lookup",
+            "vehicle lookup",
+            "user lookup",
         ]
     ):
         return "driver_vehicle_data"
@@ -4769,7 +4908,13 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     if has_session_term:
         return "latest_sessions"
 
-    if "driver" in text and "vehicle" in text:
+    if any(term in text for term in ["user", "users", "account", "accounts"]):
+        return "driver_vehicle_data"
+
+    if (
+        any(term in text for term in ["driver", "drivers", "vehicle", "vehicles", "car", "cars"])
+        and any(keyword in text for keyword in ["show", "list", "lookup", "data", "info", "information", "details", "latest"])
+    ):
         return "driver_vehicle_data"
 
     return "unsupported"
@@ -4889,6 +5034,7 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
     memory = _conversation_memory(conversation)
 
     driver_query = _extract_driver_query(query) or nlp_filters.get("driver_query") or None
+    user_query = _extract_user_query(query) or None
     event_query = _extract_event_query(query) or nlp_filters.get("event_query") or None
     car_number = (query_in.car_number or _extract_car_number(query) or nlp_filters.get("car_number") or "").strip() or None
     session_number = _extract_session_number(query)
@@ -4902,12 +5048,13 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         session_date, session_date_label = _extract_session_date_filter(nlp_filters["date_filter"])
     time_window = _extract_time_window(query) or nlp_filters.get("time_window") or None
     logger.info(
-        "Admin chatbot extracted filters: event_id=%s session_id=%s driver_id=%s vehicle_id=%s driver_query=%s event_query=%s car_number=%s session_number=%s session_date=%s time_window=%s limit=%s",
+        "Admin chatbot extracted filters: event_id=%s session_id=%s driver_id=%s vehicle_id=%s driver_query=%s user_query=%s event_query=%s car_number=%s session_number=%s session_date=%s time_window=%s limit=%s",
         query_in.event_id,
         query_in.session_id,
         query_in.driver_id,
         query_in.vehicle_id,
         driver_query,
+        user_query,
         event_query,
         car_number,
         session_number,
@@ -5800,15 +5947,27 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         session_bundle = session_bundle
         if session_bundle is not None and event is not None and not _session_in_event_window(session_bundle.session, event):
             session_bundle = None
+        matched_user_rows: list[User] | None = None
+        if user_query:
+            matched_user_rows = _find_user_matches(db, user_query)
+            if not matched_user_rows:
+                logger.info("Admin chatbot missing data: intent=driver_vehicle_data user_query=%s", user_query)
+                return _not_found_response(
+                    "Users",
+                    NO_USER_MATCH_MESSAGE.format(term=user_query),
+                    intent="driver_vehicle_data",
+                )
         response = _fleet_response(
             db,
             session_bundle=session_bundle,
             driver_id=selected_driver.driver_id if selected_driver is not None else query_in.driver_id,
             vehicle_id=vehicle_filter_id,
+            user_rows=matched_user_rows,
         )
         logger.info(
-            "Admin chatbot records found: intent=driver_vehicle_data drivers=%s vehicles=%s session=%s",
+            "Admin chatbot records found: intent=driver_vehicle_data drivers=%s users=%s vehicles=%s session=%s",
             len([record for record in response.records_used or [] if record.kind == "driver"]),
+            len([record for record in response.records_used or [] if record.kind == "user"]),
             len([record for record in response.records_used or [] if record.kind == "vehicle"]),
             session_bundle is not None,
         )
