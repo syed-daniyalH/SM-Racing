@@ -20,9 +20,8 @@ CHATBOT_PERSONA_PROMPT = (
     "Be professional, authoritative, concise, objective, empathetic, and structured. "
     "Use only the structured backend data provided to you. "
     "Do not invent values, guess missing data, or claim records that are not present. "
-    "When the user gives a simple greeting like hi, hello, hey, or good morning, respond with a short warm welcome. "
-    "When the user asks what you are, what you can do, or asks for help, respond with a fuller welcome "
-    "and a clear capability statement. "
+    "When the user greets you or asks what you can do, what services you provide, or asks for help, "
+    "respond with a professional capability overview instead of a minimal greeting. "
     "For data-heavy responses, write a concise executive summary followed by 1 to 3 short narrative paragraphs. "
     "Explain what changed, why it matters, and the likely performance impact. "
     "Use structured details only when they improve clarity, and keep the prose practical for race team users. "
@@ -30,6 +29,8 @@ CHATBOT_PERSONA_PROMPT = (
     "If the backend response indicates ambiguity or missing context, explain that clearly and ask for only the missing detail. "
     "If the request is outside the supported scope, say so briefly and offer the closest supported actions."
 )
+
+LLM_SUMMARY_ALLOWED_INTENTS = {"compare", "recommendation", "coaching", "unsupported"}
 
 INTENT_RESPONSE_SCHEMA = {
     "type": "object",
@@ -266,9 +267,10 @@ def classify_chatbot_intent(
         system_prompt=(
             "You classify SM2 Racing admin chatbot requests for the AI Race Assistant. "
             "Return only JSON that matches the schema. "
+            "Use this only after deterministic routing has failed. "
             "Choose one allowed intent. Extract only explicit filters from the user's text. "
             "Do not invent session IDs, car numbers, driver names, event names, dates, or times. "
-            "If the user is greeting or asking what you are / what you can do, choose the greeting intent."
+            "Only promote the request to compare, recommendation, or coaching when the user clearly asks for that."
         ),
         user_prompt=(
             f"User query: {query}\n"
@@ -427,7 +429,7 @@ def _default_response_type(response: ChatbotResponse) -> str:
         return "recommendation_summary"
     if response.kind == "coaching":
         return "coaching_summary"
-    if response.intent in {"greeting", "help"}:
+    if response.intent in {"greeting", "help_services", "thanks", "help"}:
         return "greeting"
     return "query_success"
 
@@ -441,10 +443,15 @@ def fallback_plain_response(*, user_query: str, backend_response: ChatbotRespons
         summary = (
             summary
             or (
-                "Hello, and welcome to the SM Racing System. "
-                "I can assist you with session analysis, setup data insights, performance comparisons, "
-                "submission reviews, and driver or vehicle lookups. "
-                "Please let me know how you would like to proceed."
+                "Hello, and welcome to the SM Racing System.\n\n"
+                "I can help you with SM Racing race data and setup tasks.\n"
+                "Here are the main things I can do:\n"
+                "- Show latest events, sessions, drivers, vehicles, and submissions\n"
+                "- Display setup details for a selected or latest session\n"
+                "- Compare sessions and highlight changes\n"
+                "- Review tire pressures, temperatures, suspension, and alignment\n"
+                "- Summarize race notes and submissions\n"
+                "- Suggest setup improvements based on previous session data"
             )
         )
     elif response_type == "latest_sessions" and record_count:
@@ -551,6 +558,9 @@ def generate_nlp_response(
     backend_response: ChatbotResponse,
     request_scope: ChatbotQuery | dict[str, Any] | None = None,
 ) -> ChatbotLLMSummaryResult:
+    if backend_response.intent not in LLM_SUMMARY_ALLOWED_INTENTS:
+        return fallback_plain_response(user_query=user_query, backend_response=backend_response)
+
     return generate_summary_response(
         user_query=user_query,
         backend_response=backend_response,

@@ -49,6 +49,34 @@ from app.services.submission_payload_service import get_session_payload
 NO_DATA_MESSAGE = "No matching data was found in the SM2 Racing database."
 SOURCE_LABEL = "SM2 Racing Database"
 logger = logging.getLogger(__name__)
+
+DETERMINISTIC_PROMPTS = [
+    "Show latest events",
+    "Show latest sessions",
+    "Show latest submissions",
+    "Show setup for latest session",
+    "Show tire pressures",
+    "Show suspension data",
+    "Show alignment data",
+    "Show tire temperatures",
+    "Show tire history",
+    "Show driver and vehicle data",
+    "Show sessions for this event",
+    "Show sessions for driver Alex",
+    "Show alignment for Car 12",
+]
+
+AI_ONLY_PROMPTS = [
+    "Compare sessions",
+    "Which one is better?",
+    "How can I improve?",
+    "What should I change next?",
+    "What are my weak points?",
+    "Compare with previous session",
+    "Suggest priority changes",
+    "Explain why",
+]
+
 DEFAULT_FOLLOW_UPS = [
     "Show all events",
     "Show latest sessions",
@@ -75,6 +103,68 @@ DEFAULT_FOLLOW_UPS = [
     "What should I change next?",
     "What are my weak points?",
 ]
+
+GREETING_QUERY_PHRASES = {
+    "hi",
+    "hello",
+    "hey",
+    "greetings",
+    "hello there",
+    "hi there",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good night",
+}
+
+HELP_SERVICES_QUERY_PHRASES = {
+    "help",
+    "can you help me",
+    "how can you help",
+    "what are you",
+    "who are you",
+    "what can you do",
+    "what do you do",
+    "what services do you provide",
+    "what services do you offer",
+    "show options",
+    "services",
+}
+
+THANKS_QUERY_PHRASES = {
+    "thanks",
+    "thank you",
+    "thank you so much",
+    "thank you very much",
+    "thanks a lot",
+    "much appreciated",
+    "appreciate it",
+}
+
+LLM_ROUTABLE_INTENTS = {"compare", "recommendation", "coaching", "unsupported"}
+
+INTENT_ROUTING_TABLE = {
+    "greeting": {"group": "greeting", "mode": "preset", "allow_llm": False},
+    "help_services": {"group": "help_services", "mode": "preset", "allow_llm": False},
+    "thanks": {"group": "thanks", "mode": "preset", "allow_llm": False},
+    "list_events": {"group": "latest_events", "mode": "structured", "allow_llm": False},
+    "latest_sessions": {"group": "latest_sessions", "mode": "structured", "allow_llm": False},
+    "latest_submissions": {"group": "latest_submissions", "mode": "structured", "allow_llm": False},
+    "setup_latest_session": {"group": "setup_detail", "mode": "structured", "allow_llm": False},
+    "tire_pressures_by_session": {"group": "tire_pressures", "mode": "structured", "allow_llm": False},
+    "suspension_data": {"group": "suspension", "mode": "structured", "allow_llm": False},
+    "alignment_by_car": {"group": "alignment", "mode": "structured", "allow_llm": False},
+    "tire_temperatures_by_session": {"group": "tire_temperatures", "mode": "structured", "allow_llm": False},
+    "tire_history_by_session": {"group": "tire_history", "mode": "structured", "allow_llm": False},
+    "sessions_by_event": {"group": "event_sessions", "mode": "structured", "allow_llm": False},
+    "sessions_by_driver": {"group": "driver_sessions", "mode": "structured", "allow_llm": False},
+    "driver_vehicle_data": {"group": "driver_vehicle_lookup", "mode": "structured", "allow_llm": False},
+    "compare": {"group": "comparison", "mode": "structured_ai", "allow_llm": True},
+    "recommendation": {"group": "suggestion", "mode": "structured_ai", "allow_llm": True},
+    "coaching": {"group": "suggestion", "mode": "structured_ai", "allow_llm": True},
+    "unsupported": {"group": "unknown", "mode": "llm_fallback", "allow_llm": True},
+}
 
 UNSUPPORTED_MESSAGE = (
     "I can currently help with events, sessions, setup sheets, tire pressures, suspension, "
@@ -115,28 +205,7 @@ VEHICLE_SCOPED_INTENTS = {
     "coaching",
 }
 
-NLP_ALLOWED_INTENTS = [
-    "greeting",
-    "help",
-    "list_events",
-    "latest_sessions",
-    "sessions_by_event",
-    "sessions_by_driver",
-    "setup_latest_session",
-    "tire_pressures_by_session",
-    "tire_temperatures_by_session",
-    "tire_history_by_session",
-    "log_session_note",
-    "update_setup_fields",
-    "suspension_data",
-    "alignment_by_car",
-    "latest_submissions",
-    "driver_vehicle_data",
-    "compare",
-    "recommendation",
-    "coaching",
-    "unsupported",
-]
+NLP_ALLOWED_INTENTS = ["compare", "recommendation", "coaching", "unsupported"]
 
 
 @dataclass(slots=True)
@@ -226,102 +295,67 @@ def _normalize_query_text(value: str) -> str:
 
 def _is_greeting_query(value: str) -> bool:
     normalized = _normalize_query_text(value)
-    if not normalized:
-        return False
+    return bool(normalized and normalized in GREETING_QUERY_PHRASES)
 
-    greeting_phrases = {
-        "hi",
-        "hello",
-        "hey",
-        "greetings",
-        "help",
-        "thanks",
-        "thank you",
-        "thank you so much",
-        "thank you very much",
-        "thanks a lot",
-        "much appreciated",
-        "appreciate it",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "good night",
-        "hello there",
-        "hi there",
-        "hey there",
-        "what are you",
-        "who are you",
-        "what can you do",
-        "what do you do",
-        "can you help me",
-    }
-    return normalized in greeting_phrases
+
+def _is_help_services_query(value: str) -> bool:
+    normalized = _normalize_query_text(value)
+    return bool(normalized and normalized in HELP_SERVICES_QUERY_PHRASES)
+
+
+def _is_thanks_query(value: str) -> bool:
+    normalized = _normalize_query_text(value)
+    return bool(normalized and normalized in THANKS_QUERY_PHRASES)
+
+
+def _route_group_for_intent(intent: str) -> str:
+    return INTENT_ROUTING_TABLE.get(intent, {}).get("group", "unknown")
+
+
+def _allows_llm_for_intent(intent: str) -> bool:
+    return bool(INTENT_ROUTING_TABLE.get(intent, {}).get("allow_llm"))
 
 
 def _greeting_style_for_query(value: str) -> str:
     normalized = _normalize_query_text(value)
     if not normalized:
-        return "short"
+        return "help_services"
 
-    if any(
-        phrase in normalized
-        for phrase in (
-            "what are you",
-            "who are you",
-            "what can you do",
-            "what do you do",
-            "how can you help",
-            "show help",
-            "need help",
-            "help",
-        )
-    ):
-        return "intro"
+    if _is_help_services_query(normalized):
+        return "help_services"
 
-    if any(
-        phrase in normalized
-        for phrase in (
-            "thanks",
-            "thank you",
-            "thank you so much",
-            "thank you very much",
-            "thanks a lot",
-            "much appreciated",
-            "appreciate it",
-        )
-    ):
+    if _is_thanks_query(normalized):
         return "thanks"
 
-    if any(
-        phrase in normalized
-        for phrase in (
-            "good morning",
-            "good afternoon",
-            "good evening",
-            "good night",
-        )
-    ):
-        return "time_based"
+    if _is_greeting_query(normalized):
+        return "greeting"
 
-    return "short"
+    return "help_services"
 
 
 def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
     style = _greeting_style_for_query(query)
-    normalized = _normalize_query_text(query)
+    capability_message = (
+        "Hello, and welcome to the SM Racing System.\n\n"
+        "I can help you with SM Racing race data and setup tasks.\n"
+        "Here are the main things I can do:\n"
+        "- Show latest events, sessions, drivers, vehicles, and submissions\n"
+        "- Display setup details for a selected or latest session\n"
+        "- Compare sessions and highlight changes\n"
+        "- Review tire pressures, temperatures, suspension, and alignment\n"
+        "- Summarize race notes and submissions\n"
+        "- Suggest setup improvements based on previous session data"
+    )
+    capability_follow_up = [
+        "Show latest events",
+        "Show latest sessions",
+        "Show latest submissions",
+        "Show setup for latest session",
+        "Compare session 1 vs session 2",
+    ]
 
-    if style == "intro":
-        return (
-            "Hello, and welcome to the SM Racing System. "
-            "I can assist you with session analysis, setup data insights, performance comparisons, "
-            "submission reviews, and driver or vehicle lookups. "
-            "Please let me know how you would like to proceed."
-        ), [
-            "Show latest sessions",
-            "Show latest submissions",
-            "Compare session 1 vs session 2",
-            "Show setup for latest session",
-        ]
+    if style in {"greeting", "help_services"}:
+        return capability_message, capability_follow_up
 
     if style == "thanks":
         return (
@@ -334,35 +368,7 @@ def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
             "Compare session 1 vs session 2",
         ]
 
-    if style == "time_based":
-        if "good morning" in normalized:
-            greeting_open = "Good morning"
-        elif "good afternoon" in normalized:
-            greeting_open = "Good afternoon"
-        elif "good evening" in normalized:
-            greeting_open = "Good evening"
-        elif "good night" in normalized:
-            greeting_open = "Good evening"
-        else:
-            greeting_open = "Hello"
-
-        return (
-            f"{greeting_open}. How can I help with SM Racing data today?"
-        ), [
-            "Show latest sessions",
-            "Show latest submissions",
-            "Show setup for latest session",
-            "Show driver and vehicle data",
-        ]
-
-    return (
-        "Hello. How can I help with SM Racing data today?"
-    ), [
-        "Show latest sessions",
-        "Show setup for latest session",
-        "Show latest submissions",
-        "Compare session 1 vs session 2",
-    ]
+    return capability_message, capability_follow_up
 
 
 def _setup_field_definitions() -> tuple[SetupFieldDefinition, ...]:
@@ -1650,8 +1656,9 @@ def _needs_context_response(
     )
 
 
-def _greeting_response(query: str = "") -> ChatbotResponse:
+def _greeting_response(query: str = "", *, intent: str | None = None) -> ChatbotResponse:
     message, follow_up = _greeting_message_for_query(query)
+    resolved_intent = intent or _greeting_style_for_query(query)
     return ChatbotResponse(
         kind="message",
         title="AI Race Assistant",
@@ -1660,12 +1667,14 @@ def _greeting_response(query: str = "") -> ChatbotResponse:
         data_source="SM Racing Assistant",
         source_label="SM Racing Assistant",
         data_found=True,
-        intent="greeting",
+        intent=resolved_intent,
         status="success",
         data={
             "message": message,
             "response_type": "greeting",
             "greeting_style": _greeting_style_for_query(query),
+            "intent_group": _route_group_for_intent(resolved_intent),
+            "routing_mode": INTENT_ROUTING_TABLE.get(resolved_intent, {}).get("mode", "preset"),
         },
         follow_up=follow_up,
         generated_at=datetime.utcnow(),
@@ -4456,14 +4465,19 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     text = _normalize_query_text(query)
     has_session_term = _has_session_term(text)
 
-    if _is_greeting_query(text) or any(
+    if _is_thanks_query(text):
+        return "thanks"
+
+    if _is_help_services_query(text) or any(
         phrase in text
         for phrase in [
-            "how can you help",
             "show help",
             "need help",
         ]
     ):
+        return "help_services"
+
+    if _is_greeting_query(text):
         return "greeting"
 
     if any(
@@ -4522,7 +4536,7 @@ def _intent_from_query(query: str, query_in: ChatbotQuery | None = None) -> str:
     if _looks_like_setup_update_query(text):
         return "update_setup_fields"
 
-    if any(keyword in text for keyword in ["show all events", "list events", "show events", "all events"]):
+    if any(keyword in text for keyword in ["show latest events", "latest events", "show all events", "list events", "show events", "all events"]):
         return "list_events"
 
     if any(keyword in text for keyword in ["show latest sessions", "latest sessions", "recent sessions", "show recent sessions"]):
@@ -4753,11 +4767,11 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
     query = query_in.message.strip()
     logger.info("Admin chatbot raw message received: %s", query)
     deterministic_intent = _intent_from_query(query, query_in)
-    if deterministic_intent == "greeting":
-        logger.info("Admin chatbot greeting response selected")
-        return _greeting_response(query)
+    if deterministic_intent in {"greeting", "help_services", "thanks"}:
+        logger.info("Admin chatbot preset response selected: intent=%s", deterministic_intent)
+        return _greeting_response(query, intent=deterministic_intent)
 
-    nlp_result = _nlp_intent_from_query(query, deterministic_intent)
+    nlp_result = _nlp_intent_from_query(query, deterministic_intent) if deterministic_intent == "unsupported" else None
     settings = get_settings()
     nlp_accepted = (
         nlp_result is not None
@@ -4845,9 +4859,9 @@ def build_chatbot_response(db: Session, query_in: ChatbotQuery, current_user: Us
         query_in.limit,
     )
 
-    if intent in {"greeting", "help"}:
-        logger.info("Admin chatbot greeting/help response selected")
-        return _greeting_response(query)
+    if intent in {"greeting", "help_services", "thanks"}:
+        logger.info("Admin chatbot preset response selected after NLP reconciliation: intent=%s", intent)
+        return _greeting_response(query, intent=intent)
 
     if intent == "unsupported":
         logger.info("Admin chatbot unsupported query: %s", query)

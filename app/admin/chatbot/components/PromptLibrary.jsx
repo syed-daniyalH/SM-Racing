@@ -266,15 +266,15 @@ export function PromptLibrary({
           <AutoAwesomeOutlinedIcon fontSize="small" />
         </div>
         <div className="chatbot-prompt-library-copy">
-          <h2>Prompt Library</h2>
-          <p>Use structured prompts to get better race data, faster.</p>
+          <h2>Routing Library</h2>
+          <p>Use supported deterministic lookups or AI-only comparison prompts.</p>
         </div>
       </div>
 
       <BetterPromptHelper className="chatbot-prompt-library-helper" />
 
       <FeaturedPromptRow
-        label="Featured starter prompts"
+        label="Supported starter prompts"
         prompts={prompts}
         scope={scope}
         onAction={onAction}
@@ -296,4 +296,3 @@ export function PromptLibrary({
     </section>
   )
 }
-

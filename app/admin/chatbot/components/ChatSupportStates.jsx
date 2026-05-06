@@ -125,7 +125,7 @@ export function ChatLoadingState({
 
 export function ChatEmptyState({
   title = "AI Race Assistant",
-  description = "Ask about sessions, events, setup data, or comparisons.",
+  description = "Ask about sessions, events, setup data, submissions, comparisons, or performance guidance.",
   scope = {},
   loading = false,
   onAction,
@@ -179,8 +179,8 @@ export function ChatNotFoundState({
 }
 
 export function ChatUnsupportedState({
-  title = "I can help with sessions, events, setup data, comparisons, and summaries.",
-  message = "Use one of the supported race-data queries to stay within the current scope.",
+  title = "I can help with race data lookups, setup reviews, comparisons, and performance guidance.",
+  message = "Try a supported SM Racing query or use one of the guided next steps below.",
   suggestions = [],
   loading = false,
   onAction,

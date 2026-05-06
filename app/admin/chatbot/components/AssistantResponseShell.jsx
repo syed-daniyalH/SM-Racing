@@ -286,7 +286,7 @@ export const buildResponseMetaItems = ({ response, scope = {}, recordCount }) =>
   const scopeLabel = buildScopeLabel(scope)
   const intentLabel = response?.intent ? humanizeLabel(response.intent) : ""
 
-  if (response?.intent === "greeting") {
+  if (["greeting", "help_services", "thanks"].includes(response?.intent)) {
     items.push({ label: "Source", value: dataSource, tone: "accent" })
     items.push({ label: "Status", value: statusLabel, tone: getResponseStateTone(state) })
     return items.slice(0, 4)
@@ -310,7 +310,7 @@ export const buildResponseInsights = ({ response, scope = {}, recordCount }) => 
     return []
   }
 
-  if (response?.intent === "greeting") {
+  if (["greeting", "help_services", "thanks"].includes(response?.intent)) {
     return []
   }
 
@@ -407,7 +407,6 @@ const buildSuggestedNextSteps = (response, scope, messageText) => {
   }
 
   const state = getResponseState(response)
-  const text = normalizeWhitespace(messageText).toLowerCase()
   const suggestions = []
   const eventSelected = Boolean(readScopeValue(scope, ["event_label", "eventLabel"]))
   const sessionSelected = Boolean(readScopeValue(scope, ["session_label", "sessionLabel"]))
@@ -418,84 +417,18 @@ const buildSuggestedNextSteps = (response, scope, messageText) => {
     suggestions.push(...items)
   }
 
-  if (response?.kind === "compare" || /compare|difference|delta/.test(text)) {
-    add([
-      "Show full setup for latest session",
-      "Compare latest two sessions",
-      "Show tire pressures only",
-    ])
-  } else if (response?.kind === "setup" || /setup|pressure|suspension|alignment|temperature|history/.test(text)) {
-    add([
-      "Compare with previous session",
-      "Show alignment only",
-      "Summarize this session",
-    ])
-  } else if (response?.kind === "events") {
-    add([
-      "Show latest sessions",
-      "Show sessions for this event",
-      "Show driver and vehicle data",
-    ])
-  } else if (response?.kind === "sessions") {
-    add([
-      "Show setup for latest session",
-      "Show sessions for driver Alex",
-      "Compare sessions",
-    ])
-  } else if (response?.kind === "fleet") {
-    add([
-      "Show latest sessions",
-      "Show all events",
-      "Show driver and vehicle data",
-    ])
-  } else if (response?.kind === "submissions") {
-    add([
-      "Show latest sessions",
-      "Show setup for latest session",
-      "Show all events",
-    ])
-  } else if (response?.kind === "recommendation") {
-    add([
-      "Explain why",
-      "Show weak points only",
-      "Compare with previous session",
-      "Show setup differences",
-    ])
-  } else if (response?.kind === "coaching") {
-    add([
-      "Show weak points only",
-      "Suggest priority changes",
-      "Compare with previous session",
-      "Show setup differences",
-    ])
-  }
-
-  if (/best one|which one is better|strongest option|best session|best setup/.test(text)) {
-    add([
-      "Explain why",
-      "Compare with previous session",
-      "Show setup differences",
-    ])
-  }
-
-  if (/how can i improve|what should i improve|what should i change next|weak points|improve/.test(text)) {
-    add([
-      "Show weak points only",
-      "Suggest priority changes",
-      "Compare with previous session",
-    ])
-  }
+  add(Array.isArray(response?.follow_up) ? response.follow_up : [])
 
   if (state === "not_found") {
     add([
       "Show latest sessions",
-      "Show all events",
+      "Show latest events",
       "Show driver and vehicle data",
     ])
   } else if (state === "unsupported") {
     add([
       "Show latest sessions",
-      "Show setup for latest session",
+      "Show latest events",
       "Compare sessions",
     ])
   } else if (state === "validation") {
@@ -507,7 +440,7 @@ const buildSuggestedNextSteps = (response, scope, messageText) => {
   } else if (state === "error") {
     add([
       "Show latest sessions",
-      "Show all events",
+      "Show latest events",
       "Show driver and vehicle data",
     ])
   }
@@ -527,8 +460,6 @@ const buildSuggestedNextSteps = (response, scope, messageText) => {
   if (vehicleSelected) {
     add(["Show alignment for Car 12"])
   }
-
-  add(Array.isArray(response?.follow_up) ? response.follow_up : [])
 
   return dedupeSuggestions(suggestions)
 }

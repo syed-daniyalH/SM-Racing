@@ -151,37 +151,43 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
     def test_intent_from_query_recognizes_greeting_and_compare_variants(self) -> None:
         self.assertEqual(_intent_from_query("hello"), "greeting")
-        self.assertEqual(_intent_from_query("who are you"), "greeting")
+        self.assertEqual(_intent_from_query("who are you"), "help_services")
+        self.assertEqual(_intent_from_query("what services do you provide"), "help_services")
+        self.assertEqual(_intent_from_query("show options"), "help_services")
+        self.assertEqual(_intent_from_query("services"), "help_services")
         self.assertEqual(_intent_from_query("good morning"), "greeting")
-        self.assertEqual(_intent_from_query("thanks"), "greeting")
+        self.assertEqual(_intent_from_query("thanks"), "thanks")
         self.assertEqual(_intent_from_query("what changed from the last session?"), "compare")
         self.assertEqual(_intent_from_query("compare previous session with current"), "compare")
         self.assertEqual(_intent_from_query("which one is better"), "recommendation")
         self.assertEqual(_intent_from_query("how can I improve?"), "coaching")
+        self.assertEqual(_intent_from_query("show latest events"), "list_events")
 
-    def test_greeting_response_uses_short_variant_for_simple_hi(self) -> None:
+    def test_greeting_response_uses_capability_variant_for_simple_hi(self) -> None:
         response = _greeting_response("hi")
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.intent, "greeting")
-        self.assertEqual(response.summary, "Hello. How can I help with SM Racing data today?")
-        self.assertEqual(response.data["greeting_style"], "short")
-        self.assertEqual(response.follow_up[:2], ["Show latest sessions", "Show setup for latest session"])
+        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
+        self.assertIn("Here are the main things I can do:", response.summary)
+        self.assertEqual(response.data["greeting_style"], "greeting")
+        self.assertEqual(response.follow_up[:2], ["Show latest events", "Show latest sessions"])
 
-    def test_greeting_response_uses_full_intro_for_identity_question(self) -> None:
+    def test_greeting_response_uses_capability_variant_for_identity_question(self) -> None:
         response = _greeting_response("what are you")
 
         self.assertEqual(response.status, "success")
-        self.assertEqual(response.intent, "greeting")
+        self.assertEqual(response.intent, "help_services")
         self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
-        self.assertEqual(response.data["greeting_style"], "intro")
-        self.assertEqual(response.follow_up[:2], ["Show latest sessions", "Show latest submissions"])
+        self.assertIn("Compare sessions and highlight changes", response.summary)
+        self.assertEqual(response.data["greeting_style"], "help_services")
+        self.assertEqual(response.follow_up[:2], ["Show latest events", "Show latest sessions"])
 
     def test_greeting_response_uses_thanks_variant(self) -> None:
         response = _greeting_response("thanks")
 
         self.assertEqual(response.status, "success")
-        self.assertEqual(response.intent, "greeting")
+        self.assertEqual(response.intent, "thanks")
         self.assertTrue(response.summary.startswith("You're welcome."))
         self.assertEqual(response.data["greeting_style"], "thanks")
 
@@ -190,8 +196,8 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.intent, "greeting")
-        self.assertEqual(response.summary, "Good evening. How can I help with SM Racing data today?")
-        self.assertEqual(response.data["greeting_style"], "time_based")
+        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
+        self.assertEqual(response.data["greeting_style"], "greeting")
 
     def test_fallback_plain_response_uses_full_greeting_when_backend_summary_missing(self) -> None:
         backend_response = _response(
@@ -213,9 +219,40 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
         self.assertEqual(
             fallback.summary,
-            "Hello, and welcome to the SM Racing System. I can assist you with session analysis, setup data insights, performance comparisons, submission reviews, and driver or vehicle lookups. Please let me know how you would like to proceed.",
+            "Hello, and welcome to the SM Racing System.\n\nI can help you with SM Racing race data and setup tasks.\nHere are the main things I can do:\n- Show latest events, sessions, drivers, vehicles, and submissions\n- Display setup details for a selected or latest session\n- Compare sessions and highlight changes\n- Review tire pressures, temperatures, suspension, and alignment\n- Summarize race notes and submissions\n- Suggest setup improvements based on previous session data",
         )
         self.assertEqual(fallback.response_type, "greeting")
+
+    def test_generate_nlp_response_skips_openai_for_known_deterministic_queries(self) -> None:
+        backend_response = _response(
+            kind="sessions",
+            summary="I found 2 recent sessions in the SM2 Racing database.",
+            answer="I found 2 recent sessions in the SM2 Racing database.",
+            intent="latest_sessions",
+            follow_up=["Show setup for latest session", "Compare session 1 vs session 2"],
+        )
+        settings = SimpleNamespace(
+            chatbot_nlp_enabled=True,
+            openai_api_key="test-key",
+            openai_model="gpt-4o-mini",
+            openai_request_timeout_seconds=8.0,
+            openai_intent_confidence_threshold=0.7,
+        )
+
+        with (
+            patch("app.services.chatbot_llm_service.get_settings", return_value=settings),
+            patch("app.services.chatbot_llm_service._call_openai_json") as openai_call,
+        ):
+            summary_result = chatbot_llm_service.generate_nlp_response(
+                user_query="show latest sessions",
+                backend_response=backend_response,
+                request_scope=ChatbotQuery(message="show latest sessions"),
+            )
+
+        openai_call.assert_not_called()
+        self.assertFalse(summary_result.used_openai)
+        self.assertTrue(summary_result.fallback_used)
+        self.assertEqual(summary_result.summary, "I found 2 recent sessions in the SM2 Racing database.")
 
     def test_fallback_plain_response_preserves_narrative_paragraph_breaks(self) -> None:
         backend_response = _response(
