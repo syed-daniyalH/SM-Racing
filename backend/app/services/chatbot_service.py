@@ -300,7 +300,29 @@ def _is_greeting_query(value: str) -> bool:
 
 def _is_help_services_query(value: str) -> bool:
     normalized = _normalize_query_text(value)
-    return bool(normalized and normalized in HELP_SERVICES_QUERY_PHRASES)
+    if not normalized:
+        return False
+
+    if normalized in HELP_SERVICES_QUERY_PHRASES:
+        return True
+
+    service_patterns = (
+        "what services",
+        "show options",
+        "what can you do",
+        "what do you do",
+        "how can you help",
+        "can you help",
+        "who are you",
+        "what are you",
+    )
+    if any(pattern in normalized for pattern in service_patterns):
+        return True
+
+    if "service" in normalized and any(term in normalized for term in ("provide", "offer", "help", "can")):
+        return True
+
+    return False
 
 
 def _is_thanks_query(value: str) -> bool:

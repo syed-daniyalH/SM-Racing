@@ -153,6 +153,8 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         self.assertEqual(_intent_from_query("hello"), "greeting")
         self.assertEqual(_intent_from_query("who are you"), "help_services")
         self.assertEqual(_intent_from_query("what services do you provide"), "help_services")
+        self.assertEqual(_intent_from_query("what services you can provide"), "help_services")
+        self.assertEqual(_intent_from_query("what services can you provide"), "help_services")
         self.assertEqual(_intent_from_query("show options"), "help_services")
         self.assertEqual(_intent_from_query("services"), "help_services")
         self.assertEqual(_intent_from_query("good morning"), "greeting")
