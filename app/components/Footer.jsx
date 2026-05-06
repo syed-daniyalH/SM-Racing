@@ -10,6 +10,7 @@ import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import TwitterIcon from "@mui/icons-material/Twitter";
 import "./Footer.css";
 
+const BRAND_ICON_SRC = "/icons/sm-racing-checkered-flag.svg";
 const buildMailto = (address, subject) =>
   `mailto:${address}${subject ? `?subject=${encodeURIComponent(subject)}` : ""}`;
 
@@ -144,7 +145,14 @@ export default function Footer() {
           <section className="footer-brand-panel">
             <div className="footer-brand-row">
               <div className="footer-brand-mark" aria-hidden="true">
-                SM-2
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={BRAND_ICON_SRC}
+                  alt=""
+                  className="footer-brand-mark-image"
+                  loading="eager"
+                  decoding="async"
+                />
               </div>
               <div className="footer-brand-copy">
                 <h3 className="footer-brand-name">SM-2</h3>
