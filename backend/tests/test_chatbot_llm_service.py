@@ -165,13 +165,15 @@ class ChatbotLLMServiceTests(unittest.TestCase):
         self.assertEqual(_intent_from_query("how can I improve?"), "coaching")
         self.assertEqual(_intent_from_query("show latest events"), "list_events")
 
-    def test_greeting_response_uses_capability_variant_for_simple_hi(self) -> None:
+    def test_greeting_response_uses_short_welcome_for_simple_hi(self) -> None:
         response = _greeting_response("hi")
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.intent, "greeting")
-        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
-        self.assertIn("Here are the main things I can do:", response.summary)
+        self.assertEqual(
+            response.summary,
+            "Hello, and welcome to the SM Racing System. I can help you with SM Racing race data and setup tasks. How Can I help you?",
+        )
         self.assertEqual(response.data["greeting_style"], "greeting")
         self.assertEqual(response.follow_up[:2], ["Show latest events", "Show latest sessions"])
 
@@ -180,7 +182,7 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.intent, "help_services")
-        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
+        self.assertTrue(response.summary.startswith("I can help you with SM Racing race data and setup tasks."))
         self.assertIn("Compare sessions and highlight changes", response.summary)
         self.assertEqual(response.data["greeting_style"], "help_services")
         self.assertEqual(response.follow_up[:2], ["Show latest events", "Show latest sessions"])
@@ -198,7 +200,10 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.intent, "greeting")
-        self.assertIn("Hello, and welcome to the SM Racing System.", response.summary)
+        self.assertEqual(
+            response.summary,
+            "Hello, and welcome to the SM Racing System. I can help you with SM Racing race data and setup tasks. How Can I help you?",
+        )
         self.assertEqual(response.data["greeting_style"], "greeting")
 
     def test_fallback_plain_response_uses_full_greeting_when_backend_summary_missing(self) -> None:
@@ -221,9 +226,32 @@ class ChatbotLLMServiceTests(unittest.TestCase):
 
         self.assertEqual(
             fallback.summary,
-            "Hello, and welcome to the SM Racing System.\n\nI can help you with SM Racing race data and setup tasks.\nHere are the main things I can do:\n- Show latest events, sessions, drivers, vehicles, and submissions\n- Display setup details for a selected or latest session\n- Compare sessions and highlight changes\n- Review tire pressures, temperatures, suspension, and alignment\n- Summarize race notes and submissions\n- Suggest setup improvements based on previous session data",
+            "Hello, and welcome to the SM Racing System. I can help you with SM Racing race data and setup tasks. How Can I help you?",
         )
         self.assertEqual(fallback.response_type, "greeting")
+
+    def test_fallback_plain_response_uses_capability_text_for_help_services_when_backend_summary_missing(self) -> None:
+        backend_response = _response(
+            kind="message",
+            title="AI Race Assistant",
+            summary="",
+            answer="",
+            data_found=True,
+            intent="help_services",
+            records_used=[],
+            sections=[],
+            follow_up=[],
+        )
+
+        fallback = chatbot_llm_service.fallback_plain_response(
+            user_query="what can you do",
+            backend_response=backend_response,
+        )
+
+        self.assertEqual(
+            fallback.summary,
+            "I can help you with SM Racing race data and setup tasks.\nHere are the main things I can do:\n- Show latest events, sessions, drivers, vehicles, and submissions\n- Display setup details for a selected or latest session\n- Compare sessions and highlight changes\n- Review tire pressures, temperatures, suspension, and alignment\n- Summarize race notes and submissions\n- Suggest setup improvements based on previous session data",
+        )
 
     def test_generate_nlp_response_skips_openai_for_known_deterministic_queries(self) -> None:
         backend_response = _response(

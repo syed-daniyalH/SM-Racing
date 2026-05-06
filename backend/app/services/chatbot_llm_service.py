@@ -438,12 +438,12 @@ def fallback_plain_response(*, user_query: str, backend_response: ChatbotRespons
     record_count = len(backend_response.records_used or [])
     summary = _normalize_summary_narrative(backend_response.summary or backend_response.answer)
     response_type = _default_response_type(backend_response)
+    is_help_services = backend_response.intent == "help_services"
 
-    if response_type == "greeting":
+    if response_type == "greeting" and is_help_services:
         summary = (
             summary
             or (
-                "Hello, and welcome to the SM Racing System.\n\n"
                 "I can help you with SM Racing race data and setup tasks.\n"
                 "Here are the main things I can do:\n"
                 "- Show latest events, sessions, drivers, vehicles, and submissions\n"
@@ -452,6 +452,15 @@ def fallback_plain_response(*, user_query: str, backend_response: ChatbotRespons
                 "- Review tire pressures, temperatures, suspension, and alignment\n"
                 "- Summarize race notes and submissions\n"
                 "- Suggest setup improvements based on previous session data"
+            )
+        )
+    elif response_type == "greeting":
+        summary = (
+            summary
+            or (
+                "Hello, and welcome to the SM Racing System. "
+                "I can help you with SM Racing race data and setup tasks. "
+                "How Can I help you?"
             )
         )
     elif response_type == "latest_sessions" and record_count:

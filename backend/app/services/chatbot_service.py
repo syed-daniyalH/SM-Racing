@@ -357,8 +357,12 @@ def _greeting_style_for_query(value: str) -> str:
 
 def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
     style = _greeting_style_for_query(query)
+    greeting_message = (
+        "Hello, and welcome to the SM Racing System. "
+        "I can help you with SM Racing race data and setup tasks. "
+        "How Can I help you?"
+    )
     capability_message = (
-        "Hello, and welcome to the SM Racing System.\n\n"
         "I can help you with SM Racing race data and setup tasks.\n"
         "Here are the main things I can do:\n"
         "- Show latest events, sessions, drivers, vehicles, and submissions\n"
@@ -376,7 +380,10 @@ def _greeting_message_for_query(query: str) -> tuple[str, list[str]]:
         "Compare session 1 vs session 2",
     ]
 
-    if style in {"greeting", "help_services"}:
+    if style == "greeting":
+        return greeting_message, capability_follow_up
+
+    if style == "help_services":
         return capability_message, capability_follow_up
 
     if style == "thanks":
