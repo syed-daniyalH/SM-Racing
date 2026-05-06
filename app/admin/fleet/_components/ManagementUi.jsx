@@ -106,7 +106,7 @@ export function DrawerShell({
         <div className="fleet-drawer-shell">
           <header className="fleet-drawer-header">
             <div className="fleet-drawer-heading">
-              <p className="fleet-drawer-eyebrow">Admin Workspace</p>
+            <p className="fleet-drawer-eyebrow">Owner Workspace</p>
               <h2 id="fleet-drawer-title" className="fleet-drawer-title">
                 {title}
               </h2>

@@ -19,7 +19,7 @@ import { downloadSubmissionPDF } from "../../utils/pdfUtils";
 
 export default function SubmissionDrawer({ open, onClose, submissionId }) {
   const router = useRouter();
-  const { user, isAdmin } = useAuth();
+  const { user, isOwner } = useAuth();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -51,7 +51,7 @@ export default function SubmissionDrawer({ open, onClose, submissionId }) {
   const currentUserId = String(user?.id || user?._id || user?.userId || "").trim();
   const canEditSubmission = Boolean(
     data &&
-      (isAdmin() || (currentUserId && String(data?.userId || data?.created_by_id || "") === currentUserId)),
+        (isOwner() || (currentUserId && String(data?.userId || data?.created_by_id || "") === currentUserId)),
   );
 
   return (

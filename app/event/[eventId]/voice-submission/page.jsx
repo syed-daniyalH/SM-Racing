@@ -791,7 +791,7 @@ export default function VoiceSubmissionPage() {
 
   if (isLoading) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <Loader
           fullHeight
           label="Loading voice submission"
@@ -803,7 +803,7 @@ export default function VoiceSubmissionPage() {
 
   if (!event) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <div className="voice-submission-page">
           <div className="voice-submission-shell">
             <div className="voice-submission-state-card">
@@ -822,7 +822,7 @@ export default function VoiceSubmissionPage() {
   }
 
   return (
-    <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
       <div className="voice-submission-page">
         <div className="voice-submission-shell">
           <div className="voice-submission-topbar">

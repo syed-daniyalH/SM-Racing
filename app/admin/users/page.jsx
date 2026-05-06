@@ -722,7 +722,7 @@ export default function UsersManagement() {
   const PageErrorIcon = ErrorOutlineOutlinedIcon;
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="fleet-page users-management-page">
         <div className="fleet-page-shell">
           <header className="fleet-page-header">

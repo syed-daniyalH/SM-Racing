@@ -119,9 +119,9 @@ export const registerUser = async (userData) => {
 };
 
 /**
- * Create a user from the admin area with an explicit role.
+ * Create a user from the owner area with an explicit role.
  */
-export const createAdminUser = async (userData) => {
+export const createOwnerUser = async (userData) => {
   try {
     const response = await axiosInstance.post("/users", {
       name: userData.name,
@@ -135,7 +135,7 @@ export const createAdminUser = async (userData) => {
       user: normalizeUser(response.data),
     };
   } catch (error) {
-    console.error("Admin user create API Error:", {
+    console.error("Owner user create API Error:", {
       url: error.config?.url,
       status: error.response?.status,
       data: error.response?.data,
@@ -145,7 +145,7 @@ export const createAdminUser = async (userData) => {
 };
 
 /**
- * Approve a pending signup request from the admin area.
+ * Approve a pending signup request from the owner area.
  */
 export const approveUser = async (userId) => {
   try {
@@ -156,7 +156,7 @@ export const approveUser = async (userId) => {
       user: normalizeUser(response.data),
     };
   } catch (error) {
-    console.error("Admin user approval API Error:", {
+    console.error("Owner user approval API Error:", {
       url: error.config?.url,
       status: error.response?.status,
       data: error.response?.data,
@@ -166,7 +166,7 @@ export const approveUser = async (userId) => {
 };
 
 /**
- * Change a user's access role from the admin area.
+ * Change a user's access role from the owner area.
  */
 export const updateUserRole = async (userId, role) => {
   try {
@@ -179,7 +179,7 @@ export const updateUserRole = async (userId, role) => {
       user: normalizeUser(response.data),
     };
   } catch (error) {
-    console.error("Admin role update API Error:", {
+    console.error("Owner role update API Error:", {
       url: error.config?.url,
       status: error.response?.status,
       data: error.response?.data,
@@ -189,7 +189,7 @@ export const updateUserRole = async (userId, role) => {
 };
 
 /**
- * List users for the admin area.
+ * List users for the owner area.
  */
 export const getUsers = async () => {
   try {
@@ -212,7 +212,7 @@ export const getUsers = async () => {
 };
 
 /**
- * Reset a user password from the admin area.
+ * Reset a user password from the owner area.
  */
 export const resetUserPassword = async (userId, password) => {
   try {
@@ -225,7 +225,7 @@ export const resetUserPassword = async (userId, password) => {
       user: normalizeUser(response.data),
     };
   } catch (error) {
-    console.error("Admin password reset API Error:", {
+    console.error("Owner password reset API Error:", {
       url: error.config?.url,
       status: error.response?.status,
       data: error.response?.data,
@@ -235,7 +235,7 @@ export const resetUserPassword = async (userId, password) => {
 };
 
 /**
- * Delete a user from the admin area when the account is no longer referenced.
+ * Delete a user from the owner area when the account is no longer referenced.
  */
 export const deleteUser = async (userId) => {
   try {
@@ -246,7 +246,7 @@ export const deleteUser = async (userId) => {
       message: response.data?.message || "User deleted successfully",
     };
   } catch (error) {
-    console.error("Admin user delete API Error:", {
+    console.error("Owner user delete API Error:", {
       url: error.config?.url,
       status: error.response?.status,
       data: error.response?.data,
@@ -291,7 +291,11 @@ export const loginUser = async (credentials, loginPath = "/auth/login") => {
 /**
  * Login an owner account through the owner portal entry point.
  */
-export const loginAdminUser = async (credentials) => loginUser(credentials, "/auth/admin-login");
+export const loginOwnerUser = async (credentials) => loginUser(credentials, "/auth/admin-login");
+
+// Legacy aliases retained while older imports are being cleaned up.
+export const createAdminUser = createOwnerUser;
+export const loginAdminUser = loginOwnerUser;
 
 /**
  * Logout user and revoke the token server-side.

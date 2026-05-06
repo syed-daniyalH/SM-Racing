@@ -79,7 +79,7 @@ function SocialLink({ href, label, icon: Icon }) {
 
 export default function Footer() {
   const pathname = usePathname();
-  const { isAdmin } = useAuth();
+  const { isOwner } = useAuth();
 
   const isAuthPage =
     pathname === "/login" || pathname === "/admin/login" || pathname === "/signup";
@@ -90,9 +90,9 @@ export default function Footer() {
     return null;
   }
 
-  const adminMode = Boolean(isAdmin?.());
+  const ownerMode = Boolean(isOwner?.());
 
-  const productLinks = adminMode
+  const productLinks = ownerMode
     ? [
         { label: "User Management", href: "/admin/users" },
         { label: "Driver Management", href: "/admin/drivers" },
@@ -129,8 +129,8 @@ export default function Footer() {
   ];
 
   const currentYear = new Date().getFullYear();
-  const showPortalLinkColumns = adminMode;
-  const showPortalSocialRow = adminMode;
+  const showPortalLinkColumns = ownerMode;
+  const showPortalSocialRow = ownerMode;
 
   return (
     <footer className="footer footer-modern">
@@ -162,7 +162,7 @@ export default function Footer() {
 
             <p className="footer-description">
               Professional motorsport operations for race control, event management,
-              structured submissions, and audit-ready admin workflows.
+              structured submissions, and audit-ready owner workflows.
             </p>
 
             {showPortalSocialRow ? (
@@ -215,10 +215,6 @@ export default function Footer() {
           </div>
 
           <div className="footer-status-card">
-            <div className="footer-status-line">
-              <span className="footer-status-dot" aria-hidden="true" />
-              <span className="footer-status-label">System Online</span>
-            </div>
             <div className="footer-status-meta">
               <span className="footer-version">SM-2 v1.0.0</span>
               <span className="footer-latest-badge">Latest</span>

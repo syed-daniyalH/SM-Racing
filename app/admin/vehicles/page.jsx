@@ -789,14 +789,14 @@ export default function VehiclesManagementPage() {
   ) : null;
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="fleet-page">
         <div className="fleet-page-shell">
           <header className="fleet-page-header">
             <div className="fleet-page-heading">
               <h1 className="fleet-page-title">Vehicle Management</h1>
               <p className="fleet-page-subtitle">
-                Manage vehicles, assignments, and specifications in a premium motorsport admin workspace.
+            Manage vehicles, assignments, and specifications in a premium motorsport owner workspace.
               </p>
             </div>
 

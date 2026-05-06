@@ -894,7 +894,7 @@ export default function SubmissionReviewPage() {
   };
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="submission-monitor-page fleet-page-shell">
         <div className="submission-monitor-orb submission-monitor-orb-one" />
         <div className="submission-monitor-orb submission-monitor-orb-two" />

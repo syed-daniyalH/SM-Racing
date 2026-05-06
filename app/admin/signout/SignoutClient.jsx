@@ -38,15 +38,6 @@ function BrandFlag() {
   );
 }
 
-function StatusPill() {
-  return (
-    <div className="login-system" aria-label="System online">
-      <span className="login-system__dot" aria-hidden="true" />
-      <span>System Online</span>
-    </div>
-  );
-}
-
 function LoadingIcon() {
   return (
     <svg className="login-button__spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -208,7 +199,6 @@ export default function SignoutClient() {
           </p>
         </section>
 
-        <StatusPill />
       </main>
     </div>
   );

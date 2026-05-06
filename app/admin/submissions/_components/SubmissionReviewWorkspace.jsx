@@ -91,7 +91,7 @@ const buildTimeline = ({ record, submissionType, statusLabel, actionLabel }) => 
   const createdAt = record?.createdAt || record?.submittedAt || record?.updatedAt || null
   const processedAt = record?.processedAt || record?.updatedAt || null
   const actorLabel = record?.sourceChannel || record?.sourceTypeLabel || "System"
-  const reviewedBy = record?.analysisResult?.reviewed_by_name || record?.analysisResult?.reviewed_by_id || "Admin"
+  const reviewedBy = record?.analysisResult?.reviewed_by_name || record?.analysisResult?.reviewed_by_id || "Owner"
   const reviewedAt = record?.analysisResult?.reviewed_at || record?.analysisResult?.reviewedAt || null
 
   const timeline = [
@@ -1208,7 +1208,7 @@ export default function SubmissionReviewWorkspace({
               <div className="submission-detail-admin-note" style={{ marginTop: "0.85rem" }}>
                 <div className="submission-detail-admin-note-header">
                   <div>
-                    <div className="submission-detail-group-title">Admin Comment</div>
+                      <div className="submission-detail-group-title">Owner Comment</div>
                     <p className="submission-detail-group-copy">Notes saved alongside the raw submission.</p>
                   </div>
                 </div>

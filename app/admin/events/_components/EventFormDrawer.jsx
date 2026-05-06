@@ -15,7 +15,7 @@ export default function EventFormDrawer({
   archiveDisabled = false,
   isSaving = false,
   error = "",
-  notesHint = "Optional operational notes for admin reference.",
+  notesHint = "Optional operational notes for owner reference.",
 }) {
   if (!open) return null;
 
@@ -180,7 +180,7 @@ export default function EventFormDrawer({
               id="event-notes"
               className="input event-textarea"
               rows={5}
-              placeholder="Optional operational context, weekend notes, or admin-only guidance."
+                placeholder="Optional operational context, weekend notes, or owner-only guidance."
               value={values.notes}
               onChange={updateField("notes")}
             />

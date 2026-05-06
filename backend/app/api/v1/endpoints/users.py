@@ -106,7 +106,7 @@ def list_users(
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def create_admin_user(
+def create_owner_user(
     user_in: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.OWNER)),

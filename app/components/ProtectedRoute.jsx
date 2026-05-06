@@ -6,32 +6,36 @@ import { useAuth } from "../context/AuthContext";
 
 export default function ProtectedRoute({
   children,
+  requireOwner = false,
+  requireDriver = false,
   requireAdmin = false,
   requireMechanic = false,
 }) {
   const router = useRouter();
-  const { user, loading, isAdmin, isMechanic } = useAuth();
+  const { user, loading, isOwner, isDriver } = useAuth();
+  const ownerRequired = requireOwner || requireAdmin;
+  const driverRequired = requireDriver || requireMechanic;
 
   useEffect(() => {
     if (loading) return;
 
-    const loginPath = requireAdmin ? "/admin/login" : "/login";
+    const loginPath = ownerRequired ? "/admin/login" : "/login";
 
     if (!user) {
       router.push(loginPath);
       return;
     }
 
-    if (requireAdmin && !isAdmin()) {
+    if (ownerRequired && !isOwner()) {
       router.push("/admin/login?access=denied");
       return;
     }
 
-    if (requireMechanic && !isMechanic()) {
+    if (driverRequired && !isDriver()) {
       router.push("/login");
       return;
     }
-  }, [user, loading, requireAdmin, requireMechanic, isAdmin, isMechanic, router]);
+  }, [user, loading, ownerRequired, driverRequired, isOwner, isDriver, router]);
 
   if (loading) {
     return (
@@ -61,11 +65,11 @@ export default function ProtectedRoute({
     return null;
   }
 
-  if (requireAdmin && !isAdmin()) {
+  if (ownerRequired && !isOwner()) {
     return null;
   }
 
-  if (requireMechanic && !isMechanic()) {
+  if (driverRequired && !isDriver()) {
     return null;
   }
 

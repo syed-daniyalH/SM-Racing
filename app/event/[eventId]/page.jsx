@@ -149,7 +149,7 @@ export default function EventDetail() {
 
   if (isLoading) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <Loader
           fullHeight
           label="Loading event workspace"
@@ -161,7 +161,7 @@ export default function EventDetail() {
 
   if (error && !event) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <div className="event-detail-page">
           <div className="event-detail-orb event-detail-orb-one" />
           <div className="event-detail-orb event-detail-orb-two" />
@@ -194,7 +194,7 @@ export default function EventDetail() {
 
   if (!event) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <div className="event-detail-page">
           <div className="event-detail-orb event-detail-orb-one" />
           <div className="event-detail-orb event-detail-orb-two" />
@@ -259,7 +259,7 @@ export default function EventDetail() {
       : "Confirm the event schedule and run group before drivers begin capturing notes.";
 
   return (
-    <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
       <div className="event-detail-page">
         <div className="event-detail-orb event-detail-orb-one" />
         <div className="event-detail-orb event-detail-orb-two" />

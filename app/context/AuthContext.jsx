@@ -87,6 +87,8 @@ export function AuthProvider({ children }) {
     return ['DRIVER', 'MECHANIC', 'WORKER'].includes(normalizeRole(user?.role))
   }, [user?.role])
 
+  // Keep legacy aliases for older components while the app finishes
+  // migrating to the simpler Owner / Driver model.
   const isAdmin = isOwner
 
   const isMechanic = isDriver

@@ -522,7 +522,7 @@ export default function NotesSubmission() {
   const params = useParams();
   const searchParams = useSearchParams();
   const eventId = params.eventId;
-  const { user, isMechanic } = useAuth();
+  const { user, isDriver } = useAuth();
   const submissionIdParam = String(searchParams?.get("submissionId") || "").trim();
   const submissionTabParam = String(searchParams?.get("tab") || "").trim().toLowerCase();
   const [event, setEvent] = useState(null);
@@ -1915,7 +1915,7 @@ export default function NotesSubmission() {
 
   if (!event) {
     return (
-      <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
         <div style={{ padding: "2rem", textAlign: "center" }}>
           <p>Loading event...</p>
         </div>
@@ -1924,7 +1924,7 @@ export default function NotesSubmission() {
   }
 
   return (
-    <ProtectedRoute requireMechanic={true}>
+      <ProtectedRoute requireDriver={true}>
       <div className="notes-submission-page">
         <div className="page-header">
           <div className="header-content">

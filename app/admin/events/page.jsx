@@ -493,7 +493,7 @@ export default function EventsManagementPage() {
   };
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="admin-events-page">
         <div className="admin-page-shell">
           <header className="admin-page-header">
@@ -503,7 +503,7 @@ export default function EventsManagementPage() {
               <p className="admin-page-subtitle">
                 Create, filter, archive, and configure race events from a
                 single high-trust operations surface. Every card exposes the
-                exact actions an admin should have in a production racing
+                    exact actions an owner should have in a production racing
                 workflow.
               </p>
             </div>

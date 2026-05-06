@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-import { loginAdminUser, loginUser } from "../utils/authApi";
+import { loginOwnerUser, loginUser } from "../utils/authApi";
 import "./Login.css";
 
 const TELEMETRY_BACKGROUND =
@@ -73,15 +73,6 @@ function BrandFlag() {
     <div className="login-brand__flag" aria-hidden="true">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={CHECKERED_FLAG} alt="" className="login-brand__flag-image" />
-    </div>
-  );
-}
-
-function StatusPill() {
-  return (
-    <div className="login-status" aria-label="System online">
-      <span className="login-status__dot" aria-hidden="true" />
-      <span className="login-status__text">System Online</span>
     </div>
   );
 }
@@ -260,7 +251,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     }
 
     try {
-      const loginAction = isAdminPortal ? loginAdminUser : loginUser;
+      const loginAction = isAdminPortal ? loginOwnerUser : loginUser;
       const response = await loginAction({ email, password });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
@@ -331,7 +322,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
           <p className="login-hero__subtitle">
-            {isAdminPortal ? "Owner Portal Access" : "Race Weekend Operations Platform"}
+                {isAdminPortal ? "Owner Portal Access" : "Race Operations Platform"}
           </p>
           <div className="login-portal-switch" role="group" aria-label="Switch login portal">
             <button
@@ -511,7 +502,6 @@ export default function LoginContent({ mode = "standard" } = {}) {
           </section>
         )}
 
-        <StatusPill />
       </main>
     </div>
   );

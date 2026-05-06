@@ -462,7 +462,7 @@ export default function EventList() {
   };
 
   return (
-    <ProtectedRoute requireMechanic={true}>
+    <ProtectedRoute requireDriver={true}>
       <div className="event-list-page">
         <div className="events-shell">
           <header className="events-hero">

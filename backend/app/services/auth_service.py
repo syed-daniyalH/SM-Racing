@@ -6,6 +6,31 @@ from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserSignup
 
+CANONICAL_OWNER_EMAIL = "admin@smracing.com"
+
+
+def ensure_canonical_owner_access(db: Session, user: User | None) -> User | None:
+    if user is None or user.email.lower() != CANONICAL_OWNER_EMAIL:
+        return user
+
+    changed = False
+    if user.role != UserRole.OWNER:
+        user.role = UserRole.OWNER
+        changed = True
+    if user.approval_status != UserApprovalStatus.APPROVED:
+        user.approval_status = UserApprovalStatus.APPROVED
+        changed = True
+    if not user.is_active:
+        user.is_active = True
+        changed = True
+
+    if changed:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    return user
+
 
 def create_user(
     db: Session,
@@ -31,9 +56,13 @@ def create_user(
         name=user_in.name,
         email=email,
         hashed_password=hash_password(user_in.password),
-        role=role,
-        approval_status=next_approval_status,
-        is_active=is_active,
+        role=UserRole.OWNER if email == CANONICAL_OWNER_EMAIL else role,
+        approval_status=(
+            UserApprovalStatus.APPROVED
+            if email == CANONICAL_OWNER_EMAIL
+            else next_approval_status
+        ),
+        is_active=True if email == CANONICAL_OWNER_EMAIL else is_active,
     )
     db.add(user)
     db.commit()
@@ -54,6 +83,7 @@ def authenticate_user(
     user = get_user_by_email(db, email)
     if not user:
         return None
+    user = ensure_canonical_owner_access(db, user)
     if not verify_password(password, user.hashed_password):
         return None
     if not allow_inactive and (

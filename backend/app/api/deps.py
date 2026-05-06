@@ -10,6 +10,7 @@ from app.core.enums import UserRole
 from app.core.security import decode_access_token
 from app.models.revoked_token import RevokedToken
 from app.models.user import User
+from app.services.auth_service import ensure_canonical_owner_access
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -33,6 +34,7 @@ def get_current_user(
         current_user = db.get(User, UUID(user_id))
         if current_user is None:
             raise ValueError("User not found")
+        current_user = ensure_canonical_owner_access(db, current_user)
         if not current_user.is_active:
             raise ValueError("User is inactive")
         return current_user

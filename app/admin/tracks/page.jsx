@@ -307,7 +307,7 @@ export default function TracksManagementPage() {
   ) : null;
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="fleet-page">
         <div className="fleet-page-shell">
           <header className="fleet-page-header">

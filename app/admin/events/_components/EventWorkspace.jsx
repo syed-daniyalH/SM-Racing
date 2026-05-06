@@ -366,7 +366,7 @@ export default function EventWorkspace() {
     event?.isActive === false && !existingRunGroup && !runGroupValue;
 
   return (
-    <ProtectedRoute requireAdmin={true}>
+    <ProtectedRoute requireOwner={true}>
       <div className="admin-event-workspace-page">
         <div className="admin-page-shell">
           <header className="admin-page-header">

@@ -63,15 +63,6 @@ function BackLink({ onClick }) {
   );
 }
 
-function StatusPill() {
-  return (
-    <div className="login-system" aria-label="System online">
-      <span className="login-system__dot" aria-hidden="true" />
-      <span>System Online</span>
-    </div>
-  );
-}
-
 function BrandFlag() {
   return (
     <div className="login-brand__flag" aria-hidden="true">
@@ -224,7 +215,7 @@ export default function Signup() {
           <p className="login-hero__title">RACE CONTROL</p>
           <p className="login-hero__subtitle">Create Your Account</p>
           <p className="signup-hero__caption">
-            Request access to SM-2 Race Control. An admin will review and approve the account.
+            Request access to SM-2 Race Control. An owner will review and approve the account.
           </p>
         </section>
 
@@ -437,7 +428,6 @@ export default function Signup() {
           </p>
         </section>
 
-        <StatusPill />
       </main>
     </div>
   );

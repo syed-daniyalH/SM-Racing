@@ -523,7 +523,7 @@ function ChatbotMessage({ message, onCopy, onFollowUp }) {
         </div>
         <div className="chatbot-message-meta">
           <div className="chatbot-message-label">
-            {message.role === "user" ? "Admin" : message.role === "error" ? "Connection Issue" : "System"}
+            {message.role === "user" ? "Owner" : message.role === "error" ? "Connection Issue" : "System"}
           </div>
           <div className="chatbot-message-time">{formatTimestamp(message.createdAt)}</div>
         </div>
@@ -955,7 +955,7 @@ export default function ChatbotPage() {
   const canCopy = Boolean(latestAssistantMessage?.response)
 
   return (
-    <ProtectedRoute requireAdmin>
+    <ProtectedRoute requireOwner>
       <div className="chatbot-page">
       <div className="chatbot-shell">
           <header className="chatbot-hero">

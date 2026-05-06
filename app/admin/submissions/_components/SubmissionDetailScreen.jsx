@@ -384,7 +384,7 @@ const normalizeAuditLogEntry = (entry, index) => {
       action: "Note",
       note: entry,
       timestamp: null,
-      actor: "Admin",
+      actor: "Owner",
       tone: "neutral",
     };
   }
@@ -394,7 +394,7 @@ const normalizeAuditLogEntry = (entry, index) => {
     action: entry.action || entry.type || "Update",
     note: entry.note || entry.message || entry.description || "",
     timestamp: entry.timestamp || entry.created_at || entry.createdAt || entry.at || null,
-    actor: entry.actor || entry.user || entry.by || "Admin",
+      actor: entry.actor || entry.user || entry.by || "Owner",
     tone: entry.tone || "neutral",
   };
 };
@@ -424,7 +424,7 @@ const buildAuditTimeline = (record, analysisResult = {}) => {
       action: "Reviewed",
       note: analysisResult.review_state ? `Review state: ${analysisResult.review_state}` : "No manual review recorded yet.",
       timestamp: analysisResult.reviewed_at || analysisResult.reviewedAt || null,
-      actor: analysisResult.reviewed_by_name || analysisResult.reviewed_by_id || "Admin",
+      actor: analysisResult.reviewed_by_name || analysisResult.reviewed_by_id || "Owner",
       tone: "neutral",
     },
     {
@@ -788,7 +788,7 @@ const TimelineItem = ({ item }) => {
           <div className="submission-detail-timeline-note">{item.note || "No note available."}</div>
         </div>
         <StatusBadge
-          label={item.actor || "Admin"}
+                    label={item.actor || "Owner"}
           tone={toneClass === "danger" ? "danger" : toneClass === "success" ? "success" : toneClass === "info" ? "info" : toneClass === "accent" ? "accent" : "neutral"}
         />
       </div>
@@ -935,7 +935,7 @@ export default function SubmissionDetailScreen({
       id: `${action}-${Date.now()}`,
       action,
       note,
-      actor: user?.name || user?.email || "Admin",
+      actor: user?.name || user?.email || "Owner",
       timestamp: new Date().toISOString(),
       tone,
     });
@@ -1085,7 +1085,7 @@ export default function SubmissionDetailScreen({
       <div className="submission-detail-shell">
         <header className="submission-detail-hero">
           <div className="submission-detail-hero-copy">
-            <p className="submission-detail-eyebrow">Admin Detailed View</p>
+          <p className="submission-detail-eyebrow">Owner Detailed View</p>
             <h1>{submissionId}</h1>
             <p className="submission-detail-subtitle">
               Review raw submission data, validate stored payloads, and manage approval or correction workflows from one screen.
@@ -1483,7 +1483,7 @@ export default function SubmissionDetailScreen({
 
                 <div className="submission-detail-sidebar-stack">
                   <div className="submission-raw-card">
-                    <div className="submission-raw-card-title">Admin Comment</div>
+                    <div className="submission-raw-card-title">Owner Comment</div>
                     <div className="submission-detail-raw-comment">
                       {isEditing ? (
                         <textarea

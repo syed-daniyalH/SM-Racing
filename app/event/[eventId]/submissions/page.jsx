@@ -56,7 +56,7 @@ export default function SubmissionsPage() {
 
   if (loading && submissions.length === 0) {
     return (
-      <ProtectedRoute requireMechanic={false}>
+      <ProtectedRoute requireDriver={false}>
         <Loader
           fullHeight
           label="Loading submissions"
@@ -67,7 +67,7 @@ export default function SubmissionsPage() {
   }
 
   return (
-    <ProtectedRoute requireMechanic={false}>
+      <ProtectedRoute requireDriver={false}>
       <div className="submissions-history-page">
         <div className="submissions-history-orb submissions-history-orb-one" />
         <div className="submissions-history-orb submissions-history-orb-two" />

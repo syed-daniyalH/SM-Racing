@@ -79,7 +79,7 @@ export default function SubmissionReviewDrawer({
       wide
       onClose={onClose}
       title="Submission Review"
-      subtitle="Inspect raw input, parsed session details, sync state, and system findings from the admin console."
+          subtitle="Inspect raw input, parsed session details, sync state, and system findings from the owner console."
       meta={
         <div className="submission-drawer-meta">
           <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} title="Validation status" />
