@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
+import AppSelect from "@/components/ui/app-select";
 import { useAuth } from "../../../context/AuthContext";
 import ProtectedRoute from "../../../components/ProtectedRoute";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
@@ -2102,32 +2103,39 @@ export default function NotesSubmission() {
                 {renderFieldError("session_id")}
               </div>
               <div style={{ marginTop: "0.75rem" }}>
-                <label className="form-label sub-label">Track</label>
-                <select
-                  data-testid="submission-track-select"
-                  className={getFieldClassName("select", "track")}
+                <label
+                  id={`submission-track-select-label-${activeTabKey}`}
+                  className="form-label sub-label"
+                  htmlFor={`submission-track-select-${activeTabKey}`}
+                >
+                  Track
+                </label>
+                <AppSelect
+                  id={`submission-track-select-${activeTabKey}`}
+                  testId="submission-track-select"
+                  triggerClassName={getFieldClassName("select", "track")}
                   value={trackSelection || (event?.track ? event.track : "")}
-                  onChange={(e) => {
-                    setTrackSelection(e.target.value);
-                    if (e.target.value !== "__OTHER__") {
-                      updateRequiredField("track", e.target.value);
+                  onValueChange={(value) => {
+                    setTrackSelection(value);
+                    if (value !== "__OTHER__") {
+                      updateRequiredField("track", value);
                     } else {
-                      // keep existing manual value
                       updateRequiredField("track", formState.track || "");
                     }
                   }}
                   onBlur={() => markActiveFieldTouched("track")}
+                  options={[
+                    ...trackOptionsForSelect.map((track) => ({
+                      value: track.id,
+                      label: track.label,
+                    })),
+                    { value: "__OTHER__", label: "Other (type manually)" },
+                  ]}
+                  placeholder="Select Track"
                   title="Choose the event track or select Other to type a custom value."
-                  aria-invalid={Boolean(getFieldError("track"))}
-                >
-                  <option value="">Select Track</option>
-                  {trackOptionsForSelect.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {track.label}
-                    </option>
-                  ))}
-                  <option value="__OTHER__">Other (type manually)</option>
-                </select>
+                  invalid={Boolean(getFieldError("track"))}
+                  ariaLabelledby={`submission-track-select-label-${activeTabKey}`}
+                />
                 {trackSelection === "__OTHER__" && (
                   <div style={{ marginTop: "0.5rem" }}>
                     <input
@@ -2162,64 +2170,67 @@ export default function NotesSubmission() {
               </div>
 
             <div className="form-group">
-              <label className="form-label">Driver</label>
-              <select
-                data-testid="submission-driver-select"
-                className={getFieldClassName("select", "driver_id")}
-                value={formState.driver_id}
-                onChange={(e) => handleDriverChange(e.target.value)}
-                onBlur={() => markActiveFieldTouched("driver_id")}
-                title="Pick the driver assigned to this session."
-                aria-invalid={Boolean(getFieldError("driver_id"))}
+              <label
+                id={`submission-driver-select-label-${activeTabKey}`}
+                className="form-label"
+                htmlFor={`submission-driver-select-${activeTabKey}`}
               >
-                <option value="">Select Driver</option>
-                {driverOptions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.label}
-                  </option>
-                ))}
-              </select>
+                Driver
+              </label>
+              <AppSelect
+                id={`submission-driver-select-${activeTabKey}`}
+                testId="submission-driver-select"
+                triggerClassName={getFieldClassName("select", "driver_id")}
+                value={formState.driver_id}
+                onValueChange={(value) => handleDriverChange(value)}
+                onBlur={() => markActiveFieldTouched("driver_id")}
+                options={driverOptions.map((driver) => ({
+                  value: driver.id,
+                  label: driver.label,
+                }))}
+                placeholder="Select Driver"
+                title="Pick the driver assigned to this session."
+                invalid={Boolean(getFieldError("driver_id"))}
+                ariaLabelledby={`submission-driver-select-label-${activeTabKey}`}
+              />
               {renderFieldError("driver_id")}
             </div>
 
             <div className="form-group">
-              <label className="form-label">Vehicle</label>
-              <select
-                data-testid="submission-vehicle-select"
-                className={getFieldClassName("select", "vehicle_id")}
+              <label
+                id={`submission-vehicle-select-label-${activeTabKey}`}
+                className="form-label"
+                htmlFor={`submission-vehicle-select-${activeTabKey}`}
+              >
+                Vehicle
+              </label>
+              <AppSelect
+                id={`submission-vehicle-select-${activeTabKey}`}
+                testId="submission-vehicle-select"
+                triggerClassName={getFieldClassName("select", "vehicle_id")}
                 value={formState.vehicle_id}
-                onChange={(e) => updateRequiredField("vehicle_id", e.target.value)}
+                onValueChange={(value) => updateRequiredField("vehicle_id", value)}
                 onBlur={() => markActiveFieldTouched("vehicle_id")}
                 title="Pick the vehicle used for this session."
-                aria-invalid={Boolean(getFieldError("vehicle_id"))}
-              >
-                <option value="">
-                  {formState.driver_id
-                    ? "Select Assigned Vehicle"
-                    : "Select Vehicle"}
-                </option>
-                {vehicleOptionsForDriver.length ? (
-                  vehicleOptionsForDriver.map((v) => {
-                    const assignedDriverLabel = v.driverId
-                      ? driverLabelMap.get(String(v.driverId)) || v.driverId
-                      : "";
-                    const optionLabel =
-                      formState.driver_id || !assignedDriverLabel
-                        ? v.label
-                        : `${v.label} · ${assignedDriverLabel}`;
+                invalid={Boolean(getFieldError("vehicle_id"))}
+                ariaLabelledby={`submission-vehicle-select-label-${activeTabKey}`}
+                placeholder={formState.driver_id ? "Select Assigned Vehicle" : "Select Vehicle"}
+                emptyMessage="No vehicles assigned to this driver"
+                options={vehicleOptionsForDriver.map((vehicle) => {
+                  const assignedDriverLabel = vehicle.driverId
+                    ? driverLabelMap.get(String(vehicle.driverId)) || vehicle.driverId
+                    : "";
+                  const optionLabel =
+                    formState.driver_id || !assignedDriverLabel
+                      ? vehicle.label
+                      : `${vehicle.label} · ${assignedDriverLabel}`;
 
-                    return (
-                      <option key={v.id} value={v.id}>
-                        {optionLabel}
-                      </option>
-                    );
-                  })
-                ) : (
-                  <option value="" disabled>
-                    No vehicles assigned to this driver
-                  </option>
-                )}
-              </select>
+                  return {
+                    value: vehicle.id,
+                    label: optionLabel,
+                  };
+                })}
+              />
               {renderFieldError("vehicle_id")}
             </div>
 
@@ -2227,23 +2238,29 @@ export default function NotesSubmission() {
               <label className="form-label">Session Details</label>
               <div className="grid-2">
                 <div>
-                  <label className="form-label sub-label">Session Type</label>
-                  <select
-                    data-testid="submission-session-type"
-                    className={getFieldClassName("select", "session_type")}
-                    value={formState.session_type}
-                    onChange={(e) => updateRequiredField("session_type", e.target.value)}
-                    onBlur={() => markActiveFieldTouched("session_type")}
-                    title="Choose the session classification."
-                    aria-invalid={Boolean(getFieldError("session_type"))}
+                  <label
+                    id={`submission-session-type-label-${activeTabKey}`}
+                    className="form-label sub-label"
+                    htmlFor={`submission-session-type-${activeTabKey}`}
                   >
-                    <option value="">Select session type</option>
-                    {SESSION_TYPE_OPTIONS.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
+                    Session Type
+                  </label>
+                  <AppSelect
+                    id={`submission-session-type-${activeTabKey}`}
+                    testId="submission-session-type"
+                    triggerClassName={getFieldClassName("select", "session_type")}
+                    value={formState.session_type}
+                    onValueChange={(value) => updateRequiredField("session_type", value)}
+                    onBlur={() => markActiveFieldTouched("session_type")}
+                    options={SESSION_TYPE_OPTIONS.map((sessionType) => ({
+                      value: sessionType.id,
+                      label: sessionType.label,
+                    }))}
+                    placeholder="Select session type"
+                    title="Choose the session classification."
+                    invalid={Boolean(getFieldError("session_type"))}
+                    ariaLabelledby={`submission-session-type-label-${activeTabKey}`}
+                  />
                   {renderFieldError("session_type")}
                 </div>
                 <div>
@@ -2317,14 +2334,14 @@ export default function NotesSubmission() {
                 </div>
                 <div>
                   <label className="form-label sub-label">Pressure Unit</label>
-                  <select
-                    className="select"
+                  <AppSelect
+                    triggerClassName="select"
                     value={formState.pressures.unit}
-                    onChange={(e) =>
+                    onValueChange={(value) =>
                       setFormFn((prev) => {
                         const next = {
                           ...prev,
-                          pressures: { ...prev.pressures, unit: e.target.value },
+                          pressures: { ...prev.pressures, unit: value },
                         };
                         if (!isQuickTab) {
                           persistDetailDraftSnapshot(next);
@@ -2332,13 +2349,11 @@ export default function NotesSubmission() {
                         return next;
                       })
                     }
-                  >
-                    {PRESSURE_UNIT_OPTIONS.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={PRESSURE_UNIT_OPTIONS.map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                    }))}
+                  />
                 </div>
               </div>
             </div>
@@ -2346,14 +2361,15 @@ export default function NotesSubmission() {
             <div className="form-group">
               <div className="form-label-row">
                 <label className="form-label">Pressures</label>
-                <select
-                  className="select select-small"
+                <AppSelect
+                  triggerClassName="select select-small"
                   value={pressureType}
-                  onChange={(e) => setPressureTypeFn(e.target.value)}
-                >
-                  <option value="cold">Cold</option>
-                  <option value="hot">Hot</option>
-                </select>
+                  onValueChange={(value) => setPressureTypeFn(value)}
+                  options={[
+                    { value: "cold", label: "Cold" },
+                    { value: "hot", label: "Hot" },
+                  ]}
+                />
               </div>
               <div className="grid-2">
                 <div>
@@ -3309,24 +3325,22 @@ export default function NotesSubmission() {
                     </div>
                     <div>
                       <label className="form-label sub-label">Status</label>
-                      <select
-                        data-testid="detail-tire-status"
-                        className="select"
+                      <AppSelect
+                        testId="detail-tire-status"
+                        triggerClassName="select"
                         value={detailForm.tire_inventory.status}
-                        onChange={(e) =>
+                        onValueChange={(value) =>
                           updateNested(
                             setDetailForm,
                             ["tire_inventory", "status"],
-                            e.target.value,
+                            value,
                           )
                         }
-                      >
-                        {TIRE_INVENTORY_STATUS_OPTIONS.map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                        options={TIRE_INVENTORY_STATUS_OPTIONS.map((option) => ({
+                          value: option.id,
+                          label: option.label,
+                        }))}
+                      />
                     </div>
                   </div>
                 </div>

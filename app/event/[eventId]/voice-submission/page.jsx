@@ -13,6 +13,7 @@ import Loader from "../../../components/Common/Loader";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
 import StatusBadge from "../../../components/Common/StatusBadge";
 import ProtectedRoute from "../../../components/ProtectedRoute";
+import AppSelect from "@/components/ui/app-select";
 import { getEventById, selectActiveEvent } from "../../../utils/eventApi";
 import { getEventSubmissionState } from "../../../utils/eventSchedule";
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
@@ -924,42 +925,43 @@ export default function VoiceSubmissionPage() {
 
               <div className="voice-submission-form-grid voice-submission-form-grid-minimal">
                 <div className="voice-submission-field">
-                  <label htmlFor="voice-driver">Driver</label>
-                  <select
+                  <label id="voice-driver-label" htmlFor="voice-driver">Driver</label>
+                  <AppSelect
                     id="voice-driver"
-                    data-testid="voice-submission-driver"
-                    className={`select ${fieldErrors.driver_id ? "input-error" : ""}`}
+                    testId="voice-submission-driver"
+                    triggerClassName="select"
                     value={formState.driver_id}
-                    onChange={(event) => updateFormField("driver_id", event.target.value)}
+                    onValueChange={(value) => updateFormField("driver_id", value)}
+                    options={driverOptions.map((driver) => ({
+                      value: driver.id,
+                      label: driver.label,
+                    }))}
+                    placeholder="Select Driver"
                     disabled={isFormReadOnly}
-                  >
-                    <option value="">Select Driver</option>
-                    {driverOptions.map((driver) => (
-                      <option key={driver.id} value={driver.id}>
-                        {driver.label}
-                      </option>
-                    ))}
-                  </select>
+                    invalid={Boolean(fieldErrors.driver_id)}
+                    ariaLabelledby="voice-driver-label"
+                  />
                   {fieldErrors.driver_id ? <p className="voice-submission-field-error">{fieldErrors.driver_id}</p> : null}
                 </div>
 
                 <div className="voice-submission-field">
-                  <label htmlFor="voice-vehicle">Vehicle</label>
-                  <select
+                  <label id="voice-vehicle-label" htmlFor="voice-vehicle">Vehicle</label>
+                  <AppSelect
                     id="voice-vehicle"
-                    data-testid="voice-submission-vehicle"
-                    className={`select ${fieldErrors.vehicle_id ? "input-error" : ""}`}
+                    testId="voice-submission-vehicle"
+                    triggerClassName="select"
                     value={formState.vehicle_id}
-                    onChange={(event) => updateFormField("vehicle_id", event.target.value)}
+                    onValueChange={(value) => updateFormField("vehicle_id", value)}
+                    options={vehiclesForDriver.map((vehicle) => ({
+                      value: vehicle.id,
+                      label: vehicle.label,
+                    }))}
+                    placeholder="Select Vehicle"
                     disabled={isFormReadOnly}
-                  >
-                    <option value="">Select Vehicle</option>
-                    {vehiclesForDriver.map((vehicle) => (
-                      <option key={vehicle.id} value={vehicle.id}>
-                        {vehicle.label}
-                      </option>
-                    ))}
-                  </select>
+                    invalid={Boolean(fieldErrors.vehicle_id)}
+                    ariaLabelledby="voice-vehicle-label"
+                    emptyMessage="No vehicles assigned to this driver"
+                  />
                   {fieldErrors.vehicle_id ? <p className="voice-submission-field-error">{fieldErrors.vehicle_id}</p> : null}
                 </div>
 
@@ -1039,21 +1041,22 @@ export default function VoiceSubmissionPage() {
                   </div>
 
                   <div className="voice-submission-field">
-                    <label htmlFor="voice-session-type">Session Type</label>
-                    <select
+                    <label id="voice-session-type-label" htmlFor="voice-session-type">Session Type</label>
+                    <AppSelect
                       id="voice-session-type"
-                      data-testid="voice-submission-session-type"
-                      className={`select ${fieldErrors.session_type ? "input-error" : ""}`}
+                      testId="voice-submission-session-type"
+                      triggerClassName="select"
                       value={formState.session_type}
-                      onChange={(event) => updateFormField("session_type", event.target.value)}
+                      onValueChange={(value) => updateFormField("session_type", value)}
+                      options={SESSION_TYPE_OPTIONS.map((option) => ({
+                        value: option.id,
+                        label: option.label,
+                      }))}
+                      placeholder="Select session type"
                       disabled={isFormReadOnly}
-                    >
-                      {SESSION_TYPE_OPTIONS.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                      invalid={Boolean(fieldErrors.session_type)}
+                      ariaLabelledby="voice-session-type-label"
+                    />
                     {fieldErrors.session_type ? <p className="voice-submission-field-error">{fieldErrors.session_type}</p> : null}
                   </div>
 

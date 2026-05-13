@@ -55,6 +55,8 @@
 }
 
 :root {
+  color-scheme: dark;
+
   /* Modern Racing Car Theme - SM-2 */
   --color-primary: #0a0a0a;
   --color-primary-dark: #000000;
@@ -306,6 +308,63 @@ body::before {
   border-color: var(--color-accent);
   background: var(--color-secondary);
   box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.1);
+}
+
+.app-select-trigger {
+  width: 100%;
+  min-height: 46px;
+  justify-content: space-between;
+}
+
+.app-select-trigger.select-small {
+  min-height: 36px;
+}
+
+.app-select-trigger[data-placeholder] {
+  color: var(--color-text-muted);
+}
+
+.app-select-trigger:focus-visible,
+.app-select-trigger[data-state="open"] {
+  border-color: var(--color-accent);
+  background: var(--color-secondary);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.1);
+}
+
+.app-select-trigger.input-error {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.14);
+}
+
+.app-select-trigger.input-error:focus-visible,
+.app-select-trigger.input-error[data-state="open"] {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.22);
+}
+
+.app-select-content {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: linear-gradient(160deg, var(--color-primary-light), var(--color-secondary));
+  color: var(--color-text);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34);
+}
+
+.app-select-content [data-position] {
+  padding: 0.35rem;
+}
+
+.app-select-item {
+  min-height: 40px;
+  border-radius: 8px;
+  color: var(--color-text);
+}
+
+.app-select-item[data-highlighted],
+.app-select-item[data-state="checked"] {
+  background: rgba(240, 83, 35, 0.16);
+  color: #fff;
 }
 
 .input::placeholder {

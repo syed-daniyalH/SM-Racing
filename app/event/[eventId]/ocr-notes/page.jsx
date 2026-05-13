@@ -11,6 +11,13 @@ import PhotoCameraBackRoundedIcon from "@mui/icons-material/PhotoCameraBackRound
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import Loader from "../../../components/Common/Loader";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
@@ -905,61 +912,101 @@ export default function OCRNotesPage() {
                   </div>
 
                   <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-driver">Driver</label>
-                    <select
-                      id="ocr-submission-driver"
-                      data-testid="ocr-submission-driver"
-                      className={getFieldClassName("ocr-notes-select", "driver_id")}
-                      value={formState.driver_id}
-                      onChange={(eventLike) => handleFieldChange("driver_id", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.driver_id)}
-                    >
-                      <option value="">Select driver</option>
-                      {driverOptions.map((driver) => (
-                        <option key={driver.id} value={driver.id}>
-                          {driver.label}
-                        </option>
-                      ))}
-                    </select>
+                    <label id="ocr-submission-driver-label" htmlFor="ocr-submission-driver">
+                      Driver
+                    </label>
+                    <Select value={formState.driver_id} onValueChange={(value) => handleFieldChange("driver_id", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-driver"
+                        data-testid="ocr-submission-driver"
+                        aria-invalid={Boolean(fieldErrors.driver_id)}
+                        aria-labelledby="ocr-submission-driver-label"
+                        className={getFieldClassName("ocr-notes-select-trigger", "driver_id")}
+                      >
+                        <SelectValue placeholder="Select driver" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        align="start"
+                        className="ocr-notes-select-content"
+                      >
+                        {driverOptions.map((driver) => (
+                          <SelectItem
+                            key={driver.id}
+                            value={driver.id}
+                            className="ocr-notes-select-item"
+                          >
+                            {driver.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {fieldErrors.driver_id ? <p className="ocr-notes-field-error">{fieldErrors.driver_id}</p> : null}
                   </div>
 
                   <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-vehicle">Vehicle</label>
-                    <select
-                      id="ocr-submission-vehicle"
-                      data-testid="ocr-submission-vehicle"
-                      className={getFieldClassName("ocr-notes-select", "vehicle_id")}
-                      value={formState.vehicle_id}
-                      onChange={(eventLike) => handleFieldChange("vehicle_id", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.vehicle_id)}
-                    >
-                      <option value="">Select vehicle</option>
-                      {vehicleOptionsForDriver.map((vehicle) => (
-                        <option key={vehicle.id} value={vehicle.id}>
-                          {vehicle.label}
-                        </option>
-                      ))}
-                    </select>
+                    <label id="ocr-submission-vehicle-label" htmlFor="ocr-submission-vehicle">
+                      Vehicle
+                    </label>
+                    <Select value={formState.vehicle_id} onValueChange={(value) => handleFieldChange("vehicle_id", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-vehicle"
+                        data-testid="ocr-submission-vehicle"
+                        aria-invalid={Boolean(fieldErrors.vehicle_id)}
+                        aria-labelledby="ocr-submission-vehicle-label"
+                        className={getFieldClassName("ocr-notes-select-trigger", "vehicle_id")}
+                      >
+                        <SelectValue placeholder="Select vehicle" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        align="start"
+                        className="ocr-notes-select-content"
+                      >
+                        {vehicleOptionsForDriver.map((vehicle) => (
+                          <SelectItem
+                            key={vehicle.id}
+                            value={vehicle.id}
+                            className="ocr-notes-select-item"
+                          >
+                            {vehicle.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {fieldErrors.vehicle_id ? <p className="ocr-notes-field-error">{fieldErrors.vehicle_id}</p> : null}
                   </div>
 
                   <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-session-type">Session Type</label>
-                    <select
-                      id="ocr-submission-session-type"
-                      data-testid="ocr-submission-session-type"
-                      className={getFieldClassName("ocr-notes-select", "session_type")}
-                      value={formState.session_type}
-                      onChange={(eventLike) => handleFieldChange("session_type", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.session_type)}
-                    >
-                      {SESSION_TYPE_OPTIONS.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                    <label id="ocr-submission-session-type-label" htmlFor="ocr-submission-session-type">
+                      Session Type
+                    </label>
+                    <Select value={formState.session_type} onValueChange={(value) => handleFieldChange("session_type", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-session-type"
+                        data-testid="ocr-submission-session-type"
+                        aria-invalid={Boolean(fieldErrors.session_type)}
+                        aria-labelledby="ocr-submission-session-type-label"
+                        className={getFieldClassName("ocr-notes-select-trigger", "session_type")}
+                      >
+                        <SelectValue placeholder="Select session type" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        align="start"
+                        className="ocr-notes-select-content"
+                      >
+                        {SESSION_TYPE_OPTIONS.map((option) => (
+                          <SelectItem
+                            key={option.id}
+                            value={option.id}
+                            className="ocr-notes-select-item"
+                          >
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {fieldErrors.session_type ? <p className="ocr-notes-field-error">{fieldErrors.session_type}</p> : null}
                   </div>
 

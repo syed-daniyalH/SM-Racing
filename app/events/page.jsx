@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import AppSelect from "@/components/ui/app-select";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import FilterAltRoundedIcon from "@mui/icons-material/FilterAltRounded";
@@ -565,58 +566,69 @@ export default function EventList() {
               </div>
 
               <div className="filters-group">
-                <label className="filters-label" htmlFor="event-status-filter">
+                <label
+                  id="event-status-filter-label"
+                  className="filters-label"
+                  htmlFor="event-status-filter"
+                >
                   Status
                 </label>
-                <select
+                <AppSelect
                   id="event-status-filter"
-                  className="input"
+                  triggerClassName="input"
                   value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
-                >
-                  {STATUS_FILTER_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(value) => setStatusFilter(value)}
+                  options={STATUS_FILTER_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                  ariaLabelledby="event-status-filter-label"
+                />
               </div>
 
               <div className="filters-group">
-                <label className="filters-label" htmlFor="event-track-filter">
+                <label
+                  id="event-track-filter-label"
+                  className="filters-label"
+                  htmlFor="event-track-filter"
+                >
                   Track
                 </label>
-                <select
+                <AppSelect
                   id="event-track-filter"
-                  className="input"
+                  triggerClassName="input"
                   value={trackFilter}
-                  onChange={(event) => setTrackFilter(event.target.value)}
-                >
-                  <option value="all">All Tracks</option>
-                  {trackOptions.map((track) => (
-                    <option key={track} value={track}>
-                      {track}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(value) => setTrackFilter(value)}
+                  options={[
+                    { value: "all", label: "All Tracks" },
+                    ...trackOptions.map((track) => ({
+                      value: track,
+                      label: track,
+                    })),
+                  ]}
+                  ariaLabelledby="event-track-filter-label"
+                />
               </div>
 
               <div className="filters-group">
-                <label className="filters-label" htmlFor="event-sort-filter">
+                <label
+                  id="event-sort-filter-label"
+                  className="filters-label"
+                  htmlFor="event-sort-filter"
+                >
                   Sort
                 </label>
-                <select
+                <AppSelect
                   id="event-sort-filter"
-                  className="input"
+                  triggerClassName="input"
                   value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value)}
-                >
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(value) => setSortMode(value)}
+                  options={SORT_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                  ariaLabelledby="event-sort-filter-label"
+                />
               </div>
             </div>
 
