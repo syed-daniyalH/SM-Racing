@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DatasetRoundedIcon from "@mui/icons-material/DatasetRounded";
+import DocumentScannerRoundedIcon from "@mui/icons-material/DocumentScannerRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import FlagRoundedIcon from "@mui/icons-material/FlagRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
@@ -69,6 +70,52 @@ const deriveEventStatus = (event) => {
     icon: "ready",
   };
 };
+
+const EVENT_ACTIONS = [
+  {
+    key: "submit-notes",
+    className: "primary",
+    iconClassName: "",
+    label: "Primary",
+    title: "Submit Notes",
+    description: "Open the driver note flow for this event.",
+    hrefBuilder: (eventId) => `/event/${eventId}/notes`,
+    icon: NoteAltRoundedIcon,
+  },
+  {
+    key: "ocr-notes",
+    className: "scan",
+    iconClassName: "scan",
+    label: "OCR Flow",
+    title: "OCR Notes",
+    description:
+      "Upload setup sheets or handwritten notes, extract values, and review before submission.",
+    hrefBuilder: (eventId) => `/event/${eventId}/ocr-notes`,
+    icon: DocumentScannerRoundedIcon,
+    testId: "event-detail-ocr-notes",
+  },
+  {
+    key: "voice-submission",
+    className: "tertiary",
+    iconClassName: "tertiary",
+    label: "Focused Flow",
+    title: "Voice Submission",
+    description: "Record, transcribe, review, and finalize a Deepgram-backed voice note.",
+    hrefBuilder: (eventId) => `/event/${eventId}/voice-submission`,
+    icon: RecordVoiceOverRoundedIcon,
+    testId: "event-detail-voice-submission",
+  },
+  {
+    key: "view-submissions",
+    className: "secondary",
+    iconClassName: "secondary",
+    label: "Secondary",
+    title: "View Submissions",
+    description: "Review captured notes, statuses, and sync history.",
+    hrefBuilder: (eventId) => `/event/${eventId}/submissions`,
+    icon: ReceiptLongRoundedIcon,
+  },
+];
 
 export default function EventDetail() {
   const router = useRouter();
@@ -251,12 +298,16 @@ export default function EventDetail() {
         ? "Closed after event"
         : "Schedule needed";
   const noteBannerCopy = canCaptureNotes
-    ? "Use Submit Notes for typed entry, Voice Submission for the dedicated Deepgram workflow, or View Submissions to review the event history."
+    ? "Use Submit Notes for typed entry, OCR Notes for handwritten setup sheets and photo-backed capture, Voice Submission for the dedicated Deepgram workflow, or View Submissions to review the event history."
     : submissionState.isUpcoming
       ? "Submission notes will open when the event start date arrives."
       : submissionState.hasEnded
         ? "This event window has ended. View Submissions to review the captured history."
       : "Confirm the event schedule and run group before drivers begin capturing notes.";
+  const actionCards = EVENT_ACTIONS.map((action) => ({
+    ...action,
+    href: action.hrefBuilder(eventId),
+  }));
 
   return (
       <ProtectedRoute requireDriver={true}>
@@ -381,54 +432,31 @@ export default function EventDetail() {
           </section>
 
           <section className="event-detail-actions-grid">
-            <button
-              type="button"
-              className="event-detail-action-card primary"
-              onClick={() => router.push(`/event/${eventId}/notes`)}
-            >
-              <div className="event-detail-action-icon">
-                <NoteAltRoundedIcon fontSize="inherit" />
-              </div>
-              <div className="event-detail-action-copy">
-                <span className="event-detail-action-label">Primary</span>
-                <h2>Submit Notes</h2>
-                <p>Open the driver note flow for this event.</p>
-              </div>
-              <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
-            </button>
+            {actionCards.map((action) => {
+              const ActionIcon = action.icon;
 
-            <button
-              type="button"
-              className="event-detail-action-card tertiary"
-              onClick={() => router.push(`/event/${eventId}/voice-submission`)}
-              data-testid="event-detail-voice-submission"
-            >
-              <div className="event-detail-action-icon tertiary">
-                <RecordVoiceOverRoundedIcon fontSize="inherit" />
-              </div>
-              <div className="event-detail-action-copy">
-                <span className="event-detail-action-label">Focused Flow</span>
-                <h2>Voice Submission</h2>
-                <p>Record, transcribe, review, and finalize a Deepgram-backed voice note.</p>
-              </div>
-              <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
-            </button>
-
-            <button
-              type="button"
-              className="event-detail-action-card secondary"
-              onClick={() => router.push(`/event/${eventId}/submissions`)}
-            >
-              <div className="event-detail-action-icon secondary">
-                <ReceiptLongRoundedIcon fontSize="inherit" />
-              </div>
-              <div className="event-detail-action-copy">
-                <span className="event-detail-action-label">Secondary</span>
-                <h2>View Submissions</h2>
-                <p>Review captured notes, statuses, and sync history.</p>
-              </div>
-              <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
-            </button>
+              return (
+                <button
+                  key={action.key}
+                  type="button"
+                  className={`event-detail-action-card ${action.className}`}
+                  onClick={() => router.push(action.href)}
+                  data-testid={action.testId}
+                >
+                  <div
+                    className={`event-detail-action-icon${action.iconClassName ? ` ${action.iconClassName}` : ""}`}
+                  >
+                    <ActionIcon fontSize="inherit" />
+                  </div>
+                  <div className="event-detail-action-copy">
+                    <span className="event-detail-action-label">{action.label}</span>
+                    <h2>{action.title}</h2>
+                    <p>{action.description}</p>
+                  </div>
+                  <KeyboardArrowRightRoundedIcon className="event-detail-action-arrow" fontSize="inherit" />
+                </button>
+              );
+            })}
           </section>
         </div>
       </div>

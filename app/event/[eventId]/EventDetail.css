@@ -400,7 +400,7 @@
 
 .event-detail-actions-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 }
 
@@ -409,6 +409,7 @@
   align-items: center;
   gap: 1rem;
   width: 100%;
+  min-height: 156px;
   padding: 1rem 1rem 1rem 1.05rem;
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -452,6 +453,21 @@
     linear-gradient(160deg, rgba(18, 30, 50, 0.98), rgba(12, 18, 34, 0.98));
 }
 
+.event-detail-action-card.scan {
+  background:
+    radial-gradient(circle at top right, rgba(255, 149, 0, 0.14), transparent 48%),
+    radial-gradient(circle at bottom left, rgba(0, 122, 255, 0.12), transparent 46%),
+    linear-gradient(160deg, rgba(24, 22, 18, 0.98), rgba(12, 14, 18, 0.98));
+  border-color: rgba(255, 189, 105, 0.24);
+}
+
+.event-detail-action-card.scan:hover {
+  background:
+    radial-gradient(circle at top right, rgba(255, 149, 0, 0.2), transparent 48%),
+    radial-gradient(circle at bottom left, rgba(0, 122, 255, 0.16), transparent 46%),
+    linear-gradient(160deg, rgba(28, 26, 21, 0.98), rgba(14, 18, 22, 0.98));
+}
+
 .event-detail-action-icon {
   width: 3rem;
   height: 3rem;
@@ -477,6 +493,12 @@
   color: #9dc6ff;
 }
 
+.event-detail-action-icon.scan {
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.18), rgba(79, 156, 255, 0.14));
+  border-color: rgba(255, 189, 105, 0.24);
+  color: #ffd39c;
+}
+
 .event-detail-action-copy {
   flex: 1;
   min-width: 0;
@@ -500,6 +522,10 @@
   color: rgba(157, 198, 255, 0.9);
 }
 
+.event-detail-action-card.scan .event-detail-action-label {
+  color: rgba(255, 214, 160, 0.92);
+}
+
 .event-detail-action-copy h2 {
   margin: 0 0 0.35rem;
   font-size: 1.05rem;
@@ -520,6 +546,10 @@
 
 .event-detail-action-card.tertiary .event-detail-action-copy p {
   color: rgba(221, 233, 255, 0.9);
+}
+
+.event-detail-action-card.scan .event-detail-action-copy p {
+  color: rgba(244, 233, 215, 0.92);
 }
 
 .event-detail-action-arrow {
