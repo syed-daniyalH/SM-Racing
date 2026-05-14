@@ -1597,6 +1597,91 @@ def test_analyze_submission_image_handles_malformed_json_without_crashing(monkey
     assert "Structured OCR mapping could not be parsed; raw OCR text preserved." in result["warnings"]
 
 
+def test_analyze_submission_image_uses_relaxed_salvage_when_strict_schema_fails(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-RELAXED-SALVAGE",
+        _submission_payload(),
+    )
+    attempted_requests: list[tuple[str, str]] = []
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"output_text": json.dumps(self.payload)}).encode("utf-8")
+
+    relaxed_payload = {
+        "document_type": "handwritten_setup_grid",
+        "confidence": 0.31,
+        "summary": "Partial handwritten setup grid recovered",
+        "extracted_text": "RH 102 101 100 99",
+        "raw_evidence": {
+            "visible_text": ["RH", "102", "101", "100", "99"],
+            "detected_grids": [
+                {
+                    "label": "RH",
+                    "top_left": "102",
+                    "top_right": "101",
+                    "bottom_left": "100",
+                    "bottom_right": "99",
+                }
+            ],
+            "detected_labels": [{"label": "RH"}],
+            "unmapped_values": ["faint handwritten note"],
+        },
+        "setup": {},
+        "warnings": ["Manual review required"],
+        "recommended_review_status": "PENDING",
+    }
+
+    monkeypatch.setattr(
+        image_analysis_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model=None,
+            openai_request_timeout_seconds=8.0,
+        ),
+    )
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        format_type = payload["text"]["format"]["type"]
+        attempted_requests.append((payload["model"], format_type))
+        if format_type == "json_schema":
+            raise image_analysis_service.urllib.error.URLError("strict schema rejected")
+        return _FakeResponse(relaxed_payload)
+
+    monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", fake_urlopen)
+
+    result = image_analysis_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert attempted_requests == [("gpt-5.4", "json_schema"), ("gpt-5.4", "json_object")]
+    assert result is not None
+    assert result["status"] == "review_required"
+    assert result["document_type"] == "low_quality_review_required"
+    assert result["setup"]["alignment"]["rh_fl"] == "102"
+    assert result["setup"]["alignment"]["rh_fr"] == "101"
+    assert result["setup"]["alignment"]["rh_rl"] == "100"
+    assert result["setup"]["alignment"]["rh_rr"] == "99"
+    assert result["model"] == "gpt-5.4"
+
+
 def test_normalize_image_analysis_marks_low_confidence_results_for_review():
     normalized = image_analysis_service.normalize_image_analysis_result(
         {

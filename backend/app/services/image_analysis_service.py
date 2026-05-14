@@ -87,6 +87,8 @@ DATA_URL_PATTERN = re.compile(r"^data:(?P<mime>[\w.+/-]+);base64,(?P<data>[A-Za-
 DEFAULT_EXTRACTION_FAILED_MESSAGE = (
     "OCR extraction could not build a safe draft from this image. Retry with a clearer image or use manual correction."
 )
+OCR_REQUEST_MODE_STRICT = "strict_schema"
+OCR_REQUEST_MODE_RELAXED = "json_object"
 
 
 IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -178,10 +180,10 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "fl": {"type": ["string", "number", "null"]},
-                            "fr": {"type": ["string", "number", "null"]},
-                            "rl": {"type": ["string", "number", "null"]},
-                            "rr": {"type": ["string", "number", "null"]},
+                            "fl": {"type": "string"},
+                            "fr": {"type": "string"},
+                            "rl": {"type": "string"},
+                            "rr": {"type": "string"},
                         },
                         "required": ["fl", "fr", "rl", "rr"],
                     },
@@ -189,10 +191,10 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "fl": {"type": ["string", "null"]},
-                            "fr": {"type": ["string", "null"]},
-                            "rl": {"type": ["string", "null"]},
-                            "rr": {"type": ["string", "null"]},
+                            "fl": {"type": "string"},
+                            "fr": {"type": "string"},
+                            "rl": {"type": "string"},
+                            "rr": {"type": "string"},
                         },
                         "required": ["fl", "fr", "rl", "rr"],
                     },
@@ -1495,106 +1497,14 @@ def _context_line(
     )
 
 
-def _request_image_analysis(
+def _build_ocr_prompt(
     *,
-    api_key: str,
-    image_url: str,
-    model: str,
-    prompt: str,
-    timeout_seconds: float,
-) -> dict[str, Any] | None:
-    image_info = _inspect_image_payload(image_url)
-    logger.info(
-        "OCR request starting: model=%s mime_type=%s size_bytes=%s width=%s height=%s detail=%s notes=%s",
-        model,
-        image_info["mime_type"] or "unknown",
-        image_info["size_bytes"],
-        image_info["width"],
-        image_info["height"],
-        image_info["detail"],
-        len(image_info["preprocessing_notes"]),
-    )
-    payload = {
-        "model": model,
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {"type": "input_image", "image_url": image_info["image_url"], "detail": image_info["detail"]},
-                ],
-            }
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": IMAGE_ANALYSIS_SCHEMA_NAME,
-                "schema": IMAGE_ANALYSIS_SCHEMA,
-                "strict": True,
-            }
-        },
-    }
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
-        logger.info("OCR request completed: model=%s parse_transport=success", model)
-    except urllib.error.HTTPError as error:
-        logger.warning("OpenAI image analysis failed: status=%s model=%s", error.code, model)
-        return None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
-        logger.warning("OpenAI image analysis failed for model=%s: %s", model, error)
-        return None
-
-    raw_text = _response_output_text(response_payload).strip()
-    if not raw_text:
-        logger.warning("OpenAI image analysis returned no output text for model=%s", model)
-        return None
-
-    parsed = _parse_model_payload(raw_text, model)
-    if parsed is None:
-        logger.warning("OpenAI image analysis returned no normalizable payload for model=%s", model)
-        return None
-
-    parsed["parser_version"] = IMAGE_ANALYSIS_PARSER_VERSION
-    parsed["model"] = model
-    return parsed
-
-
-def analyze_submission_image(
-    *,
-    submission: Submission,
     event: Event,
     run_group: RunGroup,
     driver: Driver | None,
     vehicle: Vehicle | None,
-) -> dict[str, Any] | None:
-    settings = get_settings()
-    ocr_config = get_ocr_config_status(settings)
-    image_url = (submission.image_url or "").strip()
-    logger.info(
-        "OCR analyze request received: has_image=%s primary_model=%s fallback_model=%s",
-        bool(image_url),
-        ocr_config["primary_model"],
-        ocr_config["fallback_model"] or "none",
-    )
-    if ocr_config["missing_requirements"] or not image_url:
-        logger.warning(
-            "OCR analyze request skipped: missing_requirements=%s has_image=%s",
-            ocr_config["missing_requirements"],
-            bool(image_url),
-        )
-        return None
-
+    request_mode: str = OCR_REQUEST_MODE_STRICT,
+) -> str:
     prompt = (
         "Role: You are a senior computer-vision and racing telemetry digitization specialist. "
         "Your job is to convert handwritten or printed SM Racing setup sheets into a review-safe OCR draft "
@@ -1645,18 +1555,188 @@ def analyze_submission_image(
         "\n\n"
         f"{_context_line(event=event, run_group=run_group, driver=driver, vehicle=vehicle)}"
     )
+
+    if request_mode == OCR_REQUEST_MODE_RELAXED:
+        prompt += (
+            "\n\n"
+            "Relaxed salvage mode:\n"
+            "- Return one JSON object even if the page is messy or only partially readable.\n"
+            "- Prefer partial raw evidence over empty output.\n"
+            "- If you cannot fill a mapped setup field safely, leave it as an empty string.\n"
+            "- If you can only recover loose notes or visible text, return them in extracted_text, raw_evidence, "
+            "and unstructured_elements.\n"
+            "- If the page is blank or mostly blank, classify it as blank_setup_sheet and still return a valid JSON object.\n"
+            "- Top-level keys to return: document_type, template_name, confidence, summary, extracted_text, metadata, "
+            "raw_evidence, data_blocks, unstructured_elements, setup, warnings, recommended_review_status.\n"
+            "- Do not output prose, markdown, or explanations outside the JSON object."
+        )
+
+    return prompt
+
+
+def _request_text_format(*, request_mode: str) -> dict[str, Any]:
+    if request_mode == OCR_REQUEST_MODE_RELAXED:
+        return {"format": {"type": "json_object"}}
+
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": IMAGE_ANALYSIS_SCHEMA_NAME,
+            "schema": IMAGE_ANALYSIS_SCHEMA,
+            "strict": True,
+        }
+    }
+
+
+def _request_image_analysis(
+    *,
+    api_key: str,
+    image_url: str,
+    model: str,
+    prompt: str,
+    timeout_seconds: float,
+    request_mode: str = OCR_REQUEST_MODE_STRICT,
+) -> dict[str, Any] | None:
+    image_info = _inspect_image_payload(image_url)
+    logger.info(
+        "OCR request starting: model=%s mode=%s mime_type=%s size_bytes=%s width=%s height=%s detail=%s notes=%s",
+        model,
+        request_mode,
+        image_info["mime_type"] or "unknown",
+        image_info["size_bytes"],
+        image_info["width"],
+        image_info["height"],
+        image_info["detail"],
+        len(image_info["preprocessing_notes"]),
+    )
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": image_info["image_url"], "detail": image_info["detail"]},
+                ],
+            }
+        ],
+        "text": _request_text_format(request_mode=request_mode),
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        logger.info("OCR request completed: model=%s mode=%s parse_transport=success", model, request_mode)
+    except urllib.error.HTTPError as error:
+        logger.warning("OpenAI image analysis failed: status=%s model=%s mode=%s", error.code, model, request_mode)
+        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
+        logger.warning("OpenAI image analysis failed for model=%s mode=%s: %s", model, request_mode, error)
+        return None
+
+    raw_text = _response_output_text(response_payload).strip()
+    if not raw_text:
+        logger.warning("OpenAI image analysis returned no output text for model=%s mode=%s", model, request_mode)
+        return None
+
+    parsed = _parse_model_payload(raw_text, model)
+    if parsed is None:
+        logger.warning("OpenAI image analysis returned no normalizable payload for model=%s mode=%s", model, request_mode)
+        return None
+
+    parsed["parser_version"] = IMAGE_ANALYSIS_PARSER_VERSION
+    parsed["model"] = model
+    return parsed
+
+
+def _request_normalized_image_analysis(
+    *,
+    api_key: str,
+    image_url: str,
+    model: str,
+    prompt: str,
+    timeout_seconds: float,
+    request_mode: str,
+) -> dict[str, Any] | None:
+    result = _request_image_analysis(
+        api_key=api_key,
+        image_url=image_url,
+        model=model,
+        prompt=prompt,
+        timeout_seconds=timeout_seconds,
+        request_mode=request_mode,
+    )
+    if result is None:
+        return None
+
+    normalized = normalize_image_analysis_result(result)
+    if normalized is None:
+        return None
+
+    normalized["model"] = model
+    return normalized
+
+
+def analyze_submission_image(
+    *,
+    submission: Submission,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+) -> dict[str, Any] | None:
+    settings = get_settings()
+    ocr_config = get_ocr_config_status(settings)
+    image_url = (submission.image_url or "").strip()
+    logger.info(
+        "OCR analyze request received: has_image=%s primary_model=%s fallback_model=%s",
+        bool(image_url),
+        ocr_config["primary_model"],
+        ocr_config["fallback_model"] or "none",
+    )
+    if ocr_config["missing_requirements"] or not image_url:
+        logger.warning(
+            "OCR analyze request skipped: missing_requirements=%s has_image=%s",
+            ocr_config["missing_requirements"],
+            bool(image_url),
+        )
+        return None
+
+    strict_prompt = _build_ocr_prompt(
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        request_mode=OCR_REQUEST_MODE_STRICT,
+    )
+    relaxed_prompt = _build_ocr_prompt(
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        request_mode=OCR_REQUEST_MODE_RELAXED,
+    )
     api_key = settings.openai_api_key.strip()
     fallback_model = ocr_config["fallback_model"]
     primary_model = ocr_config["primary_model"]
 
-    primary_result = _request_image_analysis(
+    normalized_primary = _request_normalized_image_analysis(
         api_key=api_key,
         image_url=image_url,
         model=primary_model,
-        prompt=prompt,
+        prompt=strict_prompt,
         timeout_seconds=settings.openai_request_timeout_seconds,
+        request_mode=OCR_REQUEST_MODE_STRICT,
     )
-    normalized_primary = normalize_image_analysis_result(primary_result) if primary_result else None
 
     if normalized_primary is not None:
         logger.info(
@@ -1674,15 +1754,15 @@ def analyze_submission_image(
                 retry_reason,
                 fallback_model,
             )
-            fallback_result = _request_image_analysis(
+            normalized_fallback = _request_normalized_image_analysis(
                 api_key=api_key,
                 image_url=image_url,
                 model=fallback_model,
-                prompt=prompt,
+                prompt=strict_prompt,
                 timeout_seconds=settings.openai_request_timeout_seconds,
+                request_mode=OCR_REQUEST_MODE_STRICT,
             )
-            if fallback_result is not None:
-                normalized_fallback = normalize_image_analysis_result(fallback_result)
+            if normalized_fallback is not None:
                 normalized_fallback["fallback_model_used"] = True
                 normalized_fallback["model"] = fallback_model
                 logger.info(
@@ -1701,15 +1781,15 @@ def analyze_submission_image(
             "Primary OCR model failed or returned malformed output; retrying with fallback model=%s",
             fallback_model,
         )
-        fallback_result = _request_image_analysis(
+        normalized_fallback = _request_normalized_image_analysis(
             api_key=api_key,
             image_url=image_url,
             model=fallback_model,
-            prompt=prompt,
+            prompt=strict_prompt,
             timeout_seconds=settings.openai_request_timeout_seconds,
+            request_mode=OCR_REQUEST_MODE_STRICT,
         )
-        if fallback_result is not None:
-            normalized_fallback = normalize_image_analysis_result(fallback_result)
+        if normalized_fallback is not None:
             normalized_fallback["fallback_model_used"] = True
             normalized_fallback["model"] = fallback_model
             logger.info(
@@ -1721,6 +1801,79 @@ def analyze_submission_image(
                 len(normalized_fallback["warnings"]),
             )
             return normalized_fallback
+
+    logger.warning("Strict OCR passes yielded no safe normalized draft; starting relaxed salvage path")
+    normalized_primary_salvage = _request_normalized_image_analysis(
+        api_key=api_key,
+        image_url=image_url,
+        model=primary_model,
+        prompt=relaxed_prompt,
+        timeout_seconds=settings.openai_request_timeout_seconds,
+        request_mode=OCR_REQUEST_MODE_RELAXED,
+    )
+    if normalized_primary_salvage is not None:
+        logger.info(
+            "OCR relaxed primary normalized: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+            normalized_primary_salvage["status"],
+            normalized_primary_salvage["document_type"],
+            normalized_primary_salvage["confidence"],
+            normalized_primary_salvage.get("_field_count"),
+            len(normalized_primary_salvage["warnings"]),
+        )
+        should_retry, retry_reason = _should_retry_with_fallback(normalized_primary_salvage, fallback_model)
+        if should_retry and fallback_model:
+            logger.warning(
+                "Relaxed primary OCR result needs fallback retry: reason=%s fallback_model=%s",
+                retry_reason,
+                fallback_model,
+            )
+            normalized_fallback_salvage = _request_normalized_image_analysis(
+                api_key=api_key,
+                image_url=image_url,
+                model=fallback_model,
+                prompt=relaxed_prompt,
+                timeout_seconds=settings.openai_request_timeout_seconds,
+                request_mode=OCR_REQUEST_MODE_RELAXED,
+            )
+            if normalized_fallback_salvage is not None:
+                normalized_fallback_salvage["fallback_model_used"] = True
+                normalized_fallback_salvage["model"] = fallback_model
+                logger.info(
+                    "OCR relaxed fallback normalized: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+                    normalized_fallback_salvage["status"],
+                    normalized_fallback_salvage["document_type"],
+                    normalized_fallback_salvage["confidence"],
+                    normalized_fallback_salvage.get("_field_count"),
+                    len(normalized_fallback_salvage["warnings"]),
+                )
+                return normalized_fallback_salvage
+        return normalized_primary_salvage
+
+    if fallback_model:
+        logger.warning(
+            "Relaxed primary OCR salvage failed; retrying relaxed salvage with fallback model=%s",
+            fallback_model,
+        )
+        normalized_fallback_salvage = _request_normalized_image_analysis(
+            api_key=api_key,
+            image_url=image_url,
+            model=fallback_model,
+            prompt=relaxed_prompt,
+            timeout_seconds=settings.openai_request_timeout_seconds,
+            request_mode=OCR_REQUEST_MODE_RELAXED,
+        )
+        if normalized_fallback_salvage is not None:
+            normalized_fallback_salvage["fallback_model_used"] = True
+            normalized_fallback_salvage["model"] = fallback_model
+            logger.info(
+                "OCR relaxed fallback normalized after primary salvage failure: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+                normalized_fallback_salvage["status"],
+                normalized_fallback_salvage["document_type"],
+                normalized_fallback_salvage["confidence"],
+                normalized_fallback_salvage.get("_field_count"),
+                len(normalized_fallback_salvage["warnings"]),
+            )
+            return normalized_fallback_salvage
 
     logger.warning("OCR analyze request ended without any safe normalized draft")
     return None
