@@ -189,6 +189,8 @@ const SHOCK_SETUP_FIELDS = [
 ];
 
 const createEmptyReviewDraft = () => ({
+  status: "idle",
+  message: "",
   docType: "unknown",
   templateName: "",
   confidence: null,
@@ -201,6 +203,12 @@ const createEmptyReviewDraft = () => ({
   fallbackUsed: false,
   model: null,
   metadata: {},
+  rawEvidence: {
+    visible_text: [],
+    detected_grids: [],
+    detected_labels: [],
+    unmapped_values: [],
+  },
   reviewFlags: [],
   parsedSession: {
     date: "",
@@ -445,6 +453,8 @@ const mergePreviewIntoReviewDraft = (preview) => {
 
   return {
     ...baseDraft,
+    status: preview?.status || "success",
+    message: preview?.message || "",
     docType: preview?.docType || "unknown",
     templateName:
       preview?.templateName || preview?.metadata?.template_name || preview?.metadata?.templateName || "",
@@ -458,6 +468,7 @@ const mergePreviewIntoReviewDraft = (preview) => {
     fallbackUsed: Boolean(preview?.fallbackUsed),
     model: preview?.modelUsed || preview?.model || null,
     metadata: preview?.metadata || {},
+    rawEvidence: preview?.rawEvidence || baseDraft.rawEvidence,
     reviewFlags: Array.isArray(preview?.reviewFlags) ? preview.reviewFlags : [],
     parsedSession: {
       ...baseDraft.parsedSession,
@@ -570,6 +581,8 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
     normalizeText(reviewDraft.alignment.toe_rr);
 
   return {
+    status: reviewDraft.status || "review_required",
+    message: reviewDraft.message || "",
     document_type: reviewDraft.docType || "unknown",
     template_name: reviewDraft.templateName || reviewDraft.metadata?.template_name || "",
     confidence: typeof reviewDraft.confidence === "number" ? reviewDraft.confidence : 0,
@@ -586,6 +599,7 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
         normalizeText(reviewDraft.metadata?.session_text) ||
         `${normalizeText(intakeState.session_type)} ${normalizeText(intakeState.session_number)}`.trim(),
     },
+    raw_evidence: reviewDraft.rawEvidence || {},
     setup: {
       pressures: {
         cold_fl: normalizeText(reviewDraft.pressures.cold.fl),
@@ -1121,6 +1135,8 @@ export default function OCRNotesPage() {
             shock_setup: storedDraft?.reviewDraft?.shockSetup || storedDraft?.reviewDraft?.shock_setup || {},
             notes: storedDraft?.reviewDraft?.notes || [],
           },
+          status: storedDraft?.reviewDraft?.status,
+          message: storedDraft?.reviewDraft?.message,
           docType: storedDraft?.reviewDraft?.docType,
           templateName: storedDraft?.reviewDraft?.templateName,
           confidence: storedDraft?.reviewDraft?.confidence,
@@ -1133,6 +1149,7 @@ export default function OCRNotesPage() {
           fallbackUsed: storedDraft?.reviewDraft?.fallbackUsed,
           model: storedDraft?.reviewDraft?.model,
           metadata: storedDraft?.reviewDraft?.metadata,
+          rawEvidence: storedDraft?.reviewDraft?.rawEvidence,
           reviewFlags: storedDraft?.reviewDraft?.reviewFlags,
         }),
       }));
@@ -1230,7 +1247,18 @@ export default function OCRNotesPage() {
   };
 
   const handleReviewEdit = (updater) => {
-    setReviewDraft((prev) => updater(prev));
+    setReviewDraft((prev) => {
+      const nextDraft = updater(prev);
+      if (prev.status === "extraction_failed") {
+        return {
+          ...nextDraft,
+          status: "review_required",
+          message: "",
+        };
+      }
+      return nextDraft;
+    });
+    setPageError("");
     setReviewDirty(true);
     setWorkflowState("editing_review");
   };
@@ -1355,11 +1383,28 @@ export default function OCRNotesPage() {
         },
       });
 
-      setReviewDraft(mergePreviewIntoReviewDraft(preview));
+      const mergedDraft = mergePreviewIntoReviewDraft(preview);
+      setReviewDraft(mergedDraft);
       setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
       setReviewDirty(false);
-      setWorkflowState("extract_success");
-      setWorkflowMessage("OCR draft ready. Review and correct the extracted setup values before submitting.");
+
+      if (preview.status === "extraction_failed") {
+        setWorkflowState("extract_failed");
+        setWorkflowMessage("");
+        setPageError(
+          preview.message ||
+            "OCR extraction could not build a safe draft from this image. Retry or enter values manually beside the image.",
+        );
+        return;
+      }
+
+      setPageError("");
+      setWorkflowState(preview.status === "review_required" ? "editing_review" : "extract_success");
+      setWorkflowMessage(
+        preview.status === "review_required"
+          ? "OCR draft needs review. Some values may be incomplete or uncertain."
+          : "OCR draft ready. Review and correct the extracted setup values before submitting.",
+      );
     } catch (error) {
       console.error("Failed to extract OCR draft:", error);
       setWorkflowState("extract_failed");
@@ -1635,6 +1680,16 @@ export default function OCRNotesPage() {
               <div>
                 <strong>{workflowPresentation.label}</strong>
                 <span>{workflowMessage}</span>
+              </div>
+            </div>
+          ) : null}
+
+          {reviewDraft.status === "review_required" && hasImage ? (
+            <div className="ocr-notes-banner warning" data-testid="ocr-review-required-banner">
+              <WarningAmberRoundedIcon fontSize="inherit" />
+              <div>
+                <strong>OCR draft needs review</strong>
+                <span>Some values may be incomplete or uncertain. You can correct the fields below and still submit for review.</span>
               </div>
             </div>
           ) : null}
@@ -1996,7 +2051,7 @@ export default function OCRNotesPage() {
             </div>
           </section>
 
-          {hasExtractedDraft ? (
+          {hasExtractedDraft || (hasImage && effectiveWorkflowState === "extract_failed") ? (
             <section className="ocr-notes-review-workspace" data-testid="ocr-review-sections">
               <div className="ocr-notes-panel">
                 <div className="ocr-notes-panel-head">
@@ -2378,19 +2433,36 @@ export default function OCRNotesPage() {
                       />
                     </div>
                     <div className="ocr-notes-field ocr-notes-field-wide">
-                      <label>Unstructured OCR Output</label>
+                      <label>Raw OCR Text</label>
                       <textarea
                         className="ocr-notes-textarea"
                         rows={6}
-                        value={reviewDraft.extractedText}
+                        value={reviewDraft.rawText || reviewDraft.extractedText}
                         onChange={(eventLike) =>
                           handleReviewEdit((prev) => ({
                             ...prev,
+                            rawText: eventLike.target.value,
                             extractedText: eventLike.target.value,
                           }))
                         }
                       />
                     </div>
+                    {Array.isArray(reviewDraft.rawEvidence?.visible_text) && reviewDraft.rawEvidence.visible_text.length > 0 ? (
+                      <div className="ocr-notes-metadata-list">
+                        <div>
+                          <span>Visible Text Lines</span>
+                          <strong>{reviewDraft.rawEvidence.visible_text.length}</strong>
+                        </div>
+                        <div>
+                          <span>Detected Grids</span>
+                          <strong>{Array.isArray(reviewDraft.rawEvidence?.detected_grids) ? reviewDraft.rawEvidence.detected_grids.length : 0}</strong>
+                        </div>
+                        <div>
+                          <span>Unmapped Values</span>
+                          <strong>{Array.isArray(reviewDraft.rawEvidence?.unmapped_values) ? reviewDraft.rawEvidence.unmapped_values.length : 0}</strong>
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="ocr-notes-field ocr-notes-field-wide">
                       <label>Review Notes</label>
                       <textarea

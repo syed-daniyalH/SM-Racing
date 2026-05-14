@@ -1062,7 +1062,7 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
         current_user,
     )
 
-    assert result.status == "success"
+    assert result.status == "review_required"
     assert result.doc_type == "handwritten_setup_grid"
     assert result.template_name == "farnbacher_86_setup_sheet"
     assert result.metadata["track_text"] == "Sebring International Raceway"
@@ -1075,7 +1075,9 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
     assert result.structured_data["sheet_fields"]["fuel_liters"] == "22.5"
     assert result.structured_data["post_session"]["toe_text"] == "1 out / 2.5 in"
     assert result.structured_data["shock_setup"]["rr"]["hsr"] == "7"
-    assert result.review_flags == ["ambiguous handwriting", "crossed-out value on wheelbase"]
+    assert "ambiguous handwriting" in result.review_flags
+    assert "crossed-out value on wheelbase" in result.review_flags
+    assert "Manual review required" in result.review_flags
     assert result.recommended_review_status == "PENDING"
 
 
@@ -1131,12 +1133,13 @@ def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
         current_user,
     )
 
-    assert result.status == "success"
+    assert result.status == "review_required"
     assert result.doc_type == "low_quality_review_required"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert result.structured_data["pressures"]["cold"]["fl"] == ""
     assert result.structured_data["notes"] == []
     assert "low confidence extraction" in result.review_flags
+    assert "Manual review required" in result.review_flags
 
 
 def test_preview_ocr_submission_reports_service_failure(monkeypatch):
@@ -1169,19 +1172,20 @@ def test_preview_ocr_submission_reports_service_failure(monkeypatch):
     )
     monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", lambda **_kwargs: None)
 
-    with pytest.raises(HTTPException) as exc_info:
-        submissions_endpoints.preview_ocr_submission(
-            OcrPreviewCreate(
-                event_id=event.id,
-                run_group_id=run_group.id,
-                image_url="data:image/png;base64,AAAA",
-            ),
-            session,
-            current_user,
-        )
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
 
-    assert exc_info.value.status_code == 502
-    assert exc_info.value.detail["code"] == "OCR_EXTRACTION_FAILED"
+    assert result.status == "extraction_failed"
+    assert result.doc_type == "unknown"
+    assert result.message == "OCR extraction failed before a safe draft could be created. Retry with a clearer image or use manual correction."
+    assert "Manual review required" in result.review_flags
 
 
 def test_preview_ocr_submission_calls_ocr_service_with_structured_context(monkeypatch):
@@ -1251,7 +1255,7 @@ def test_preview_ocr_submission_calls_ocr_service_with_structured_context(monkey
     assert analyze_calls[0]["submission"].analysis_result["force_review_staging"] is True
     assert analyze_calls[0]["submission"].status == SubmissionStatus.PENDING
     assert analyze_calls[0]["submission"].payload["context"]["alignment"]["camber_fl"] == "-1.5"
-    assert result.status == "success"
+    assert result.status == "review_required"
 
 
 def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
@@ -1305,8 +1309,8 @@ def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
                                     "wing_angle_deg": "",
                                 },
                                 "alignment": {
-                                    "camber_fl": "",
-                                    "camber_fr": "",
+                                    "camber_fl": "3.8",
+                                    "camber_fr": "4.0",
                                     "camber_rl": "",
                                     "camber_rr": "",
                                     "toe_front": "",
@@ -1430,6 +1434,7 @@ def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
 
     assert captured_requests[0]["payload"]["model"] == "gpt-5.4"
     assert result["model"] == "gpt-5.4"
+    assert result["fallback_model_used"] is False
 
 
 def test_analyze_submission_image_uses_fallback_model_when_primary_fails(monkeypatch):
@@ -1584,7 +1589,12 @@ def test_analyze_submission_image_handles_malformed_json_without_crashing(monkey
         vehicle=vehicle,
     )
 
-    assert result is None
+    assert result is not None
+    assert result["status"] == "review_required"
+    assert result["document_type"] == "low_quality_review_required"
+    assert result["raw_text"] == "{this is not valid json"
+    assert result["model"] == "gpt-5.4"
+    assert "Structured OCR mapping could not be parsed; raw OCR text preserved." in result["warnings"]
 
 
 def test_normalize_image_analysis_marks_low_confidence_results_for_review():
@@ -1635,6 +1645,264 @@ def test_normalize_image_analysis_accepts_nested_shock_setup():
 
     assert normalized["setup"]["shock_setup"]["rr"]["hsr"] == "7"
     assert normalized["setup"]["shock_setup"]["rr"]["total_setup"] == "30"
+
+
+def test_normalize_image_analysis_maps_abbreviation_grids_and_after_values():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "handwritten_setup_grid",
+            "confidence": 0.76,
+            "summary": "Handwritten setup sheet",
+            "raw_text": "RH RH2 C C2 TOE WB",
+            "raw_evidence": {
+                "visible_text": ["RH", "RH2", "C", "C2", "TOE", "WB"],
+                "detected_grids": [
+                    {
+                        "label": "RH",
+                        "top_left": "102",
+                        "top_right": "101",
+                        "bottom_left": "100",
+                        "bottom_right": "99",
+                    },
+                    {
+                        "label": "RH2",
+                        "top_left": "98",
+                        "top_right": "97",
+                        "bottom_left": "96",
+                        "bottom_right": "95",
+                    },
+                    {
+                        "label": "C",
+                        "top_left": "3.9",
+                        "top_right": "3.8",
+                        "bottom_left": "3.5",
+                        "bottom_right": "3.5",
+                    },
+                    {
+                        "label": "C2",
+                        "top_left": "4.0",
+                        "top_right": "3.9",
+                        "bottom_left": "3.55",
+                        "bottom_right": "3.5",
+                    },
+                    {
+                        "label": "TOE",
+                        "top_left": "1.0 out",
+                        "top_right": "1.0 out",
+                        "bottom_left": "2.5 in",
+                        "bottom_right": "2.5 in",
+                    },
+                    {
+                        "label": "WB",
+                        "top_left": "2475",
+                        "top_right": "2475",
+                    },
+                ],
+                "detected_labels": [],
+                "unmapped_values": [],
+            },
+            "setup": {},
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["status"] == "review_required"
+    assert normalized["setup"]["alignment"]["rh_fl"] == "98"
+    assert normalized["setup"]["alignment"]["rh_fr"] == "97"
+    assert normalized["setup"]["alignment"]["rh_rl"] == "96"
+    assert normalized["setup"]["alignment"]["rh_rr"] == "95"
+    assert normalized["setup"]["alignment"]["camber_fl"] == "4.0"
+    assert normalized["setup"]["alignment"]["camber_fr"] == "3.9"
+    assert normalized["setup"]["alignment"]["camber_rl"] == "3.55"
+    assert normalized["setup"]["alignment"]["camber_rr"] == "3.5"
+    assert normalized["setup"]["alignment"]["toe_fl"] == "1.0 out"
+    assert normalized["setup"]["alignment"]["toe_fr"] == "1.0 out"
+    assert normalized["setup"]["alignment"]["toe_rl"] == "2.5 in"
+    assert normalized["setup"]["alignment"]["toe_rr"] == "2.5 in"
+    assert normalized["setup"]["alignment"]["wheelbase_mm"] == "2475"
+    assert normalized["setup"]["sheet_fields"]["wheelbase_left_mm"] == "2475"
+    assert normalized["setup"]["sheet_fields"]["wheelbase_right_mm"] == "2475"
+    assert "Before and after values detected; after value used." in normalized["warnings"]
+
+
+def test_normalize_image_analysis_accepts_hbs_alias_in_shock_setup():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "shock_setup_sheet",
+            "confidence": 0.9,
+            "summary": "Shock page",
+            "extracted_text": "RR 7/6/9/8",
+            "setup": {
+                "shock_setup": {
+                    "rr": {
+                        "position": "RR",
+                        "hsr": "7",
+                        "lsr": "6",
+                        "hbs": "9",
+                        "lsb": "8",
+                        "total_setup": "30",
+                    }
+                }
+            },
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["setup"]["shock_setup"]["rr"]["position"] == "RR"
+    assert normalized["setup"]["shock_setup"]["rr"]["hsb"] == "9"
+    assert normalized["setup"]["shock_setup"]["rr"]["lsb"] == "8"
+
+
+def test_analyze_submission_image_uses_fallback_when_primary_result_is_too_sparse(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-SPARSE-PRIMARY",
+        _submission_payload(),
+    )
+    attempted_models: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"output_text": json.dumps(self.payload)}).encode("utf-8")
+
+    primary_payload = {
+        "document_type": "unknown",
+        "confidence": 0.18,
+        "summary": "",
+        "extracted_text": "",
+        "setup": {},
+        "warnings": ["ambiguous handwriting"],
+        "recommended_review_status": "PENDING",
+    }
+    fallback_payload = {
+        "document_type": "handwritten_setup_grid",
+        "confidence": 0.82,
+        "summary": "Mapped handwritten setup grid",
+        "extracted_text": "RH 102 101 100 99",
+        "raw_evidence": {
+            "visible_text": ["RH", "102", "101", "100", "99"],
+            "detected_grids": [
+                {
+                    "label": "RH",
+                    "top_left": "102",
+                    "top_right": "101",
+                    "bottom_left": "100",
+                    "bottom_right": "99",
+                }
+            ],
+            "detected_labels": [{"label": "RH"}],
+            "unmapped_values": [],
+        },
+        "setup": {},
+        "warnings": [],
+        "recommended_review_status": "PENDING",
+    }
+
+    monkeypatch.setattr(
+        image_analysis_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            openai_request_timeout_seconds=8.0,
+        ),
+    )
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        attempted_models.append(payload["model"])
+        if payload["model"] == "gpt-5.4":
+            return _FakeResponse(primary_payload)
+        return _FakeResponse(fallback_payload)
+
+    monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", fake_urlopen)
+
+    result = image_analysis_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert attempted_models == ["gpt-5.4", "gpt-5.5"]
+    assert result is not None
+    assert result["status"] == "success"
+    assert result["model"] == "gpt-5.5"
+    assert result["fallback_model_used"] is True
+    assert result["document_type"] == "handwritten_setup_grid"
+    assert result["setup"]["alignment"]["rh_fl"] == "102"
+
+
+def test_preview_ocr_submission_unknown_document_returns_review_required(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "unknown",
+            "confidence": 0.35,
+            "summary": "Notebook page with a few visible values",
+            "extracted_text": "Sebring Daniel initial setup 22.5 psi",
+            "setup": {},
+            "warnings": ["label-to-grid mapping uncertain"],
+            "recommended_review_status": "PENDING",
+            "model": "gpt-5.4",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "review_required"
+    assert result.doc_type == "low_quality_review_required"
+    assert "label-to-grid mapping uncertain" in result.review_flags
+    assert "Manual review required" in result.review_flags
 
 
 def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
@@ -1690,7 +1958,7 @@ def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
         current_user,
     )
 
-    assert result.status == "success"
+    assert result.status == "review_required"
     assert result.doc_type == "blank_setup_sheet"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert "no readable setup values detected" in result.review_flags

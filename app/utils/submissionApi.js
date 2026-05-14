@@ -215,6 +215,7 @@ const normalizeOcrPreviewResponse = (data) => {
   return {
     ...preview,
     status: String(preview?.status || "success").trim().toLowerCase() || "success",
+    message: preview?.message || "",
     docType: preview?.doc_type || preview?.docType || "unknown",
     templateName: preview?.template_name || preview?.templateName || null,
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
@@ -222,6 +223,12 @@ const normalizeOcrPreviewResponse = (data) => {
     fallbackUsed: Boolean(preview?.fallback_used ?? preview?.fallbackUsed),
     metadata:
       preview?.metadata && isPlainObject(preview.metadata) ? preview.metadata : {},
+    rawEvidence:
+      preview?.raw_evidence && isPlainObject(preview.raw_evidence)
+        ? preview.raw_evidence
+        : preview?.rawEvidence && isPlainObject(preview.rawEvidence)
+          ? preview.rawEvidence
+          : {},
     structuredData,
     rawText: preview?.raw_text || preview?.rawText || preview?.extracted_text || preview?.extractedText || "",
     reviewFlags: Array.isArray(preview?.review_flags || preview?.reviewFlags)

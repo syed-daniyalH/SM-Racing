@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -44,6 +47,46 @@ OCR_DOCUMENT_TYPES = (
     "low_quality_review_required",
     "unknown",
 )
+OCR_ABBREVIATION_MAP = {
+    "RH": "ride_height",
+    "RH2": "ride_height_after",
+    "RIDE HGT": "ride_height",
+    "RIDE HEIGHT": "ride_height",
+    "HEIGHT": "ride_height",
+    "C": "camber",
+    "C2": "camber_after",
+    "CAMBER": "camber",
+    "TOE": "toe",
+    "IN": "toe_in",
+    "OUT": "toe_out",
+    "WB": "wheelbase",
+    "WHEEL BASE": "wheelbase",
+    "WHEELBASE": "wheelbase",
+    "TP": "tire_pressure",
+    "TIRE PRESSURE": "tire_pressure",
+    "COLD": "cold_pressure",
+    "HOT": "hot_pressure",
+    "SHOCK": "shock_setup",
+    "SHOCKS": "shock_setup",
+    "RR": "rear_right",
+    "LR": "rear_left",
+    "LF": "left_front",
+    "RF": "right_front",
+    "HSR": "high_speed_rebound",
+    "LSR": "low_speed_rebound",
+    "HSB": "high_speed_bump",
+    "HBS": "high_speed_bump",
+    "LSB": "low_speed_bump",
+    "BUMP": "bump",
+    "REBOUND": "rebound",
+    "ARB": "anti_roll_bar",
+    "ROLL BAR": "anti_roll_bar",
+    "ROLL-BAR": "anti_roll_bar",
+}
+DATA_URL_PATTERN = re.compile(r"^data:(?P<mime>[\w.+/-]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)$", re.IGNORECASE)
+DEFAULT_EXTRACTION_FAILED_MESSAGE = (
+    "OCR extraction could not build a safe draft from this image. Retry with a clearer image or use manual correction."
+)
 
 
 IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -67,6 +110,59 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                 "session_text": {"type": "string"},
             },
             "required": ["driver_text", "track_text", "session_text"],
+        },
+        "raw_evidence": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "visible_text": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "detected_grids": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "label": {"type": "string"},
+                            "canonical_label": {"type": "string"},
+                            "top_left": {"type": "string"},
+                            "top_right": {"type": "string"},
+                            "bottom_left": {"type": "string"},
+                            "bottom_right": {"type": "string"},
+                            "note": {"type": "string"},
+                        },
+                        "required": [
+                            "label",
+                            "canonical_label",
+                            "top_left",
+                            "top_right",
+                            "bottom_left",
+                            "bottom_right",
+                            "note",
+                        ],
+                    },
+                },
+                "detected_labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "label": {"type": "string"},
+                            "canonical_label": {"type": "string"},
+                            "note": {"type": "string"},
+                        },
+                        "required": ["label", "canonical_label", "note"],
+                    },
+                },
+                "unmapped_values": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["visible_text", "detected_grids", "detected_labels", "unmapped_values"],
         },
         "setup": {
             "type": "object",
@@ -404,6 +500,7 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
         "summary",
         "extracted_text",
         "metadata",
+        "raw_evidence",
         "setup",
         "warnings",
         "recommended_review_status",
@@ -559,6 +656,15 @@ def _empty_shock_setup() -> dict[str, dict[str, str]]:
     }
 
 
+def _empty_raw_evidence() -> dict[str, list[Any]]:
+    return {
+        "visible_text": [],
+        "detected_grids": [],
+        "detected_labels": [],
+        "unmapped_values": [],
+    }
+
+
 def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
@@ -601,6 +707,61 @@ def _normalize_flags(values: Any) -> list[str]:
     return normalized
 
 
+def _append_warning(warnings: list[str], warning: str) -> None:
+    text = _normalize_text(warning)
+    if text and text not in warnings:
+        warnings.append(text)
+
+
+def _canonicalize_label(value: Any) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", " ", _normalize_text(value).upper()).strip()
+    if not normalized:
+        return ""
+    return OCR_ABBREVIATION_MAP.get(normalized, normalized.lower())
+
+
+def _normalize_raw_evidence(value: Any) -> dict[str, Any]:
+    raw = _dict(value)
+    normalized = _empty_raw_evidence()
+    normalized["visible_text"] = _normalize_notes(raw.get("visible_text"))
+    normalized["unmapped_values"] = _normalize_notes(raw.get("unmapped_values"))
+
+    detected_labels: list[dict[str, str]] = []
+    for entry in _list(raw.get("detected_labels")):
+        entry_map = _dict(entry)
+        label = _normalize_text(entry_map.get("label") or entry)
+        canonical_label = _normalize_text(entry_map.get("canonical_label")) or _canonicalize_label(label)
+        note = _normalize_text(entry_map.get("note"))
+        if label or canonical_label or note:
+            detected_labels.append(
+                {
+                    "label": label,
+                    "canonical_label": canonical_label,
+                    "note": note,
+                }
+            )
+    normalized["detected_labels"] = detected_labels
+
+    detected_grids: list[dict[str, str]] = []
+    for entry in _list(raw.get("detected_grids")):
+        entry_map = _dict(entry)
+        label = _normalize_text(entry_map.get("label"))
+        canonical_label = _normalize_text(entry_map.get("canonical_label")) or _canonicalize_label(label)
+        grid = {
+            "label": label,
+            "canonical_label": canonical_label,
+            "top_left": _normalize_text(entry_map.get("top_left")),
+            "top_right": _normalize_text(entry_map.get("top_right")),
+            "bottom_left": _normalize_text(entry_map.get("bottom_left")),
+            "bottom_right": _normalize_text(entry_map.get("bottom_right")),
+            "note": _normalize_text(entry_map.get("note")),
+        }
+        if any(grid.values()):
+            detected_grids.append(grid)
+    normalized["detected_grids"] = detected_grids
+    return normalized
+
+
 def _normalize_doc_type(value: Any) -> str:
     doc_type = _normalize_text(value)
     legacy_map = {
@@ -623,10 +784,14 @@ def _is_blankish_document(*, doc_type: str, raw_text: str, field_count: int, not
 
 def _normalize_shock_corner(value: Any) -> dict[str, str]:
     raw = _dict(value)
-    corner = _empty_shock_corner()
-    for key in corner:
-        corner[key] = _normalize_text(raw.get(key))
-    return corner
+    return {
+        "position": _normalize_text(raw.get("position")),
+        "hsr": _normalize_text(raw.get("hsr")),
+        "lsr": _normalize_text(raw.get("lsr")),
+        "hsb": _normalize_text(raw.get("hsb") or raw.get("hbs")),
+        "lsb": _normalize_text(raw.get("lsb")),
+        "total_setup": _normalize_text(raw.get("total_setup")),
+    }
 
 
 def _normalize_shock_setup(value: Any) -> dict[str, dict[str, str]]:
@@ -716,10 +881,142 @@ def _count_meaningful_fields(setup: dict[str, Any], notes: list[str], raw_text: 
     return total
 
 
+def _apply_corner_grid(
+    alignment: dict[str, str],
+    *,
+    key_prefix: str,
+    grid: dict[str, str],
+    warnings: list[str],
+    use_after_values: bool = False,
+) -> None:
+    existing_values = [
+        alignment.get(f"{key_prefix}_fl", ""),
+        alignment.get(f"{key_prefix}_fr", ""),
+        alignment.get(f"{key_prefix}_rl", ""),
+        alignment.get(f"{key_prefix}_rr", ""),
+    ]
+    incoming_values = [
+        _normalize_text(grid.get("top_left")),
+        _normalize_text(grid.get("top_right")),
+        _normalize_text(grid.get("bottom_left")),
+        _normalize_text(grid.get("bottom_right")),
+    ]
+
+    if use_after_values and any(existing_values) and any(incoming_values):
+        _append_warning(warnings, "Before and after values detected; after value used.")
+
+    if not any(incoming_values):
+        return
+
+    if use_after_values or not any(existing_values):
+        alignment[f"{key_prefix}_fl"] = incoming_values[0]
+        alignment[f"{key_prefix}_fr"] = incoming_values[1]
+        alignment[f"{key_prefix}_rl"] = incoming_values[2]
+        alignment[f"{key_prefix}_rr"] = incoming_values[3]
+
+
+def _sync_alignment_rollups(alignment: dict[str, str]) -> None:
+    if not _normalize_text(alignment.get("ride_height_f")):
+        if alignment.get("rh_fl") and alignment.get("rh_fl") == alignment.get("rh_fr"):
+            alignment["ride_height_f"] = alignment["rh_fl"]
+    if not _normalize_text(alignment.get("ride_height_r")):
+        if alignment.get("rh_rl") and alignment.get("rh_rl") == alignment.get("rh_rr"):
+            alignment["ride_height_r"] = alignment["rh_rl"]
+    if not _normalize_text(alignment.get("toe_front")):
+        if alignment.get("toe_fl") and alignment.get("toe_fl") == alignment.get("toe_fr"):
+            alignment["toe_front"] = alignment["toe_fl"]
+    if not _normalize_text(alignment.get("toe_rear")):
+        if alignment.get("toe_rl") and alignment.get("toe_rl") == alignment.get("toe_rr"):
+            alignment["toe_rear"] = alignment["toe_rl"]
+
+
+def _apply_raw_grid_mapping(
+    *,
+    alignment: dict[str, str],
+    sheet_fields: dict[str, str],
+    raw_evidence: dict[str, Any],
+    warnings: list[str],
+) -> None:
+    for grid in raw_evidence.get("detected_grids", []):
+        label = _normalize_text(grid.get("label"))
+        canonical_label = _normalize_text(grid.get("canonical_label")) or _canonicalize_label(label)
+        if not canonical_label:
+            _append_warning(warnings, "Grid label could not be mapped confidently.")
+            continue
+
+        if canonical_label == "ride_height":
+            _apply_corner_grid(alignment, key_prefix="rh", grid=grid, warnings=warnings)
+        elif canonical_label == "ride_height_after":
+            _apply_corner_grid(
+                alignment,
+                key_prefix="rh",
+                grid=grid,
+                warnings=warnings,
+                use_after_values=True,
+            )
+        elif canonical_label == "camber":
+            _apply_corner_grid(alignment, key_prefix="camber", grid=grid, warnings=warnings)
+        elif canonical_label == "camber_after":
+            _apply_corner_grid(
+                alignment,
+                key_prefix="camber",
+                grid=grid,
+                warnings=warnings,
+                use_after_values=True,
+            )
+        elif canonical_label == "toe":
+            _apply_corner_grid(alignment, key_prefix="toe", grid=grid, warnings=warnings)
+        elif canonical_label == "wheelbase":
+            wheelbase_candidates = [
+                _normalize_text(grid.get("top_left")),
+                _normalize_text(grid.get("top_right")),
+                _normalize_text(grid.get("bottom_left")),
+                _normalize_text(grid.get("bottom_right")),
+            ]
+            wheelbase_candidates = [candidate for candidate in wheelbase_candidates if candidate]
+            if wheelbase_candidates:
+                if not alignment.get("wheelbase_mm"):
+                    alignment["wheelbase_mm"] = wheelbase_candidates[-1]
+                if not sheet_fields.get("wheelbase_left_mm"):
+                    sheet_fields["wheelbase_left_mm"] = wheelbase_candidates[0]
+                if len(wheelbase_candidates) > 1 and not sheet_fields.get("wheelbase_right_mm"):
+                    sheet_fields["wheelbase_right_mm"] = wheelbase_candidates[1]
+        else:
+            if grid.get("note"):
+                _append_warning(warnings, f"Grid mapping uncertain for label '{label or canonical_label}'.")
+
+    _sync_alignment_rollups(alignment)
+
+
+def _derive_ocr_status(
+    *,
+    doc_type: str,
+    confidence: float,
+    field_count: int,
+    raw_text: str,
+    warnings: list[str],
+) -> str:
+    if doc_type == "extraction_failed":
+        return "extraction_failed"
+    if doc_type in {"unknown", "blank_setup_sheet", "low_quality_review_required"}:
+        return "review_required"
+    if confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD:
+        return "review_required"
+    if field_count < OCR_MIN_MEANINGFUL_FIELDS:
+        return "review_required"
+    if not raw_text:
+        return "review_required"
+    if warnings:
+        return "review_required"
+    return "success"
+
+
 def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> dict[str, Any]:
     analysis = _dict(image_analysis)
     raw_setup = _dict(analysis.get("setup"))
     metadata = _dict(analysis.get("metadata"))
+    raw_evidence = _normalize_raw_evidence(analysis.get("raw_evidence"))
+    requested_status = _normalize_text(analysis.get("status"))
 
     normalized_setup = {
         "alignment": _normalize_alignment(raw_setup.get("alignment")),
@@ -739,12 +1036,25 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
     }
 
     extracted_text = _normalize_text(analysis.get("raw_text")) or _normalize_text(analysis.get("extracted_text"))
+    if not extracted_text and raw_evidence["visible_text"]:
+        extracted_text = "\n".join(raw_evidence["visible_text"])
     warnings = _normalize_flags(analysis.get("warnings"))
     confidence = _normalize_float(analysis.get("confidence"))
-    field_count = _count_meaningful_fields(normalized_setup, normalized_setup["notes"], extracted_text)
     doc_type = _normalize_doc_type(analysis.get("document_type"))
 
-    if not doc_type or doc_type == "unknown":
+    _apply_raw_grid_mapping(
+        alignment=normalized_setup["alignment"],
+        sheet_fields=normalized_setup["sheet_fields"],
+        raw_evidence=raw_evidence,
+        warnings=warnings,
+    )
+
+    if normalized_setup["notes"] == [] and raw_evidence["unmapped_values"]:
+        normalized_setup["notes"] = raw_evidence["unmapped_values"]
+
+    field_count = _count_meaningful_fields(normalized_setup, normalized_setup["notes"], extracted_text)
+
+    if requested_status != "extraction_failed" and (not doc_type or doc_type == "unknown"):
         if _is_blankish_document(
             doc_type=doc_type,
             raw_text=extracted_text,
@@ -763,8 +1073,11 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
     if field_count == 0 and not extracted_text and "no readable setup values detected" not in warnings:
         warnings.append("no readable setup values detected")
 
+    if field_count < OCR_MIN_MEANINGFUL_FIELDS:
+        _append_warning(warnings, "Some values could not be mapped")
+
     flag_text = " ".join(warnings).lower()
-    if doc_type not in {"blank_setup_sheet", "unknown"} and (
+    if requested_status != "extraction_failed" and doc_type not in {"blank_setup_sheet", "unknown"} and (
         confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD
         or any(keyword in flag_text for keyword in OCR_SEVERE_QUALITY_FLAG_KEYWORDS)
     ):
@@ -774,7 +1087,18 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
     if doc_type != "unknown":
         recommended_review_status = "PENDING"
 
+    status = requested_status or _derive_ocr_status(
+        doc_type=doc_type,
+        confidence=confidence,
+        field_count=field_count,
+        raw_text=extracted_text,
+        warnings=warnings,
+    )
+    if status == "review_required":
+        _append_warning(warnings, "Manual review required")
+
     return {
+        "status": status,
         "document_type": doc_type,
         "template_name": _normalize_text(analysis.get("template_name")),
         "confidence": confidence,
@@ -786,12 +1110,14 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
             "track_text": _normalize_text(metadata.get("track_text")),
             "session_text": _normalize_text(metadata.get("session_text")),
         },
+        "raw_evidence": raw_evidence,
         "setup": normalized_setup,
         "warnings": warnings,
         "recommended_review_status": recommended_review_status,
         "parser_version": _normalize_text(analysis.get("parser_version")) or IMAGE_ANALYSIS_PARSER_VERSION,
         "model": _normalize_text(analysis.get("model")),
         "fallback_model_used": bool(analysis.get("fallback_model_used")),
+        "message": _normalize_text(analysis.get("message")),
         "_field_count": field_count,
     }
 
@@ -807,15 +1133,163 @@ def _should_retry_with_fallback(image_analysis: dict[str, Any], fallback_model: 
     raw_text = _normalize_text(image_analysis.get("raw_text"))
     flag_text = " ".join(review_flags).lower()
 
+    if doc_type == "unknown":
+        return True, "primary_unknown_doc_type"
     if doc_type == "low_quality_review_required":
         return True, "primary_marked_low_quality"
     if confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD:
         return True, "primary_low_confidence"
     if any(keyword in flag_text for keyword in OCR_REVIEW_FLAG_KEYWORDS):
         return True, "primary_high_ambiguity"
-    if doc_type not in {"blank_setup_sheet", "unknown"} and field_count < OCR_MIN_MEANINGFUL_FIELDS and not raw_text:
+    if not raw_text and doc_type != "blank_setup_sheet":
+        return True, "primary_missing_raw_text"
+    if doc_type not in {"blank_setup_sheet", "unknown"} and field_count < OCR_MIN_MEANINGFUL_FIELDS:
         return True, "primary_sparse_result"
     return False, None
+
+
+def _parse_data_url(image_url: str) -> tuple[str, bytes] | None:
+    match = DATA_URL_PATTERN.match(image_url.strip())
+    if not match:
+        return None
+
+    try:
+        decoded = base64.b64decode(match.group("data"), validate=True)
+    except (ValueError, binascii.Error):
+        return None
+
+    return match.group("mime").lower(), decoded
+
+
+def _png_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
+    if len(image_bytes) < 24 or not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None, None
+    return int.from_bytes(image_bytes[16:20], "big"), int.from_bytes(image_bytes[20:24], "big")
+
+
+def _jpeg_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
+    if len(image_bytes) < 4 or image_bytes[:2] != b"\xff\xd8":
+        return None, None
+
+    index = 2
+    while index + 9 < len(image_bytes):
+        if image_bytes[index] != 0xFF:
+            index += 1
+            continue
+        marker = image_bytes[index + 1]
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(image_bytes[index + 5:index + 7], "big")
+            width = int.from_bytes(image_bytes[index + 7:index + 9], "big")
+            return width, height
+        if index + 4 >= len(image_bytes):
+            break
+        segment_length = int.from_bytes(image_bytes[index + 2:index + 4], "big")
+        if segment_length <= 0:
+            break
+        index += segment_length + 2
+    return None, None
+
+
+def _webp_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
+    if len(image_bytes) < 30 or image_bytes[:4] != b"RIFF" or image_bytes[8:12] != b"WEBP":
+        return None, None
+
+    chunk_type = image_bytes[12:16]
+    if chunk_type == b"VP8X" and len(image_bytes) >= 30:
+        width = int.from_bytes(image_bytes[24:27] + b"\x00", "little") + 1
+        height = int.from_bytes(image_bytes[27:30] + b"\x00", "little") + 1
+        return width, height
+    return None, None
+
+
+def _inspect_image_payload(image_url: str) -> dict[str, Any]:
+    image_info = {
+        "image_url": image_url,
+        "mime_type": None,
+        "size_bytes": None,
+        "width": None,
+        "height": None,
+        "detail": "high",
+        "preprocessing_notes": [],
+    }
+    parsed = _parse_data_url(image_url)
+    if not parsed:
+        return image_info
+
+    mime_type, image_bytes = parsed
+    image_info["mime_type"] = "image/jpeg" if mime_type == "image/jpg" else mime_type
+    image_info["size_bytes"] = len(image_bytes)
+
+    width, height = None, None
+    if image_info["mime_type"] == "image/png":
+        width, height = _png_dimensions(image_bytes)
+    elif image_info["mime_type"] == "image/jpeg":
+        width, height = _jpeg_dimensions(image_bytes)
+    elif image_info["mime_type"] == "image/webp":
+        width, height = _webp_dimensions(image_bytes)
+
+    image_info["width"] = width
+    image_info["height"] = height
+
+    if image_info["size_bytes"] is not None and image_info["size_bytes"] < 1024:
+        image_info["preprocessing_notes"].append("image payload is very small")
+    if width is not None and height is not None and min(width, height) < 320:
+        image_info["preprocessing_notes"].append("image resolution is very small")
+
+    return image_info
+
+
+def _placeholder_analysis_from_raw_text(*, raw_text: str, model: str, warning: str) -> dict[str, Any]:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    return {
+        "status": "review_required",
+        "document_type": "low_quality_review_required",
+        "template_name": "",
+        "confidence": 0.2,
+        "summary": "Raw OCR text returned without a fully structured schema draft.",
+        "raw_text": raw_text,
+        "extracted_text": raw_text,
+        "metadata": {
+            "driver_text": "",
+            "track_text": "",
+            "session_text": "",
+        },
+        "raw_evidence": {
+            "visible_text": lines,
+            "detected_grids": [],
+            "detected_labels": [],
+            "unmapped_values": lines,
+        },
+        "setup": {},
+        "warnings": [warning, "Manual review required", "Some values could not be mapped"],
+        "recommended_review_status": "PENDING",
+        "parser_version": IMAGE_ANALYSIS_PARSER_VERSION,
+        "model": model,
+    }
+
+
+def _parse_model_payload(raw_text: str, model: str) -> dict[str, Any] | None:
+    candidate = raw_text.strip()
+    if not candidate:
+        return None
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start >= 0 and end > start:
+            snippet = candidate[start : end + 1]
+            try:
+                return json.loads(snippet)
+            except json.JSONDecodeError:
+                logger.warning("OpenAI OCR returned non-normalizable JSON envelope for model=%s", model)
+        logger.warning("OpenAI OCR returned unstructured text for model=%s; creating review-required placeholder", model)
+        return _placeholder_analysis_from_raw_text(
+            raw_text=raw_text,
+            model=model,
+            warning="Structured OCR mapping could not be parsed; raw OCR text preserved.",
+        )
 
 
 def _response_output_text(response_payload: dict[str, Any]) -> str:
@@ -858,6 +1332,17 @@ def _request_image_analysis(
     prompt: str,
     timeout_seconds: float,
 ) -> dict[str, Any] | None:
+    image_info = _inspect_image_payload(image_url)
+    logger.info(
+        "OCR request starting: model=%s mime_type=%s size_bytes=%s width=%s height=%s detail=%s notes=%s",
+        model,
+        image_info["mime_type"] or "unknown",
+        image_info["size_bytes"],
+        image_info["width"],
+        image_info["height"],
+        image_info["detail"],
+        len(image_info["preprocessing_notes"]),
+    )
     payload = {
         "model": model,
         "input": [
@@ -865,7 +1350,7 @@ def _request_image_analysis(
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": prompt},
-                    {"type": "input_image", "image_url": image_url, "detail": "auto"},
+                    {"type": "input_image", "image_url": image_info["image_url"], "detail": image_info["detail"]},
                 ],
             }
         ],
@@ -891,6 +1376,7 @@ def _request_image_analysis(
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
+        logger.info("OCR request completed: model=%s parse_transport=success", model)
     except urllib.error.HTTPError as error:
         logger.warning("OpenAI image analysis failed: status=%s model=%s", error.code, model)
         return None
@@ -903,10 +1389,9 @@ def _request_image_analysis(
         logger.warning("OpenAI image analysis returned no output text for model=%s", model)
         return None
 
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError:
-        logger.warning("OpenAI image analysis returned invalid JSON for model=%s", model)
+    parsed = _parse_model_payload(raw_text, model)
+    if parsed is None:
+        logger.warning("OpenAI image analysis returned no normalizable payload for model=%s", model)
         return None
 
     parsed["parser_version"] = IMAGE_ANALYSIS_PARSER_VERSION
@@ -925,7 +1410,18 @@ def analyze_submission_image(
     settings = get_settings()
     ocr_config = get_ocr_config_status(settings)
     image_url = (submission.image_url or "").strip()
+    logger.info(
+        "OCR analyze request received: has_image=%s primary_model=%s fallback_model=%s",
+        bool(image_url),
+        ocr_config["primary_model"],
+        ocr_config["fallback_model"] or "none",
+    )
     if ocr_config["missing_requirements"] or not image_url:
+        logger.warning(
+            "OCR analyze request skipped: missing_requirements=%s has_image=%s",
+            ocr_config["missing_requirements"],
+            bool(image_url),
+        )
         return None
 
     prompt = (
@@ -950,6 +1446,17 @@ def analyze_submission_image(
         "Wheelbase / WB, cold/hot pressures, bump, rebound, HSR, LSR, HSB/HBS, LSB, RR/LR/LF/RF, "
         "corner weight, roll-bar, springs, bump-stops, and after-session set-down."
         "\n"
+        "Stage A: capture raw OCR evidence in raw_evidence. Include visible_text, detected_labels, "
+        "detected_grids, and unmapped_values. Preserve unclear strings exactly instead of guessing."
+        "\n"
+        "Stage B: map the raw evidence into setup fields using racing abbreviations. Use the fixed "
+        "2x2 grid mapping top-left=FL, top-right=FR, bottom-left=RL, bottom-right=RR unless the "
+        "sheet explicitly labels a different position."
+        "\n"
+        "If both before/after values appear, RH2 overrides RH and C2 overrides C in the mapped schema. "
+        "Add a review flag saying 'Before and after values detected; after value used.' and preserve "
+        "the original evidence in raw_evidence or extracted_text."
+        "\n"
         "If the sheet is blank, low quality, or mostly unreadable, return empty mapped fields, keep "
         "raw/unstructured text if any, and add review flags. Never auto-finalize OCR data."
         "\n"
@@ -972,6 +1479,14 @@ def analyze_submission_image(
     normalized_primary = normalize_image_analysis_result(primary_result) if primary_result else None
 
     if normalized_primary is not None:
+        logger.info(
+            "OCR primary normalized: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+            normalized_primary["status"],
+            normalized_primary["document_type"],
+            normalized_primary["confidence"],
+            normalized_primary.get("_field_count"),
+            len(normalized_primary["warnings"]),
+        )
         should_retry, retry_reason = _should_retry_with_fallback(normalized_primary, fallback_model)
         if should_retry and fallback_model:
             logger.warning(
@@ -990,6 +1505,14 @@ def analyze_submission_image(
                 normalized_fallback = normalize_image_analysis_result(fallback_result)
                 normalized_fallback["fallback_model_used"] = True
                 normalized_fallback["model"] = fallback_model
+                logger.info(
+                    "OCR fallback normalized: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+                    normalized_fallback["status"],
+                    normalized_fallback["document_type"],
+                    normalized_fallback["confidence"],
+                    normalized_fallback.get("_field_count"),
+                    len(normalized_fallback["warnings"]),
+                )
                 return normalized_fallback
         return normalized_primary
 
@@ -1009,6 +1532,15 @@ def analyze_submission_image(
             normalized_fallback = normalize_image_analysis_result(fallback_result)
             normalized_fallback["fallback_model_used"] = True
             normalized_fallback["model"] = fallback_model
+            logger.info(
+                "OCR fallback normalized after primary transport failure: status=%s doc_type=%s confidence=%.2f field_count=%s review_flags=%s",
+                normalized_fallback["status"],
+                normalized_fallback["document_type"],
+                normalized_fallback["confidence"],
+                normalized_fallback.get("_field_count"),
+                len(normalized_fallback["warnings"]),
+            )
             return normalized_fallback
 
+    logger.warning("OCR analyze request ended without any safe normalized draft")
     return None

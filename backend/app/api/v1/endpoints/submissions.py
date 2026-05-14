@@ -342,6 +342,25 @@ def _precomputed_image_analysis(analysis_result: object) -> dict | None:
     return image_analysis if isinstance(image_analysis, dict) else None
 
 
+def _build_ocr_failure_analysis(message: str) -> dict[str, object]:
+    return {
+        "status": "extraction_failed",
+        "message": message,
+        "document_type": "unknown",
+        "confidence": 0.0,
+        "metadata": {},
+        "raw_evidence": {
+            "visible_text": [],
+            "detected_grids": [],
+            "detected_labels": [],
+            "unmapped_values": [],
+        },
+        "setup": {},
+        "warnings": ["Manual review required"],
+        "recommended_review_status": "PENDING",
+    }
+
+
 def _build_ocr_preview_response(
     *,
     image_analysis: dict | None,
@@ -445,13 +464,15 @@ def _build_ocr_preview_response(
     }
 
     return OcrPreviewRead(
-        status="success",
+        status=_preview_text(analysis.get("status")) or "success",
+        message=_preview_text(analysis.get("message")) or None,
         doc_type=_preview_text(analysis.get("document_type")) or "unknown",
         template_name=template_name or None,
         confidence=analysis.get("confidence"),
         model_used=_preview_text(analysis.get("model")) or None,
         fallback_used=bool(analysis.get("fallback_model_used")),
         metadata=metadata,
+        raw_evidence=_dict_or_empty(analysis.get("raw_evidence")),
         structured_data=structured_data,
         raw_text=_preview_text(analysis.get("raw_text")) or None,
         review_flags=[_preview_text(flag) for flag in _list_or_empty(analysis.get("warnings")) if _preview_text(flag)],
@@ -784,6 +805,13 @@ def preview_ocr_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OcrPreviewRead | JSONResponse:
+    logger.info(
+        "OCR preview endpoint called: event_id=%s run_group_id=%s has_image=%s context_keys=%s",
+        preview_in.event_id,
+        preview_in.run_group_id,
+        bool(normalize_optional_text(preview_in.image_url)),
+        sorted(_dict_or_empty(preview_in.context).keys()),
+    )
     ocr_config = get_ocr_config_status(settings)
     if ocr_config["missing_requirements"]:
         logger.warning(ocr_config["developer_message"])
@@ -841,19 +869,39 @@ def preview_ocr_submission(
         status=SubmissionStatus.PENDING,
     )
 
-    image_analysis = analyze_submission_image(
-        submission=preview_submission,
-        event=event,
-        run_group=run_group,
-        driver=driver,
-        vehicle=vehicle,
-    )
-    if not image_analysis:
-        raise _submission_error(
-            status.HTTP_502_BAD_GATEWAY,
-            "OCR_EXTRACTION_FAILED",
-            "OCR extraction did not return a usable draft. Retry with a clearer image or use the typed notes flow.",
+    try:
+        image_analysis = analyze_submission_image(
+            submission=preview_submission,
+            event=event,
+            run_group=run_group,
+            driver=driver,
+            vehicle=vehicle,
         )
+    except Exception as exc:
+        logger.exception("OCR preview processing failed unexpectedly")
+        image_analysis = _build_ocr_failure_analysis(
+            "OCR extraction failed before a safe draft could be created. Retry with a clearer image or use manual correction."
+        )
+        image_analysis["warnings"] = [
+            "OCR processing raised a backend exception",
+            "Manual review required",
+        ]
+        image_analysis["message"] = (
+            "OCR extraction failed before a safe draft could be created. Retry with a clearer image or use manual correction."
+        )
+
+    if not image_analysis:
+        logger.warning("OCR preview finished without any normalized result; returning extraction_failed response")
+        image_analysis = _build_ocr_failure_analysis(
+            "OCR extraction failed before a safe draft could be created. Retry with a clearer image or use manual correction."
+        )
+
+    logger.info(
+        "OCR preview returning: status=%s doc_type=%s confidence=%s",
+        image_analysis.get("status") or "success",
+        image_analysis.get("document_type") or "unknown",
+        image_analysis.get("confidence"),
+    )
 
     return _build_ocr_preview_response(
         image_analysis=image_analysis,
