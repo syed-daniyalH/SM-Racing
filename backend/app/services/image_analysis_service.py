@@ -108,8 +108,9 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                 "driver_text": {"type": "string"},
                 "track_text": {"type": "string"},
                 "session_text": {"type": "string"},
+                "session_notes": {"type": "string"},
             },
-            "required": ["driver_text", "track_text", "session_text"],
+            "required": ["driver_text", "track_text", "session_text", "session_notes"],
         },
         "raw_evidence": {
             "type": "object",
@@ -163,6 +164,53 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                 },
             },
             "required": ["visible_text", "detected_grids", "detected_labels", "unmapped_values"],
+        },
+        "data_blocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "sequence_id": {"type": "integer"},
+                    "label": {"type": "string"},
+                    "coordinates_context": {"type": "string"},
+                    "data": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "fl": {"type": ["string", "number", "null"]},
+                            "fr": {"type": ["string", "number", "null"]},
+                            "rl": {"type": ["string", "number", "null"]},
+                            "rr": {"type": ["string", "number", "null"]},
+                        },
+                        "required": ["fl", "fr", "rl", "rr"],
+                    },
+                    "raw_text_found": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "fl": {"type": ["string", "null"]},
+                            "fr": {"type": ["string", "null"]},
+                            "rl": {"type": ["string", "null"]},
+                            "rr": {"type": ["string", "null"]},
+                        },
+                        "required": ["fl", "fr", "rl", "rr"],
+                    },
+                    "adjustments_applied": {"type": "string"},
+                },
+                "required": [
+                    "sequence_id",
+                    "label",
+                    "coordinates_context",
+                    "data",
+                    "raw_text_found",
+                    "adjustments_applied",
+                ],
+            },
+        },
+        "unstructured_elements": {
+            "type": "array",
+            "items": {"type": "string"},
         },
         "setup": {
             "type": "object",
@@ -501,7 +549,8 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
         "extracted_text",
         "metadata",
         "raw_evidence",
-        "setup",
+        "data_blocks",
+        "unstructured_elements",
         "warnings",
         "recommended_review_status",
     ],
@@ -717,7 +766,64 @@ def _canonicalize_label(value: Any) -> str:
     normalized = re.sub(r"[^A-Z0-9]+", " ", _normalize_text(value).upper()).strip()
     if not normalized:
         return ""
+    if re.fullmatch(r"RH\d+", normalized):
+        return "ride_height_after"
+    if re.fullmatch(r"C\d+", normalized):
+        return "camber_after"
     return OCR_ABBREVIATION_MAP.get(normalized, normalized.lower())
+
+
+def _normalize_block_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return _normalize_text(value)
+
+
+def _normalize_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_data_blocks(value: Any) -> list[dict[str, Any]]:
+    normalized_blocks: list[dict[str, Any]] = []
+    for index, entry in enumerate(_list(value), start=1):
+        block = _dict(entry)
+        label = _normalize_text(block.get("label"))
+        coordinates_context = _normalize_text(block.get("coordinates_context"))
+        data = _dict(block.get("data"))
+        raw_text_found = _dict(block.get("raw_text_found"))
+
+        normalized_block = {
+            "sequence_id": _normalize_int(block.get("sequence_id"), index),
+            "label": label,
+            "canonical_label": _canonicalize_label(label),
+            "coordinates_context": coordinates_context,
+            "data": {
+                "fl": _normalize_block_value(data.get("fl")),
+                "fr": _normalize_block_value(data.get("fr")),
+                "rl": _normalize_block_value(data.get("rl")),
+                "rr": _normalize_block_value(data.get("rr")),
+            },
+            "raw_text_found": {
+                "fl": _normalize_block_value(raw_text_found.get("fl")),
+                "fr": _normalize_block_value(raw_text_found.get("fr")),
+                "rl": _normalize_block_value(raw_text_found.get("rl")),
+                "rr": _normalize_block_value(raw_text_found.get("rr")),
+            },
+            "adjustments_applied": _normalize_text(block.get("adjustments_applied")),
+        }
+        if (
+            normalized_block["label"]
+            or any(normalized_block["data"].values())
+            or any(normalized_block["raw_text_found"].values())
+            or normalized_block["adjustments_applied"]
+        ):
+            normalized_blocks.append(normalized_block)
+    return normalized_blocks
 
 
 def _normalize_raw_evidence(value: Any) -> dict[str, Any]:
@@ -760,6 +866,47 @@ def _normalize_raw_evidence(value: Any) -> dict[str, Any]:
             detected_grids.append(grid)
     normalized["detected_grids"] = detected_grids
     return normalized
+
+
+def _merge_data_blocks_into_raw_evidence(
+    *,
+    raw_evidence: dict[str, Any],
+    data_blocks: list[dict[str, Any]],
+    warnings: list[str],
+) -> None:
+    for block in data_blocks:
+        data = _dict(block.get("data"))
+        raw_text_found = _dict(block.get("raw_text_found"))
+        label = _normalize_text(block.get("label"))
+        canonical_label = _normalize_text(block.get("canonical_label")) or _canonicalize_label(label)
+        adjustments_applied = _normalize_text(block.get("adjustments_applied"))
+        coordinates_context = _normalize_text(block.get("coordinates_context"))
+
+        note_parts = [part for part in (coordinates_context, adjustments_applied) if part]
+        if adjustments_applied and adjustments_applied.lower() not in {"none", "n/a"}:
+            _append_warning(warnings, f"{label or canonical_label}: {adjustments_applied}")
+
+        detected_grid = {
+            "label": label,
+            "canonical_label": canonical_label,
+            "top_left": _normalize_text(data.get("fl")),
+            "top_right": _normalize_text(data.get("fr")),
+            "bottom_left": _normalize_text(data.get("rl")),
+            "bottom_right": _normalize_text(data.get("rr")),
+            "note": " | ".join(note_parts),
+        }
+        if any(detected_grid.values()):
+            raw_evidence["detected_grids"].append(detected_grid)
+
+        visible_values = [
+            _normalize_text(raw_text_found.get("fl")) or _normalize_text(data.get("fl")),
+            _normalize_text(raw_text_found.get("fr")) or _normalize_text(data.get("fr")),
+            _normalize_text(raw_text_found.get("rl")) or _normalize_text(data.get("rl")),
+            _normalize_text(raw_text_found.get("rr")) or _normalize_text(data.get("rr")),
+        ]
+        for piece in [label, coordinates_context, *visible_values]:
+            if piece and piece not in raw_evidence["visible_text"]:
+                raw_evidence["visible_text"].append(piece)
 
 
 def _normalize_doc_type(value: Any) -> str:
@@ -1016,6 +1163,8 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
     raw_setup = _dict(analysis.get("setup"))
     metadata = _dict(analysis.get("metadata"))
     raw_evidence = _normalize_raw_evidence(analysis.get("raw_evidence"))
+    data_blocks = _normalize_data_blocks(analysis.get("data_blocks"))
+    unstructured_elements = _normalize_notes(analysis.get("unstructured_elements"))
     requested_status = _normalize_text(analysis.get("status"))
 
     normalized_setup = {
@@ -1042,6 +1191,13 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
     confidence = _normalize_float(analysis.get("confidence"))
     doc_type = _normalize_doc_type(analysis.get("document_type"))
 
+    if data_blocks:
+        _merge_data_blocks_into_raw_evidence(
+            raw_evidence=raw_evidence,
+            data_blocks=data_blocks,
+            warnings=warnings,
+        )
+
     _apply_raw_grid_mapping(
         alignment=normalized_setup["alignment"],
         sheet_fields=normalized_setup["sheet_fields"],
@@ -1051,6 +1207,16 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
 
     if normalized_setup["notes"] == [] and raw_evidence["unmapped_values"]:
         normalized_setup["notes"] = raw_evidence["unmapped_values"]
+    for note in unstructured_elements:
+        if note not in normalized_setup["notes"]:
+            normalized_setup["notes"].append(note)
+        if note not in raw_evidence["unmapped_values"]:
+            raw_evidence["unmapped_values"].append(note)
+
+    if not extracted_text and raw_evidence["visible_text"]:
+        extracted_text = "\n".join(raw_evidence["visible_text"])
+    if not extracted_text and normalized_setup["notes"]:
+        extracted_text = "\n".join(normalized_setup["notes"])
 
     field_count = _count_meaningful_fields(normalized_setup, normalized_setup["notes"], extracted_text)
 
@@ -1108,9 +1274,11 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         "metadata": {
             "driver_text": _normalize_text(metadata.get("driver_text")),
             "track_text": _normalize_text(metadata.get("track_text")),
-            "session_text": _normalize_text(metadata.get("session_text")),
+            "session_text": _normalize_text(metadata.get("session_text") or metadata.get("session_notes")),
         },
         "raw_evidence": raw_evidence,
+        "data_blocks": data_blocks,
+        "unstructured_elements": unstructured_elements,
         "setup": normalized_setup,
         "warnings": warnings,
         "recommended_review_status": recommended_review_status,
@@ -1253,6 +1421,7 @@ def _placeholder_analysis_from_raw_text(*, raw_text: str, model: str, warning: s
             "driver_text": "",
             "track_text": "",
             "session_text": "",
+            "session_notes": "",
         },
         "raw_evidence": {
             "visible_text": lines,
@@ -1260,6 +1429,8 @@ def _placeholder_analysis_from_raw_text(*, raw_text: str, model: str, warning: s
             "detected_labels": [],
             "unmapped_values": lines,
         },
+        "data_blocks": [],
+        "unstructured_elements": lines,
         "setup": {},
         "warnings": [warning, "Manual review required", "Some values could not be mapped"],
         "recommended_review_status": "PENDING",
@@ -1425,43 +1596,52 @@ def analyze_submission_image(
         return None
 
     prompt = (
-        "You are reviewing SM Racing OCR input for a race-weekend setup workflow."
+        "Role: You are a senior computer-vision and racing telemetry digitization specialist. "
+        "Your job is to convert handwritten or printed SM Racing setup sheets into a review-safe OCR draft "
+        "with maximum numerical accuracy."
         "\n"
-        "Classify the image as exactly one of: blank_setup_sheet, handwritten_setup_grid, "
-        "printed_form_with_values, shock_setup_sheet, mixed_session_notes, "
-        "low_quality_review_required, or unknown."
+        "Method: deep scan and validate before mapping."
         "\n"
-        "These sheets may be blank printed templates, Alex-style handwritten 2x2 quadrant notes, "
-        "shock setup pages, or mixed notebook/session notes."
+        "1. Spatial grid detection: find every 2x2 grid or quadrant block on the page."
         "\n"
-        "Extract only text and values that are actually visible. Do not guess unclear numbers, "
-        "crossed-out values, overwritten values, or uncertain label mappings. Preserve decimals, "
-        "fractions, shorthand, and free-form notes in extracted_text and notes when they cannot be "
-        "mapped confidently."
+        "2. Neighbor labeling: inspect nearby labels and shorthand such as RH, RH2, C, C2, TOE, WB, "
+        "RIDE HGT, HSR, LSR, HSB, HBS, LSB, BUMP, REBOUND, RR, LR, LF, RF, ARB, ROLL-BAR."
         "\n"
-        "Apply this 2x2 grid mapping rule whenever a setup value is shown as a quadrant grid: "
+        "3. Coordinate mapping rule is strict unless the page explicitly labels wheel positions differently: "
         "top-left=FL, top-right=FR, bottom-left=RL, bottom-right=RR."
         "\n"
-        "Recognize common labels and shorthand: Ride Height / RH / RH2, Camber / C / C2, Toe, "
-        "Wheelbase / WB, cold/hot pressures, bump, rebound, HSR, LSR, HSB/HBS, LSB, RR/LR/LF/RF, "
-        "corner weight, roll-bar, springs, bump-stops, and after-session set-down."
+        "4. Validation-first behavior: do not guess unclear values. If handwriting is ambiguous, preserve the "
+        "raw text in raw_text_found, raw_evidence, or unstructured_elements and add review warnings."
         "\n"
-        "Stage A: capture raw OCR evidence in raw_evidence. Include visible_text, detected_labels, "
-        "detected_grids, and unmapped_values. Preserve unclear strings exactly instead of guessing."
+        "5. Decimal fidelity: preserve all decimal points exactly."
         "\n"
-        "Stage B: map the raw evidence into setup fields using racing abbreviations. Use the fixed "
-        "2x2 grid mapping top-left=FL, top-right=FR, bottom-left=RL, bottom-right=RR unless the "
-        "sheet explicitly labels a different position."
+        "6. Label fidelity: RH, RH2, RH3 or C, C2, C3 are separate chronological data blocks. "
+        "Do not merge them during extraction. Preserve sequence in data_blocks."
         "\n"
-        "If both before/after values appear, RH2 overrides RH and C2 overrides C in the mapped schema. "
-        "Add a review flag saying 'Before and after values detected; after value used.' and preserve "
-        "the original evidence in raw_evidence or extracted_text."
+        "7. Strike-through and modifier handling: if a value is crossed out or adjusted with visible arithmetic "
+        "such as '+3' or '-2', use the corrected visible final value only when it is explicit. Summarize the "
+        "operation in adjustments_applied. Never invent hidden math."
         "\n"
-        "If the sheet is blank, low quality, or mostly unreadable, return empty mapped fields, keep "
-        "raw/unstructured text if any, and add review flags. Never auto-finalize OCR data."
+        "8. Document classification: classify exactly one of blank_setup_sheet, handwritten_setup_grid, "
+        "printed_form_with_values, shock_setup_sheet, mixed_session_notes, low_quality_review_required, or unknown."
         "\n"
-        "Use empty strings or empty arrays for missing values. Keep recommended_review_status as "
-        "PENDING unless the document is clearly unrelated."
+        "Output requirements:"
+        "\n"
+        "- Stage A raw evidence: fill raw_evidence with visible_text, detected_labels, detected_grids, and unmapped_values."
+        "\n"
+        "- Stage A verified blocks: fill data_blocks for every meaningful 2x2 data grid. Include sequence_id, label, "
+        "coordinates_context, mapped fl/fr/rl/rr values, raw_text_found, and adjustments_applied."
+        "\n"
+        "- Stage B mapped schema: fill setup only for fields that are clearly supported by the evidence. Leave uncertain "
+        "mapped fields empty rather than guessing."
+        "\n"
+        "- Preserve notebook text, fractions, circled values, margin notes, and unresolved items in unstructured_elements "
+        "and extracted_text."
+        "\n"
+        "- If the page is blank, low quality, or partially readable, still return a review-safe draft instead of failing. "
+        "Use warnings and recommended_review_status=PENDING."
+        "\n"
+        "- Output JSON only."
         "\n\n"
         f"{_context_line(event=event, run_group=run_group, driver=driver, vehicle=vehicle)}"
     )

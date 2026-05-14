@@ -1905,6 +1905,86 @@ def test_preview_ocr_submission_unknown_document_returns_review_required(monkeyp
     assert "Manual review required" in result.review_flags
 
 
+def test_normalize_image_analysis_result_maps_sequential_data_blocks():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "handwritten_setup_grid",
+            "confidence": 0.88,
+            "summary": "Alex-style handwritten sheet",
+            "extracted_text": "",
+            "metadata": {
+                "driver_text": "Jeff Sebring",
+                "track_text": "Sebring",
+                "session_text": "",
+                "session_notes": "Spring medium",
+            },
+            "raw_evidence": {
+                "visible_text": [],
+                "detected_grids": [],
+                "detected_labels": [],
+                "unmapped_values": [],
+            },
+            "data_blocks": [
+                {
+                    "sequence_id": 1,
+                    "label": "RH",
+                    "coordinates_context": "top-left",
+                    "data": {"fl": "102", "fr": "101", "rl": "100", "rr": "99"},
+                    "raw_text_found": {"fl": "102", "fr": "101", "rl": "100", "rr": "99"},
+                    "adjustments_applied": "",
+                },
+                {
+                    "sequence_id": 2,
+                    "label": "RH2",
+                    "coordinates_context": "upper-right",
+                    "data": {"fl": "98", "fr": "97", "rl": "100", "rr": "95"},
+                    "raw_text_found": {"fl": "98", "fr": "97", "rl": "100", "rr": "95"},
+                    "adjustments_applied": "after-session values supersede the first grid",
+                },
+                {
+                    "sequence_id": 3,
+                    "label": "C",
+                    "coordinates_context": "mid-left",
+                    "data": {"fl": "3.9", "fr": "3.8", "rl": "3.7", "rr": "3.5"},
+                    "raw_text_found": {"fl": "3.9", "fr": "3.8", "rl": "3.7", "rr": "3.5"},
+                    "adjustments_applied": "",
+                },
+                {
+                    "sequence_id": 4,
+                    "label": "C2",
+                    "coordinates_context": "mid-right",
+                    "data": {"fl": "4.0", "fr": "3.9", "rl": "3.55", "rr": "3.5"},
+                    "raw_text_found": {"fl": "4.0", "fr": "3.9", "rl": "3.55", "rr": "3.5"},
+                    "adjustments_applied": "",
+                },
+                {
+                    "sequence_id": 5,
+                    "label": "WB",
+                    "coordinates_context": "bottom",
+                    "data": {"fl": "2475", "fr": "2475", "rl": "", "rr": ""},
+                    "raw_text_found": {"fl": "2475", "fr": "2475", "rl": "", "rr": ""},
+                    "adjustments_applied": "",
+                },
+            ],
+            "unstructured_elements": ["50.4%", "Sebring Daniel initial setup"],
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["document_type"] == "handwritten_setup_grid"
+    assert normalized["metadata"]["session_text"] == "Spring medium"
+    assert normalized["setup"]["alignment"]["rh_fl"] == "98"
+    assert normalized["setup"]["alignment"]["rh_fr"] == "97"
+    assert normalized["setup"]["alignment"]["rh_rr"] == "95"
+    assert normalized["setup"]["alignment"]["camber_fl"] == "4.0"
+    assert normalized["setup"]["alignment"]["camber_rl"] == "3.55"
+    assert normalized["setup"]["alignment"]["wheelbase_mm"] == "2475"
+    assert "Before and after values detected; after value used." in normalized["warnings"]
+    assert any(grid["label"] == "RH2" for grid in normalized["raw_evidence"]["detected_grids"])
+    assert "50.4%" in normalized["setup"]["notes"]
+
+
 def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
     event = SimpleNamespace(
         id=uuid4(),
@@ -1962,6 +2042,98 @@ def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
     assert result.doc_type == "blank_setup_sheet"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert "no readable setup values detected" in result.review_flags
+
+
+def test_preview_ocr_submission_builds_review_draft_from_data_blocks(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "handwritten_setup_grid",
+            "confidence": 0.73,
+            "summary": "Verified grid blocks extracted",
+            "extracted_text": "",
+            "metadata": {
+                "driver_text": "Jeff Sebring",
+                "track_text": "Sebring",
+                "session_text": "",
+                "session_notes": "Spring medium",
+            },
+            "raw_evidence": {
+                "visible_text": [],
+                "detected_grids": [],
+                "detected_labels": [],
+                "unmapped_values": [],
+            },
+            "data_blocks": [
+                {
+                    "sequence_id": 1,
+                    "label": "RH",
+                    "coordinates_context": "top-left",
+                    "data": {"fl": "102", "fr": "101", "rl": "100", "rr": "99"},
+                    "raw_text_found": {"fl": "102", "fr": "101", "rl": "100", "rr": "99"},
+                    "adjustments_applied": "",
+                },
+                {
+                    "sequence_id": 2,
+                    "label": "C",
+                    "coordinates_context": "middle",
+                    "data": {"fl": "3.9", "fr": "3.8", "rl": "3.7", "rr": "3.5"},
+                    "raw_text_found": {"fl": "3.9", "fr": "3.8", "rl": "3.7", "rr": "3.5"},
+                    "adjustments_applied": "",
+                },
+            ],
+            "unstructured_elements": ["50.4%", "margin note: Sebring medium"],
+            "warnings": ["manual verification recommended"],
+            "recommended_review_status": "PENDING",
+            "model": "gpt-5.4",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "review_required"
+    assert result.doc_type == "handwritten_setup_grid"
+    assert result.model_used == "gpt-5.4"
+    assert result.structured_data["alignment"]["rh_fl"] == "102"
+    assert result.structured_data["alignment"]["camber_rr"] == "3.5"
+    assert "50.4%" in result.structured_data["notes"]
+    assert "manual verification recommended" in result.review_flags
 
 
 def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):
