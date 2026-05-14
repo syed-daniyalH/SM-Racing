@@ -113,8 +113,10 @@ async function mockSubmissionApp(page, options = {}) {
     options.buildOcrPreviewResponse ||
     (() => ({
       status: "success",
-      doc_type: "setup_sheet",
+      doc_type: "handwritten_setup_grid",
       confidence: 0.84,
+      model_used: "gpt-5.4",
+      fallback_used: false,
       metadata: {
         driver_text: "NG",
         track_text: TRACK_NAME,
@@ -166,18 +168,41 @@ async function mockSubmissionApp(page, options = {}) {
           bump_fr: "5",
           bump_rl: "4",
           bump_rr: "4",
+          hsr_fl: "7",
+          hsr_fr: "7",
+          hsr_rl: "6",
+          hsr_rr: "6",
+          lsr_fl: "4",
+          lsr_fr: "4",
+          lsr_rl: "3",
+          lsr_rr: "3",
+          hsb_fl: "8",
+          hsb_fr: "8",
+          hsb_rl: "7",
+          hsb_rr: "7",
+          lsb_fl: "5",
+          lsb_fr: "5",
+          lsb_rl: "4",
+          lsb_rr: "4",
           sway_bar_f: "1",
           sway_bar_r: "2",
           wing_angle_deg: "15",
         },
+        shock_setup: {
+          rr: { position: "RR", hsr: "7", lsr: "6", hsb: "9", lsb: "8", total_setup: "30" },
+          lr: { position: "LR", hsr: "", lsr: "", hsb: "", lsb: "", total_setup: "" },
+          lf: { position: "LF", hsr: "", lsr: "", hsb: "", lsb: "", total_setup: "" },
+          rf: { position: "RF", hsr: "", lsr: "", hsb: "", lsb: "", total_setup: "" },
+        },
         notes: ["Rear ride height was hard to read"],
       },
       review_flags: ["ambiguous handwriting"],
+      raw_text: "RH front 65 rear 68",
       extracted_text: "RH front 65 rear 68",
       summary: "Setup sheet parsed",
       recommended_review_status: "PENDING",
-      parser_version: "sm-racing-image-analysis-v1",
-      model: "gpt-4o-mini",
+      parser_version: "ocr-v1",
+      model: "gpt-5.4",
     }));
 
   await page.addInitScript(
@@ -371,6 +396,11 @@ async function mockSubmissionApp(page, options = {}) {
         return route.fulfill({
           status: options.ocrPreviewError.status || 502,
           json: {
+            error: options.ocrPreviewError.code || "OCR_EXTRACTION_FAILED",
+            message:
+              options.ocrPreviewError.message ||
+              "OCR extraction did not return a usable draft. Retry with a clearer image.",
+            missing_requirements: options.ocrPreviewError.missingRequirements || [],
             detail: {
               code: options.ocrPreviewError.code || "OCR_EXTRACTION_FAILED",
               message:
@@ -794,6 +824,8 @@ test.describe("submission flow", () => {
     await expect(
       page.getByTestId("ocr-review-sections").getByText("ambiguous handwriting", { exact: true }),
     ).toBeVisible();
+    await expect(page.getByText("gpt-5.4").first()).toBeVisible();
+    await expect(page.getByText("handwritten setup grid").first()).toBeVisible();
 
     expect(requests.ocrPreviewRequests[0].context.track).toBe(TRACK_NAME);
   });
@@ -821,6 +853,33 @@ test.describe("submission flow", () => {
       ),
     ).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId("ocr-extract-button")).toBeEnabled();
+    await expect(page.getByAltText("OCR note preview")).toBeVisible();
+  });
+
+  test("ocr notes show a clear disabled error when backend OCR is unavailable", async ({ page }) => {
+    await mockSubmissionApp(page, {
+      ocrPreviewError: {
+        status: 503,
+        code: "OCR_EXTRACTION_DISABLED",
+        message: "OCR extraction is disabled because backend image analysis is not configured.",
+        missingRequirements: ["OPENAI_API_KEY"],
+      },
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "ocr-sheet.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    await expect(
+      page.getByText(
+        "OCR extraction is unavailable right now. Please try again later or use the typed notes flow.",
+      ),
+    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByAltText("OCR note preview")).toBeVisible();
   });
 
   test("ocr notes can save a local draft and submit the reviewed draft for review", async ({
@@ -856,7 +915,8 @@ test.describe("submission flow", () => {
     const body = requests[0];
     expect(body.image_url).toContain("data:image/png;base64,");
     expect(body.analysis_result.force_review_staging).toBe(true);
-    expect(body.analysis_result.image_analysis.document_type).toBe("setup_sheet");
+    expect(body.analysis_result.image_analysis.document_type).toBe("handwritten_setup_grid");
+    expect(body.analysis_result.image_analysis.model).toBe("gpt-5.4");
     expect(body.payload.data.track).toBe(TRACK_NAME);
     expect(body.payload.ocr_review.review_flags).toEqual(["ambiguous handwriting"]);
   });

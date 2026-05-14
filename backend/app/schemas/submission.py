@@ -43,8 +43,11 @@ class OcrPreviewRead(ORMModel):
     doc_type: str = "unknown"
     template_name: str | None = None
     confidence: float | None = None
+    model_used: str | None = None
+    fallback_used: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
     structured_data: dict[str, Any] = Field(default_factory=dict)
+    raw_text: str | None = None
     review_flags: list[str] = Field(default_factory=list)
     extracted_text: str | None = None
     summary: str | None = None

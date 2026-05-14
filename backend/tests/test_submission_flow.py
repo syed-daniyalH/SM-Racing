@@ -9,8 +9,10 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints import submissions as submissions_endpoints
+from app.core import config as config_module
 from app.core.enums import SubmissionStatus, TireInventoryStatus
 from app.models.structured_notes import TireInventory
+from app.services import image_analysis_service
 from app.services import submission_delivery_service as delivery_service
 from app.services import make_webhook_service as make_service
 from app.services import submission_ingest_service as ingest_service
@@ -797,6 +799,80 @@ def test_review_required_ocr_submissions_skip_immediate_structured_persist():
     assert payload_service.should_persist_structured_submission(analysis) is False
 
 
+def test_preview_ocr_submission_reports_disabled_config(monkeypatch):
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+
+    response = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=uuid4(),
+            run_group_id=uuid4(),
+            image_url="data:image/png;base64,AAAA",
+        ),
+        db=SimpleNamespace(),
+        current_user=SimpleNamespace(),
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 503
+    assert payload["error"] == "OCR_EXTRACTION_DISABLED"
+    assert payload["message"] == "OCR extraction is disabled because backend image analysis is not configured."
+    assert payload["missing_requirements"] == ["CHATBOT_IMAGE_ANALYSIS_ENABLED", "OPENAI_API_KEY"]
+
+
+def test_preview_ocr_submission_reports_missing_api_key(monkeypatch):
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+
+    response = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=uuid4(),
+            run_group_id=uuid4(),
+            image_url="data:image/png;base64,AAAA",
+        ),
+        db=SimpleNamespace(),
+        current_user=SimpleNamespace(),
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 503
+    assert payload["error"] == "OCR_EXTRACTION_DISABLED"
+    assert payload["missing_requirements"] == ["OPENAI_API_KEY"]
+
+
+def test_ocr_config_status_uses_gpt_54_primary_model():
+    status = config_module.get_ocr_config_status(
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        )
+    )
+
+    assert status["enabled"] is True
+    assert status["has_api_key"] is True
+    assert status["primary_model"] == "gpt-5.4"
+    assert status["fallback_model"] == "gpt-5.5"
+    assert status["missing_requirements"] == []
+
+
 def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
     event = SimpleNamespace(
         id=uuid4(),
@@ -818,31 +894,28 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
     monkeypatch.setattr(
         submissions_endpoints,
         "settings",
-        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
     )
     monkeypatch.setattr(
         submissions_endpoints,
         "analyze_submission_image",
         lambda **_kwargs: {
-            "document_type": "setup_sheet",
+            "document_type": "handwritten_setup_grid",
             "template_name": "farnbacher_86_setup_sheet",
             "confidence": 0.84,
             "summary": "Front geometry sheet",
             "extracted_text": "RH front 65, rear 68",
-            "events": [],
-            "sessions": [
-                {
-                    "date": "2026-04-23",
-                    "time": "15:31",
-                    "track": "Sebring International Raceway",
-                    "session_type": "Practice",
-                    "session_number": "3",
-                    "duration_min": "30",
-                    "driver_id": "NG",
-                    "vehicle_id": "NG-GT4-2025",
-                    "notes": "Rear ride height looks uncertain",
-                }
-            ],
+            "raw_text": "RH front 65, rear 68",
+            "metadata": {
+                "driver_text": "NG",
+                "track_text": "Sebring International Raceway",
+                "session_text": "Practice S3",
+            },
             "setup": {
                 "pressures": {
                     "cold_fl": "22.0",
@@ -863,15 +936,39 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
                     "bump_fr": "",
                     "bump_rl": "",
                     "bump_rr": "",
+                    "hsr_fl": "7",
+                    "hsr_fr": "7",
+                    "hsr_rl": "6",
+                    "hsr_rr": "6",
+                    "lsr_fl": "4",
+                    "lsr_fr": "4",
+                    "lsr_rl": "3",
+                    "lsr_rr": "3",
+                    "hsb_fl": "8",
+                    "hsb_fr": "8",
+                    "hsb_rl": "7",
+                    "hsb_rr": "7",
+                    "lsb_fl": "5",
+                    "lsb_fr": "5",
+                    "lsb_rl": "4",
+                    "lsb_rr": "4",
                     "sway_bar_f": "",
                     "sway_bar_r": "",
                     "wing_angle_deg": "",
                 },
                 "alignment": {
+                    "rh_fl": "65",
+                    "rh_fr": "65",
+                    "rh_rl": "68",
+                    "rh_rr": "68",
                     "camber_fl": "-1.5",
                     "camber_fr": "-1.4",
                     "camber_rl": "-2.0",
                     "camber_rr": "-2.0",
+                    "toe_fl": "0.05",
+                    "toe_fr": "0.05",
+                    "toe_rl": "0.10",
+                    "toe_rr": "0.10",
                     "toe_front": "0.05",
                     "toe_rear": "0.10",
                     "caster_l": "6.5",
@@ -910,33 +1007,47 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
                     "shocks_text": "pending",
                 },
                 "shock_setup": {
-                    "rr_hsr": "7",
-                    "rr_lsr": "6",
-                    "rr_hsb": "9",
-                    "rr_lsb": "8",
-                    "rr_total_setup": "30",
-                    "lr_hsr": "",
-                    "lr_lsr": "",
-                    "lr_hsb": "",
-                    "lr_lsb": "",
-                    "lr_total_setup": "",
-                    "lf_hsr": "",
-                    "lf_lsr": "",
-                    "lf_hsb": "",
-                    "lf_lsb": "",
-                    "lf_total_setup": "",
-                    "rf_hsr": "",
-                    "rf_lsr": "",
-                    "rf_hsb": "",
-                    "rf_lsb": "",
-                    "rf_total_setup": "",
+                    "rr": {
+                        "position": "RR",
+                        "hsr": "7",
+                        "lsr": "6",
+                        "hsb": "9",
+                        "lsb": "8",
+                        "total_setup": "30",
+                    },
+                    "lr": {
+                        "position": "LR",
+                        "hsr": "",
+                        "lsr": "",
+                        "hsb": "",
+                        "lsb": "",
+                        "total_setup": "",
+                    },
+                    "lf": {
+                        "position": "LF",
+                        "hsr": "",
+                        "lsr": "",
+                        "hsb": "",
+                        "lsb": "",
+                        "total_setup": "",
+                    },
+                    "rf": {
+                        "position": "RF",
+                        "hsr": "",
+                        "lsr": "",
+                        "hsb": "",
+                        "lsb": "",
+                        "total_setup": "",
+                    },
                 },
                 "tire_temperatures": {},
+                "notes": ["Rear ride height looks uncertain"],
             },
-            "warnings": ["ambiguous handwriting"],
+            "warnings": ["ambiguous handwriting", "crossed-out value on wheelbase"],
             "recommended_review_status": "PENDING",
-            "parser_version": "sm-racing-image-analysis-v1",
-            "model": "gpt-4o-mini",
+            "parser_version": "ocr-v1",
+            "model": "gpt-5.4",
+            "fallback_model_used": False,
         },
     )
 
@@ -952,16 +1063,19 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
     )
 
     assert result.status == "success"
-    assert result.doc_type == "setup_sheet"
+    assert result.doc_type == "handwritten_setup_grid"
     assert result.template_name == "farnbacher_86_setup_sheet"
     assert result.metadata["track_text"] == "Sebring International Raceway"
+    assert result.model_used == "gpt-5.4"
+    assert result.fallback_used is False
+    assert result.raw_text == "RH front 65, rear 68"
     assert result.structured_data["alignment"]["rh_fl"] == "65"
     assert result.structured_data["alignment"]["toe_rl"] == "0.10"
     assert result.structured_data["pressures"]["cold"]["fl"] == "22.0"
     assert result.structured_data["sheet_fields"]["fuel_liters"] == "22.5"
     assert result.structured_data["post_session"]["toe_text"] == "1 out / 2.5 in"
-    assert result.structured_data["shock_setup"]["rr_hsr"] == "7"
-    assert result.review_flags == ["ambiguous handwriting"]
+    assert result.structured_data["shock_setup"]["rr"]["hsr"] == "7"
+    assert result.review_flags == ["ambiguous handwriting", "crossed-out value on wheelbase"]
     assert result.recommended_review_status == "PENDING"
 
 
@@ -986,18 +1100,21 @@ def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
     monkeypatch.setattr(
         submissions_endpoints,
         "settings",
-        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
     )
     monkeypatch.setattr(
         submissions_endpoints,
         "analyze_submission_image",
         lambda **_kwargs: {
-            "document_type": "session_note",
+            "document_type": "mixed_session_notes",
             "confidence": 0.41,
             "summary": "",
             "extracted_text": "",
-            "events": [],
-            "sessions": [],
             "setup": {},
             "warnings": [],
             "recommended_review_status": "PENDING",
@@ -1015,10 +1132,11 @@ def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
     )
 
     assert result.status == "success"
+    assert result.doc_type == "low_quality_review_required"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert result.structured_data["pressures"]["cold"]["fl"] == ""
     assert result.structured_data["notes"] == []
-    assert result.review_flags == []
+    assert "low confidence extraction" in result.review_flags
 
 
 def test_preview_ocr_submission_reports_service_failure(monkeypatch):
@@ -1042,7 +1160,12 @@ def test_preview_ocr_submission_reports_service_failure(monkeypatch):
     monkeypatch.setattr(
         submissions_endpoints,
         "settings",
-        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
     )
     monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", lambda **_kwargs: None)
 
@@ -1059,6 +1182,518 @@ def test_preview_ocr_submission_reports_service_failure(monkeypatch):
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail["code"] == "OCR_EXTRACTION_FAILED"
+
+
+def test_preview_ocr_submission_calls_ocr_service_with_structured_context(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+    analyze_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+
+    def fake_analyze(**kwargs):
+        analyze_calls.append(kwargs)
+        return {
+            "document_type": "printed_form_with_values",
+            "template_name": "generic_setup",
+            "confidence": 0.77,
+            "summary": "Structured metadata should not bypass OCR extraction",
+            "extracted_text": "toe 0.10",
+            "setup": {},
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+
+    monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", fake_analyze)
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+            context={
+                "track": "Sebring International Raceway",
+                "session_type": "Practice",
+                "session_number": "3",
+                "duration_min": "30",
+                "alignment": {"camber_fl": "-1.5"},
+            },
+        ),
+        session,
+        current_user,
+    )
+
+    assert len(analyze_calls) == 1
+    assert analyze_calls[0]["submission"].analysis_result["ocr_preview"] is True
+    assert analyze_calls[0]["submission"].analysis_result["force_review_staging"] is True
+    assert analyze_calls[0]["submission"].status == SubmissionStatus.PENDING
+    assert analyze_calls[0]["submission"].payload["context"]["alignment"]["camber_fl"] == "-1.5"
+    assert result.status == "success"
+
+
+def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-PRIMARY-MODEL",
+        _submission_payload(),
+    )
+    captured_requests: list[dict] = []
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "output_text": json.dumps(
+                        {
+                            "document_type": "setup_sheet",
+                            "template_name": "generic_setup",
+                            "confidence": 0.88,
+                            "summary": "Detected setup values",
+                            "extracted_text": "camber 3.8",
+                            "events": [],
+                            "sessions": [],
+                            "setup": {
+                                "pressures": {
+                                    "cold_fl": "",
+                                    "cold_fr": "",
+                                    "cold_rl": "",
+                                    "cold_rr": "",
+                                    "hot_fl": "",
+                                    "hot_fr": "",
+                                    "hot_rl": "",
+                                    "hot_rr": "",
+                                },
+                                "suspension": {
+                                    "rebound_fl": "",
+                                    "rebound_fr": "",
+                                    "rebound_rl": "",
+                                    "rebound_rr": "",
+                                    "bump_fl": "",
+                                    "bump_fr": "",
+                                    "bump_rl": "",
+                                    "bump_rr": "",
+                                    "sway_bar_f": "",
+                                    "sway_bar_r": "",
+                                    "wing_angle_deg": "",
+                                },
+                                "alignment": {
+                                    "camber_fl": "",
+                                    "camber_fr": "",
+                                    "camber_rl": "",
+                                    "camber_rr": "",
+                                    "toe_front": "",
+                                    "toe_rear": "",
+                                    "caster_l": "",
+                                    "caster_r": "",
+                                    "ride_height_f": "",
+                                    "ride_height_r": "",
+                                    "rake_mm": "",
+                                    "wheelbase_mm": "",
+                                },
+                                "tire_temperatures": {
+                                    "fl_in": "",
+                                    "fl_mid": "",
+                                    "fl_out": "",
+                                    "fr_in": "",
+                                    "fr_mid": "",
+                                    "fr_out": "",
+                                    "rl_in": "",
+                                    "rl_mid": "",
+                                    "rl_out": "",
+                                    "rr_in": "",
+                                    "rr_mid": "",
+                                    "rr_out": "",
+                                },
+                                "sheet_fields": {
+                                    "fuel_liters": "",
+                                    "driver_weight_lbs": "",
+                                    "scale_weight_lbs": "",
+                                    "cross_weight_percent": "",
+                                    "roll_bar_text": "",
+                                    "spacer_text": "",
+                                    "bump_text": "",
+                                    "rebound_text": "",
+                                    "springs_front": "",
+                                    "springs_rear": "",
+                                    "bump_stops_front": "",
+                                    "bump_stops_rear": "",
+                                    "wheelbase_left_mm": "",
+                                    "wheelbase_right_mm": "",
+                                    "wing_rake_deg": "",
+                                    "wing_angle_deg": "",
+                                    "wing_gurney_mm": "",
+                                    "wicker_text": "",
+                                    "specs_toe_text": "",
+                                    "corner_weight_text": "",
+                                    "static_ride_height_text": "",
+                                    "bump_stop_height_text": "",
+                                    "arb_front_text": "",
+                                    "arb_rear_text": "",
+                                    "fuel_pumped_out_liters": "",
+                                    "notes_block": "",
+                                },
+                                "post_session": {
+                                    "camber_text": "",
+                                    "toe_text": "",
+                                    "weight_text": "",
+                                    "height_text": "",
+                                    "shocks_text": "",
+                                },
+                                "shock_setup": {
+                                    "rr_hsr": "",
+                                    "rr_lsr": "",
+                                    "rr_hsb": "",
+                                    "rr_lsb": "",
+                                    "rr_total_setup": "",
+                                    "lr_hsr": "",
+                                    "lr_lsr": "",
+                                    "lr_hsb": "",
+                                    "lr_lsb": "",
+                                    "lr_total_setup": "",
+                                    "lf_hsr": "",
+                                    "lf_lsr": "",
+                                    "lf_hsb": "",
+                                    "lf_lsb": "",
+                                    "lf_total_setup": "",
+                                    "rf_hsr": "",
+                                    "rf_lsr": "",
+                                    "rf_hsb": "",
+                                    "rf_lsb": "",
+                                    "rf_total_setup": "",
+                                },
+                            },
+                            "warnings": [],
+                            "recommended_review_status": "PENDING",
+                        }
+                    )
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        image_analysis_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            openai_request_timeout_seconds=8.0,
+        ),
+    )
+
+    def fake_urlopen(request, timeout):
+        captured_requests.append(
+            {
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return _FakeResponse()
+
+    monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", fake_urlopen)
+
+    result = image_analysis_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert captured_requests[0]["payload"]["model"] == "gpt-5.4"
+    assert result["model"] == "gpt-5.4"
+
+
+def test_analyze_submission_image_uses_fallback_model_when_primary_fails(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-FALLBACK-MODEL",
+        _submission_payload(),
+    )
+    attempted_models: list[str] = []
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "output_text": json.dumps(
+                        {
+                            "document_type": "shock_setup_sheet",
+                            "template_name": "shock_setup",
+                            "confidence": 0.91,
+                            "summary": "Shock setup values detected",
+                            "extracted_text": "RR 7/6/9/8",
+                            "metadata": {
+                                "driver_text": "NG",
+                                "track_text": "Sebring International Raceway",
+                                "session_text": "Practice S3",
+                            },
+                            "setup": {
+                                "pressures": {},
+                                "suspension": {},
+                                "alignment": {},
+                                "tire_temperatures": {},
+                                "sheet_fields": {},
+                                "post_session": {},
+                                "shock_setup": {
+                                    "rr": {
+                                        "position": "RR",
+                                        "hsr": "7",
+                                        "lsr": "6",
+                                        "hsb": "9",
+                                        "lsb": "8",
+                                        "total_setup": "30",
+                                    },
+                                    "lr": {
+                                        "position": "LR",
+                                        "hsr": "",
+                                        "lsr": "",
+                                        "hsb": "",
+                                        "lsb": "",
+                                        "total_setup": "",
+                                    },
+                                    "lf": {
+                                        "position": "LF",
+                                        "hsr": "",
+                                        "lsr": "",
+                                        "hsb": "",
+                                        "lsb": "",
+                                        "total_setup": "",
+                                    },
+                                    "rf": {
+                                        "position": "RF",
+                                        "hsr": "",
+                                        "lsr": "",
+                                        "hsb": "",
+                                        "lsb": "",
+                                        "total_setup": "",
+                                    },
+                                },
+                                "notes": [],
+                            },
+                            "warnings": [],
+                            "recommended_review_status": "PENDING",
+                        }
+                    )
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        image_analysis_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            openai_request_timeout_seconds=8.0,
+        ),
+    )
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        attempted_models.append(payload["model"])
+        if len(attempted_models) == 1:
+            raise image_analysis_service.urllib.error.URLError("primary unavailable")
+        return _FakeResponse()
+
+    monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", fake_urlopen)
+
+    result = image_analysis_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert attempted_models == ["gpt-5.4", "gpt-5.5"]
+    assert result is not None
+    assert result["model"] == "gpt-5.5"
+    assert result["fallback_model_used"] is True
+    assert result["document_type"] == "shock_setup_sheet"
+
+
+def test_analyze_submission_image_handles_malformed_json_without_crashing(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-MALFORMED-JSON",
+        _submission_payload(),
+    )
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"output_text": "{this is not valid json"}).encode("utf-8")
+
+    monkeypatch.setattr(
+        image_analysis_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model=None,
+            openai_request_timeout_seconds=8.0,
+        ),
+    )
+    monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse())
+
+    result = image_analysis_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert result is None
+
+
+def test_normalize_image_analysis_marks_low_confidence_results_for_review():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "handwritten_setup_grid",
+            "confidence": 0.22,
+            "summary": "One camber value is visible",
+            "extracted_text": "camber 3.8",
+            "setup": {
+                "alignment": {
+                    "camber_fl": "3.8",
+                }
+            },
+            "warnings": [],
+            "recommended_review_status": "APPROVED",
+        }
+    )
+
+    assert normalized["document_type"] == "low_quality_review_required"
+    assert "low confidence extraction" in normalized["warnings"]
+    assert normalized["recommended_review_status"] == "PENDING"
+
+
+def test_normalize_image_analysis_accepts_nested_shock_setup():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "shock_setup_sheet",
+            "confidence": 0.9,
+            "summary": "Shock page",
+            "extracted_text": "RR 7/6/9/8",
+            "setup": {
+                "shock_setup": {
+                    "rr": {
+                        "position": "RR",
+                        "hsr": "7",
+                        "lsr": "6",
+                        "hsb": "9",
+                        "lsb": "8",
+                        "total_setup": "30",
+                    }
+                }
+            },
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["setup"]["shock_setup"]["rr"]["hsr"] == "7"
+    assert normalized["setup"]["shock_setup"]["rr"]["total_setup"] == "30"
+
+
+def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "blank_setup_sheet",
+            "confidence": 0.96,
+            "summary": "Blank printed setup sheet",
+            "extracted_text": "",
+            "setup": {},
+            "warnings": ["no readable setup values detected"],
+            "recommended_review_status": "PENDING",
+            "model": "gpt-5.4",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "success"
+    assert result.doc_type == "blank_setup_sheet"
+    assert result.structured_data["alignment"]["rh_fl"] == ""
+    assert "no readable setup values detected" in result.review_flags
 
 
 def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):

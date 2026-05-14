@@ -45,6 +45,7 @@ const buildApiError = (error, fallbackMessage) => ({
       typeof error.response.data.detail === "object" &&
       (error.response.data.detail.code || error.response.data.detail.error_code)) ||
     error.response?.data?.code ||
+    error.response?.data?.error ||
     null,
   message:
     error.response?.data?.message ||
@@ -217,9 +218,12 @@ const normalizeOcrPreviewResponse = (data) => {
     docType: preview?.doc_type || preview?.docType || "unknown",
     templateName: preview?.template_name || preview?.templateName || null,
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
+    modelUsed: preview?.model_used || preview?.modelUsed || preview?.model || null,
+    fallbackUsed: Boolean(preview?.fallback_used ?? preview?.fallbackUsed),
     metadata:
       preview?.metadata && isPlainObject(preview.metadata) ? preview.metadata : {},
     structuredData,
+    rawText: preview?.raw_text || preview?.rawText || preview?.extracted_text || preview?.extractedText || "",
     reviewFlags: Array.isArray(preview?.review_flags || preview?.reviewFlags)
       ? (preview.review_flags || preview.reviewFlags).map((flag) => String(flag).trim()).filter(Boolean)
       : [],
@@ -228,7 +232,7 @@ const normalizeOcrPreviewResponse = (data) => {
     recommendedReviewStatus:
       preview?.recommended_review_status || preview?.recommendedReviewStatus || "PENDING",
     parserVersion: preview?.parser_version || preview?.parserVersion || null,
-    model: preview?.model || null,
+    model: preview?.model_used || preview?.modelUsed || preview?.model || null,
   };
 };
 

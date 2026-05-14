@@ -180,6 +180,7 @@ const SHOCK_SETUP_GROUPS = [
 ];
 
 const SHOCK_SETUP_FIELDS = [
+  ["position", "Position"],
   ["hsr", "HSR"],
   ["lsr", "LSR"],
   ["hsb", "HSB"],
@@ -192,9 +193,12 @@ const createEmptyReviewDraft = () => ({
   templateName: "",
   confidence: null,
   summary: "",
+  rawText: "",
   extractedText: "",
   recommendedReviewStatus: "PENDING",
   parserVersion: null,
+  modelUsed: null,
+  fallbackUsed: false,
   model: null,
   metadata: {},
   reviewFlags: [],
@@ -243,6 +247,22 @@ const createEmptyReviewDraft = () => ({
     bump_fr: "",
     bump_rl: "",
     bump_rr: "",
+    hsr_fl: "",
+    hsr_fr: "",
+    hsr_rl: "",
+    hsr_rr: "",
+    lsr_fl: "",
+    lsr_fr: "",
+    lsr_rl: "",
+    lsr_rr: "",
+    hsb_fl: "",
+    hsb_fr: "",
+    hsb_rl: "",
+    hsb_rr: "",
+    lsb_fl: "",
+    lsb_fr: "",
+    lsb_rl: "",
+    lsb_rr: "",
     sway_bar_f: "",
     sway_bar_r: "",
     wing_angle_deg: "",
@@ -297,21 +317,25 @@ const createEmptyReviewDraft = () => ({
     shocks_text: "",
   },
   shockSetup: {
+    rr_position: "",
     rr_hsr: "",
     rr_lsr: "",
     rr_hsb: "",
     rr_lsb: "",
     rr_total_setup: "",
+    lr_position: "",
     lr_hsr: "",
     lr_lsr: "",
     lr_hsb: "",
     lr_lsb: "",
     lr_total_setup: "",
+    lf_position: "",
     lf_hsr: "",
     lf_lsr: "",
     lf_hsb: "",
     lf_lsb: "",
     lf_total_setup: "",
+    rf_position: "",
     rf_hsr: "",
     rf_lsr: "",
     rf_hsb: "",
@@ -339,6 +363,44 @@ const sanitizeStringMap = (value) =>
     Object.entries(value && typeof value === "object" ? value : {}).map(([key, item]) => [key, toInputValue(item)]),
   );
 
+const flattenShockSetup = (value) => {
+  const rawValue = value && typeof value === "object" ? value : {};
+  const flattened = {};
+
+  SHOCK_SETUP_GROUPS.forEach(([cornerKey]) => {
+    const nestedCorner =
+      rawValue?.[cornerKey] && typeof rawValue[cornerKey] === "object" ? rawValue[cornerKey] : null;
+
+    flattened[`${cornerKey}_position`] = toInputValue(
+      nestedCorner?.position ?? rawValue?.[`${cornerKey}_position`],
+    );
+    SHOCK_SETUP_FIELDS.forEach(([fieldKey]) => {
+      flattened[`${cornerKey}_${fieldKey}`] = toInputValue(
+        nestedCorner?.[fieldKey] ??
+          rawValue?.[`${cornerKey}_${fieldKey}`] ??
+          (fieldKey === "hsb" ? rawValue?.[`${cornerKey}_hbs`] : undefined),
+      );
+    });
+  });
+
+  return flattened;
+};
+
+const nestShockSetup = (value) =>
+  Object.fromEntries(
+    SHOCK_SETUP_GROUPS.map(([cornerKey]) => [
+      cornerKey,
+      {
+        position: normalizeText(value?.[`${cornerKey}_position`]),
+        hsr: normalizeText(value?.[`${cornerKey}_hsr`]),
+        lsr: normalizeText(value?.[`${cornerKey}_lsr`]),
+        hsb: normalizeText(value?.[`${cornerKey}_hsb`]),
+        lsb: normalizeText(value?.[`${cornerKey}_lsb`]),
+        total_setup: normalizeText(value?.[`${cornerKey}_total_setup`]),
+      },
+    ]),
+  );
+
 const hasMeaningfulMapValue = (value) => {
   if (!value || typeof value !== "object") {
     return false;
@@ -356,6 +418,7 @@ const hasMeaningfulMapValue = (value) => {
 const hasExtractedDraftData = (reviewDraft) =>
   Boolean(
     normalizeText(reviewDraft?.summary) ||
+      normalizeText(reviewDraft?.rawText) ||
       normalizeText(reviewDraft?.extractedText) ||
       (Array.isArray(reviewDraft?.reviewFlags) && reviewDraft.reviewFlags.length > 0) ||
       (Array.isArray(reviewDraft?.notes) && reviewDraft.notes.length > 0) ||
@@ -386,11 +449,14 @@ const mergePreviewIntoReviewDraft = (preview) => {
     templateName:
       preview?.templateName || preview?.metadata?.template_name || preview?.metadata?.templateName || "",
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
+    rawText: preview?.rawText || "",
     summary: preview?.summary || "",
     extractedText: preview?.extractedText || "",
     recommendedReviewStatus: preview?.recommendedReviewStatus || "PENDING",
     parserVersion: preview?.parserVersion || null,
-    model: preview?.model || null,
+    modelUsed: preview?.modelUsed || preview?.model || null,
+    fallbackUsed: Boolean(preview?.fallbackUsed),
+    model: preview?.modelUsed || preview?.model || null,
     metadata: preview?.metadata || {},
     reviewFlags: Array.isArray(preview?.reviewFlags) ? preview.reviewFlags : [],
     parsedSession: {
@@ -425,7 +491,7 @@ const mergePreviewIntoReviewDraft = (preview) => {
     },
     suspension: {
       ...baseDraft.suspension,
-      ...sanitizeStringMap(structuredData?.suspension || {}),
+      ...sanitizeStringMap(structuredData?.suspension || structuredData?.suspensions || {}),
     },
     tireTemperatures: {
       ...baseDraft.tireTemperatures,
@@ -441,7 +507,7 @@ const mergePreviewIntoReviewDraft = (preview) => {
     },
     shockSetup: {
       ...baseDraft.shockSetup,
-      ...sanitizeStringMap(structuredData?.shock_setup || structuredData?.shockSetup || {}),
+      ...flattenShockSetup(structuredData?.shock_setup || structuredData?.shockSetup || {}),
     },
     notes: splitNotes(structuredData?.notes || []),
   };
@@ -477,6 +543,10 @@ const buildReviewedRawText = (intakeState, reviewDraft) => {
     parts.push(normalizeText(reviewDraft.extractedText));
   }
 
+  if (parts.length === 0 && normalizeText(reviewDraft.rawText)) {
+    parts.push(normalizeText(reviewDraft.rawText));
+  }
+
   return parts.join("\n\n") || null;
 };
 
@@ -504,27 +574,18 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
     template_name: reviewDraft.templateName || reviewDraft.metadata?.template_name || "",
     confidence: typeof reviewDraft.confidence === "number" ? reviewDraft.confidence : 0,
     summary: reviewDraft.summary || "",
+    raw_text: reviewDraft.rawText || reviewDraft.extractedText || "",
     extracted_text: reviewDraft.extractedText || "",
-    events: [],
-    sessions: [
-      {
-        date: normalizeText(intakeState.date) || normalizeText(reviewDraft.parsedSession.date),
-        time: normalizeText(intakeState.time) || normalizeText(reviewDraft.parsedSession.time),
-        track:
-          normalizeText(intakeState.track) ||
-          normalizeText(reviewDraft.parsedSession.track) ||
-          normalizeText(eventTrack),
-        session_type:
-          normalizeText(intakeState.session_type) || normalizeText(reviewDraft.parsedSession.session_type),
-        session_number:
-          normalizeText(intakeState.session_number) || normalizeText(reviewDraft.parsedSession.session_number),
-        duration_min:
-          normalizeText(intakeState.duration_min) || normalizeText(reviewDraft.parsedSession.duration_min),
-        driver_id: normalizeText(intakeState.driver_id) || normalizeText(reviewDraft.parsedSession.driver_id),
-        vehicle_id: normalizeText(intakeState.vehicle_id) || normalizeText(reviewDraft.parsedSession.vehicle_id),
-        notes: sessionNote,
-      },
-    ],
+    metadata: {
+      driver_text: reviewDraft.metadata?.driver_text || "",
+      track_text:
+        normalizeText(reviewDraft.metadata?.track_text) ||
+        normalizeText(intakeState.track) ||
+        normalizeText(eventTrack),
+      session_text:
+        normalizeText(reviewDraft.metadata?.session_text) ||
+        `${normalizeText(intakeState.session_type)} ${normalizeText(intakeState.session_number)}`.trim(),
+    },
     setup: {
       pressures: {
         cold_fl: normalizeText(reviewDraft.pressures.cold.fl),
@@ -540,10 +601,18 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
         ...sanitizeStringMap(reviewDraft.suspension),
       },
       alignment: {
+        rh_fl: normalizeText(reviewDraft.alignment.rh_fl),
+        rh_fr: normalizeText(reviewDraft.alignment.rh_fr),
+        rh_rl: normalizeText(reviewDraft.alignment.rh_rl),
+        rh_rr: normalizeText(reviewDraft.alignment.rh_rr),
         camber_fl: normalizeText(reviewDraft.alignment.camber_fl),
         camber_fr: normalizeText(reviewDraft.alignment.camber_fr),
         camber_rl: normalizeText(reviewDraft.alignment.camber_rl),
         camber_rr: normalizeText(reviewDraft.alignment.camber_rr),
+        toe_fl: normalizeText(reviewDraft.alignment.toe_fl),
+        toe_fr: normalizeText(reviewDraft.alignment.toe_fr),
+        toe_rl: normalizeText(reviewDraft.alignment.toe_rl),
+        toe_rr: normalizeText(reviewDraft.alignment.toe_rr),
         toe_front: frontToe,
         toe_rear: rearToe,
         caster_l: normalizeText(reviewDraft.alignment.caster_l),
@@ -562,14 +631,14 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
       post_session: {
         ...sanitizeStringMap(reviewDraft.postSession),
       },
-      shock_setup: {
-        ...sanitizeStringMap(reviewDraft.shockSetup),
-      },
+      shock_setup: nestShockSetup(reviewDraft.shockSetup),
+      notes: splitNotes(reviewDraft.notes),
     },
     warnings: Array.isArray(reviewDraft.reviewFlags) ? reviewDraft.reviewFlags : [],
     recommended_review_status: reviewDraft.recommendedReviewStatus || "PENDING",
     parser_version: reviewDraft.parserVersion || undefined,
-    model: reviewDraft.model || undefined,
+    model: reviewDraft.modelUsed || reviewDraft.model || undefined,
+    fallback_model_used: Boolean(reviewDraft.fallbackUsed),
   };
 };
 
@@ -670,7 +739,7 @@ const buildReviewedSubmissionRequest = ({
             ...sanitizeStringMap(reviewDraft.postSession),
           },
           shock_setup: {
-            ...sanitizeStringMap(reviewDraft.shockSetup),
+            ...nestShockSetup(reviewDraft.shockSetup),
           },
         },
       },
@@ -678,6 +747,7 @@ const buildReviewedSubmissionRequest = ({
         doc_type: reviewDraft.docType,
         template_name: reviewDraft.templateName || null,
         confidence: reviewDraft.confidence,
+        raw_text: reviewDraft.rawText,
         summary: reviewDraft.summary,
         extracted_text: reviewDraft.extractedText,
         notes: reviewDraft.notes,
@@ -701,7 +771,8 @@ const buildReviewedSubmissionRequest = ({
       ocr_workflow_state: "review_submitted",
       ocr_doc_type: reviewDraft.docType,
       ocr_parser_version: reviewDraft.parserVersion,
-      ocr_model: reviewDraft.model,
+      ocr_model: reviewDraft.modelUsed || reviewDraft.model,
+      ocr_fallback_used: Boolean(reviewDraft.fallbackUsed),
     },
   };
 };
@@ -1055,8 +1126,11 @@ export default function OCRNotesPage() {
           confidence: storedDraft?.reviewDraft?.confidence,
           summary: storedDraft?.reviewDraft?.summary,
           extractedText: storedDraft?.reviewDraft?.extractedText,
+          rawText: storedDraft?.reviewDraft?.rawText,
           recommendedReviewStatus: storedDraft?.reviewDraft?.recommendedReviewStatus,
           parserVersion: storedDraft?.reviewDraft?.parserVersion,
+          modelUsed: storedDraft?.reviewDraft?.modelUsed,
+          fallbackUsed: storedDraft?.reviewDraft?.fallbackUsed,
           model: storedDraft?.reviewDraft?.model,
           metadata: storedDraft?.reviewDraft?.metadata,
           reviewFlags: storedDraft?.reviewDraft?.reviewFlags,
@@ -1489,6 +1563,18 @@ export default function OCRNotesPage() {
               <strong>{typeof reviewDraft.confidence === "number" ? `${Math.round(reviewDraft.confidence * 100)}%` : "Pending extract"}</strong>
             </div>
             <div className="ocr-notes-status-item">
+              <span>Document Type</span>
+              <strong>{reviewDraft.docType === "unknown" ? "Pending extract" : reviewDraft.docType.replace(/_/g, " ")}</strong>
+            </div>
+            <div className="ocr-notes-status-item">
+              <span>Model</span>
+              <strong>
+                {reviewDraft.modelUsed
+                  ? `${reviewDraft.modelUsed}${reviewDraft.fallbackUsed ? " (fallback)" : ""}`
+                  : "Pending extract"}
+              </strong>
+            </div>
+            <div className="ocr-notes-status-item">
               <span>Review Flags</span>
               <strong>{reviewDraft.reviewFlags.length > 0 ? `${reviewDraft.reviewFlags.length} flagged` : "No flags yet"}</strong>
             </div>
@@ -1842,6 +1928,14 @@ export default function OCRNotesPage() {
                     <strong>{reviewDraft.docType === "unknown" ? "Pending extract" : reviewDraft.docType.replace(/_/g, " ")}</strong>
                   </li>
                   <li>
+                    <span>Model Used</span>
+                    <strong>
+                      {reviewDraft.modelUsed
+                        ? `${reviewDraft.modelUsed}${reviewDraft.fallbackUsed ? " (fallback)" : ""}`
+                        : "Pending extract"}
+                    </strong>
+                  </li>
+                  <li>
                     <span>Flags</span>
                     <strong>{reviewDraft.reviewFlags.length > 0 ? `${reviewDraft.reviewFlags.length} flagged` : "None"}</strong>
                   </li>
@@ -1867,6 +1961,25 @@ export default function OCRNotesPage() {
                   ) : null}
                 </div>
                 <p>{workflowPresentation.note}</p>
+
+                <div className="ocr-notes-metadata-list">
+                  <div>
+                    <span>Model Used</span>
+                    <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
+                  </div>
+                  <div>
+                    <span>Fallback Used</span>
+                    <strong>{reviewDraft.fallbackUsed ? "Yes" : "No"}</strong>
+                  </div>
+                  <div>
+                    <span>Confidence</span>
+                    <strong>
+                      {typeof reviewDraft.confidence === "number"
+                        ? `${Math.round(reviewDraft.confidence * 100)}%`
+                        : "Pending extract"}
+                    </strong>
+                  </div>
+                </div>
 
                 {reviewDraft.reviewFlags.length > 0 ? (
                   <div className="ocr-notes-flag-row">
@@ -2093,6 +2206,22 @@ export default function OCRNotesPage() {
                         ["bump_fr", "Bump FR"],
                         ["bump_rl", "Bump RL"],
                         ["bump_rr", "Bump RR"],
+                        ["hsr_fl", "HSR FL"],
+                        ["hsr_fr", "HSR FR"],
+                        ["hsr_rl", "HSR RL"],
+                        ["hsr_rr", "HSR RR"],
+                        ["lsr_fl", "LSR FL"],
+                        ["lsr_fr", "LSR FR"],
+                        ["lsr_rl", "LSR RL"],
+                        ["lsr_rr", "LSR RR"],
+                        ["hsb_fl", "HSB FL"],
+                        ["hsb_fr", "HSB FR"],
+                        ["hsb_rl", "HSB RL"],
+                        ["hsb_rr", "HSB RR"],
+                        ["lsb_fl", "LSB FL"],
+                        ["lsb_fr", "LSB FR"],
+                        ["lsb_rl", "LSB RL"],
+                        ["lsb_rr", "LSB RR"],
                         ["sway_bar_f", "Sway Bar F"],
                         ["sway_bar_r", "Sway Bar R"],
                         ["wing_angle_deg", "Wing Angle"],
@@ -2311,6 +2440,14 @@ export default function OCRNotesPage() {
                       <div>
                         <span>Template</span>
                         <strong>{reviewDraft.templateName || reviewDraft.metadata?.template_name || "Generic OCR"}</strong>
+                      </div>
+                      <div>
+                        <span>Model Used</span>
+                        <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
+                      </div>
+                      <div>
+                        <span>Fallback Used</span>
+                        <strong>{reviewDraft.fallbackUsed ? "Yes" : "No"}</strong>
                       </div>
                       <div>
                         <span>Review Status</span>

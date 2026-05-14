@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_roles
-from app.core.config import get_settings
+from app.core.config import get_ocr_config_status, get_settings
 from app.core.database import get_db
 from app.core.enums import SubmissionStatus, UserRole, VoiceNoteStatus
 from app.models.driver import Driver
@@ -29,7 +29,7 @@ from app.schemas.submission import (
     SubmissionRead,
     SubmissionUpdate,
 )
-from app.services.image_analysis_service import analyze_submission_image
+from app.services.image_analysis_service import analyze_submission_image, normalize_image_analysis_result
 from app.services.raw_note_llm_service import extract_raw_note_via_openai
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,
@@ -351,7 +351,7 @@ def _build_ocr_preview_response(
     driver: Driver | None,
     vehicle: Vehicle | None,
 ) -> OcrPreviewRead:
-    analysis = _dict_or_empty(image_analysis)
+    analysis = normalize_image_analysis_result(image_analysis)
     preview_context = _dict_or_empty(context)
     setup = _dict_or_empty(analysis.get("setup"))
     alignment = _dict_or_empty(setup.get("alignment"))
@@ -361,37 +361,25 @@ def _build_ocr_preview_response(
     sheet_fields = _dict_or_empty(setup.get("sheet_fields"))
     post_session = _dict_or_empty(setup.get("post_session"))
     shock_setup = _dict_or_empty(setup.get("shock_setup"))
-    sessions = [item for item in _list_or_empty(analysis.get("sessions")) if isinstance(item, dict)]
-    primary_session = sessions[0] if sessions else {}
+    extracted_metadata = _dict_or_empty(analysis.get("metadata"))
     template_name = _preview_text(analysis.get("template_name"))
 
-    notes: list[str] = []
-    for session in sessions:
-        note_text = _preview_text(session.get("notes"))
-        if note_text and note_text not in notes:
-            notes.append(note_text)
+    notes = [_preview_text(note) for note in _list_or_empty(setup.get("notes")) if _preview_text(note)]
 
     context_note = _preview_text(preview_context.get("notes") or preview_context.get("note"))
     if context_note and context_note not in notes:
         notes.append(context_note)
 
-    front_ride_height = _preview_text(alignment.get("ride_height_f"))
-    rear_ride_height = _preview_text(alignment.get("ride_height_r"))
-    front_toe = _preview_text(alignment.get("toe_front"))
-    rear_toe = _preview_text(alignment.get("toe_rear"))
-
     metadata = {
         "driver_text": (
-            _preview_text(primary_session.get("driver_id"))
+            _preview_text(extracted_metadata.get("driver_text"))
             or _preview_text(getattr(driver, "driver_name", None))
             or _preview_text(getattr(driver, "driver_id", None))
         ),
-        "vehicle_text": _preview_text(primary_session.get("vehicle_id")) or _preview_text(getattr(vehicle, "vehicle_id", None)),
-        "track_text": _preview_text(primary_session.get("track")) or _preview_text(preview_context.get("track")) or _preview_text(event.track),
-        "session_text": _preview_session_text(
-            primary_session.get("session_type") or preview_context.get("session_type"),
-            primary_session.get("session_number") or preview_context.get("session_number"),
-        ),
+        "vehicle_text": _preview_text(getattr(vehicle, "vehicle_id", None)),
+        "track_text": _preview_text(extracted_metadata.get("track_text")) or _preview_text(preview_context.get("track")) or _preview_text(event.track),
+        "session_text": _preview_text(extracted_metadata.get("session_text"))
+        or _preview_session_text(preview_context.get("session_type"), preview_context.get("session_number")),
         "event_name": _preview_text(event.name),
         "run_group": _preview_text(run_group.normalized or run_group.raw_text),
         "template_name": template_name,
@@ -399,32 +387,32 @@ def _build_ocr_preview_response(
 
     structured_data = {
         "session": {
-            "date": _preview_text(primary_session.get("date") or preview_context.get("date")),
-            "time": _preview_text(primary_session.get("time") or preview_context.get("time")),
+            "date": _preview_text(preview_context.get("date")),
+            "time": _preview_text(preview_context.get("time")),
             "track": metadata["track_text"],
-            "session_type": _preview_text(primary_session.get("session_type") or preview_context.get("session_type")),
-            "session_number": _preview_text(primary_session.get("session_number") or preview_context.get("session_number")),
-            "duration_min": _preview_text(primary_session.get("duration_min") or preview_context.get("duration_min")),
-            "driver_id": _preview_text(primary_session.get("driver_id") or getattr(driver, "driver_id", None)),
-            "vehicle_id": _preview_text(primary_session.get("vehicle_id") or getattr(vehicle, "vehicle_id", None)),
+            "session_type": _preview_text(preview_context.get("session_type")),
+            "session_number": _preview_text(preview_context.get("session_number")),
+            "duration_min": _preview_text(preview_context.get("duration_min")),
+            "driver_id": _preview_text(getattr(driver, "driver_id", None)),
+            "vehicle_id": _preview_text(getattr(vehicle, "vehicle_id", None)),
         },
         "alignment": {
-            "rh_fl": front_ride_height,
-            "rh_fr": front_ride_height,
-            "rh_rl": rear_ride_height,
-            "rh_rr": rear_ride_height,
-            "ride_height_f": front_ride_height,
-            "ride_height_r": rear_ride_height,
+            "rh_fl": _preview_text(alignment.get("rh_fl")),
+            "rh_fr": _preview_text(alignment.get("rh_fr")),
+            "rh_rl": _preview_text(alignment.get("rh_rl")),
+            "rh_rr": _preview_text(alignment.get("rh_rr")),
+            "ride_height_f": _preview_text(alignment.get("ride_height_f")),
+            "ride_height_r": _preview_text(alignment.get("ride_height_r")),
             "camber_fl": _preview_text(alignment.get("camber_fl")),
             "camber_fr": _preview_text(alignment.get("camber_fr")),
             "camber_rl": _preview_text(alignment.get("camber_rl")),
             "camber_rr": _preview_text(alignment.get("camber_rr")),
-            "toe_fl": front_toe,
-            "toe_fr": front_toe,
-            "toe_rl": rear_toe,
-            "toe_rr": rear_toe,
-            "toe_front": front_toe,
-            "toe_rear": rear_toe,
+            "toe_fl": _preview_text(alignment.get("toe_fl")),
+            "toe_fr": _preview_text(alignment.get("toe_fr")),
+            "toe_rl": _preview_text(alignment.get("toe_rl")),
+            "toe_rr": _preview_text(alignment.get("toe_rr")),
+            "toe_front": _preview_text(alignment.get("toe_front")),
+            "toe_rear": _preview_text(alignment.get("toe_rear")),
             "caster_l": _preview_text(alignment.get("caster_l")),
             "caster_r": _preview_text(alignment.get("caster_r")),
             "rake_mm": _preview_text(alignment.get("rake_mm")),
@@ -445,10 +433,14 @@ def _build_ocr_preview_response(
             },
         },
         "suspension": {key: _preview_text(value) for key, value in suspension.items()},
+        "suspensions": {key: _preview_text(value) for key, value in suspension.items()},
         "tire_temperatures": {key: _preview_text(value) for key, value in tire_temperatures.items()},
         "sheet_fields": {key: _preview_text(value) for key, value in sheet_fields.items()},
         "post_session": {key: _preview_text(value) for key, value in post_session.items()},
-        "shock_setup": {key: _preview_text(value) for key, value in shock_setup.items()},
+        "shock_setup": {
+            corner: {key: _preview_text(value) for key, value in _dict_or_empty(values).items()}
+            for corner, values in shock_setup.items()
+        },
         "notes": notes,
     }
 
@@ -457,8 +449,11 @@ def _build_ocr_preview_response(
         doc_type=_preview_text(analysis.get("document_type")) or "unknown",
         template_name=template_name or None,
         confidence=analysis.get("confidence"),
+        model_used=_preview_text(analysis.get("model")) or None,
+        fallback_used=bool(analysis.get("fallback_model_used")),
         metadata=metadata,
         structured_data=structured_data,
+        raw_text=_preview_text(analysis.get("raw_text")) or None,
         review_flags=[_preview_text(flag) for flag in _list_or_empty(analysis.get("warnings")) if _preview_text(flag)],
         extracted_text=_preview_text(analysis.get("extracted_text")) or None,
         summary=_preview_text(analysis.get("summary")) or None,
@@ -788,12 +783,17 @@ def preview_ocr_submission(
     preview_in: OcrPreviewCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> OcrPreviewRead:
-    if not settings.chatbot_image_analysis_enabled or not settings.openai_api_key:
-        raise _submission_error(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "OCR_EXTRACTION_DISABLED",
-            "OCR extraction is unavailable right now. Please try again after the OCR service is enabled.",
+) -> OcrPreviewRead | JSONResponse:
+    ocr_config = get_ocr_config_status(settings)
+    if ocr_config["missing_requirements"]:
+        logger.warning(ocr_config["developer_message"])
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": "OCR_EXTRACTION_DISABLED",
+                "message": ocr_config["user_safe_message"],
+                "missing_requirements": ocr_config["missing_requirements"],
+            },
         )
 
     event = db.get(Event, preview_in.event_id)
