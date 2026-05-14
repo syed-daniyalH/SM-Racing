@@ -28,6 +28,31 @@ class SubmissionCreate(ORMModel):
     analysis_result: dict[str, Any] | None = None
 
 
+class OcrPreviewCreate(ORMModel):
+    event_id: UUID
+    run_group_id: UUID
+    driver_id: str | None = Field(default=None, max_length=32)
+    vehicle_id: str | None = Field(default=None, max_length=64)
+    raw_text: str | None = None
+    image_url: str = Field(min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class OcrPreviewRead(ORMModel):
+    status: str = "success"
+    doc_type: str = "unknown"
+    template_name: str | None = None
+    confidence: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    structured_data: dict[str, Any] = Field(default_factory=dict)
+    review_flags: list[str] = Field(default_factory=list)
+    extracted_text: str | None = None
+    summary: str | None = None
+    recommended_review_status: str = "PENDING"
+    parser_version: str | None = None
+    model: str | None = None
+
+
 class RawSubmissionCreate(ORMModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

@@ -87,6 +87,7 @@ const makeSessionData = ({ tireStatus = "DISCARDED" } = {}) => ({
 async function mockSubmissionApp(page, options = {}) {
   const submissionRequests = [];
   const rawSubmissionRequests = [];
+  const ocrPreviewRequests = [];
   const buildSubmissionResponse =
     options.buildSubmissionResponse ||
     ((body) => ({
@@ -107,6 +108,76 @@ async function mockSubmissionApp(page, options = {}) {
       id_seance: "20260423-NG-S01",
       message: "Session stored successfully",
       raw_text: body.raw_text,
+    }));
+  const buildOcrPreviewResponse =
+    options.buildOcrPreviewResponse ||
+    (() => ({
+      status: "success",
+      doc_type: "setup_sheet",
+      confidence: 0.84,
+      metadata: {
+        driver_text: "NG",
+        track_text: TRACK_NAME,
+        session_text: "Practice S3",
+      },
+      structured_data: {
+        session: {
+          date: "2026-04-23",
+          time: "15:31",
+          track: TRACK_NAME,
+          session_type: "Practice",
+          session_number: "3",
+          duration_min: "30",
+          driver_id: "NG",
+          vehicle_id: "NG-GT4-2025",
+        },
+        alignment: {
+          rh_fl: "65",
+          rh_fr: "65",
+          rh_rl: "68",
+          rh_rr: "68",
+          ride_height_f: "65",
+          ride_height_r: "68",
+          camber_fl: "-1.5",
+          camber_fr: "-1.4",
+          camber_rl: "-2.0",
+          camber_rr: "-2.0",
+          toe_fl: "0.05",
+          toe_fr: "0.05",
+          toe_rl: "0.10",
+          toe_rr: "0.10",
+          toe_front: "0.05",
+          toe_rear: "0.10",
+          caster_l: "6.5",
+          caster_r: "6.4",
+          rake_mm: "3",
+          wheelbase_mm: "2550",
+        },
+        pressures: {
+          cold: { fl: "22.0", fr: "22.1", rl: "22.4", rr: "22.5" },
+          hot: { fl: "24.0", fr: "24.1", rl: "24.4", rr: "24.5" },
+        },
+        suspension: {
+          rebound_fl: "12",
+          rebound_fr: "12",
+          rebound_rl: "11",
+          rebound_rr: "11",
+          bump_fl: "5",
+          bump_fr: "5",
+          bump_rl: "4",
+          bump_rr: "4",
+          sway_bar_f: "1",
+          sway_bar_r: "2",
+          wing_angle_deg: "15",
+        },
+        notes: ["Rear ride height was hard to read"],
+      },
+      review_flags: ["ambiguous handwriting"],
+      extracted_text: "RH front 65 rear 68",
+      summary: "Setup sheet parsed",
+      recommended_review_status: "PENDING",
+      parser_version: "sm-racing-image-analysis-v1",
+      model: "gpt-4o-mini",
     }));
 
   await page.addInitScript(
@@ -193,8 +264,8 @@ async function mockSubmissionApp(page, options = {}) {
             id: EVENT_ID,
             name: "Sebring",
             track: TRACK_NAME,
-            start_date: "2026-04-20T00:00:00.000Z",
-            end_date: "2026-05-01T00:00:00.000Z",
+            start_date: "2026-05-10T00:00:00.000Z",
+            end_date: "2026-05-20T00:00:00.000Z",
             is_active: true,
           },
         },
@@ -288,6 +359,34 @@ async function mockSubmissionApp(page, options = {}) {
       });
     }
 
+    if (pathname === "/api/v1/submissions/ocr-preview" && method === "POST") {
+      const body = request.postDataJSON();
+      ocrPreviewRequests.push(body);
+
+      if (options.ocrPreviewDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.ocrPreviewDelayMs));
+      }
+
+      if (options.ocrPreviewError) {
+        return route.fulfill({
+          status: options.ocrPreviewError.status || 502,
+          json: {
+            detail: {
+              code: options.ocrPreviewError.code || "OCR_EXTRACTION_FAILED",
+              message:
+                options.ocrPreviewError.message ||
+                "OCR extraction did not return a usable draft. Retry with a clearer image.",
+            },
+          },
+        });
+      }
+
+      return route.fulfill({
+        status: 200,
+        json: buildOcrPreviewResponse(body),
+      });
+    }
+
     if (pathname === "/api/v1/submissions/raw" && method === "POST") {
       const body = request.postDataJSON();
       rawSubmissionRequests.push(body);
@@ -308,6 +407,7 @@ async function mockSubmissionApp(page, options = {}) {
   });
 
   submissionRequests.rawSubmissionRequests = rawSubmissionRequests;
+  submissionRequests.ocrPreviewRequests = ocrPreviewRequests;
   return submissionRequests;
 }
 
@@ -651,6 +751,116 @@ test.describe("submission flow", () => {
     }
   });
 
+  test("ocr notes wait for an image before extraction and keep event context visible", async ({
+    page,
+  }) => {
+    await mockSubmissionApp(page);
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await expect(page.getByRole("heading", { name: "OCR Notes" })).toBeVisible();
+    await expect(page.getByText(TRACK_NAME)).toBeVisible();
+    await expect(page.getByText("BLUE")).toBeVisible();
+    await expect(page.getByTestId("ocr-extract-button")).toBeDisabled();
+
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "ocr-sheet.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+
+    await expect(page.getByAltText("OCR note preview")).toBeVisible();
+    await expect(page.getByTestId("ocr-extract-button")).toBeEnabled();
+  });
+
+  test("ocr notes show extraction loading and reveal editable review sections on success", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page, { ocrPreviewDelayMs: 300 });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "ocr-sheet.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    await expect(page.getByTestId("ocr-extract-button")).toHaveText("Extracting...", {
+      timeout: 5000,
+    });
+    await expect.poll(() => requests.ocrPreviewRequests.length).toBe(1);
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ride Height" })).toBeVisible();
+    await expect(
+      page.getByTestId("ocr-review-sections").getByText("ambiguous handwriting", { exact: true }),
+    ).toBeVisible();
+
+    expect(requests.ocrPreviewRequests[0].context.track).toBe(TRACK_NAME);
+  });
+
+  test("ocr notes show a retry-friendly error when extraction fails", async ({ page }) => {
+    await mockSubmissionApp(page, {
+      ocrPreviewError: {
+        status: 502,
+        code: "OCR_EXTRACTION_FAILED",
+        message: "OCR extraction did not return a usable draft. Retry with a clearer image.",
+      },
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "ocr-sheet.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    await expect(
+      page.getByText(
+        "OCR extraction could not read a usable draft from this image. Retry with a clearer image or better lighting.",
+      ),
+    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("ocr-extract-button")).toBeEnabled();
+  });
+
+  test("ocr notes can save a local draft and submit the reviewed draft for review", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page);
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "ocr-sheet.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+    await page.getByTestId("ocr-extract-button").click();
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
+
+    await page.getByTestId("ocr-save-draft-button").click();
+    await expect(page.getByText("OCR draft saved locally on this device.")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem("sm2:ocr-draft:event-1:user-1")),
+      )
+      .not.toBeNull();
+
+    await page.getByTestId("ocr-submit-review-button").click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(page.getByRole("button", { name: /Open Submissions/i })).toBeVisible({
+      timeout: 5000,
+    });
+
+    const body = requests[0];
+    expect(body.image_url).toContain("data:image/png;base64,");
+    expect(body.analysis_result.force_review_staging).toBe(true);
+    expect(body.analysis_result.image_analysis.document_type).toBe("setup_sheet");
+    expect(body.payload.data.track).toBe(TRACK_NAME);
+    expect(body.payload.ocr_review.review_flags).toEqual(["ambiguous handwriting"]);
+  });
+
   test("existing submissions can be reopened and overwritten from the notes screen", async ({
     page,
   }) => {
@@ -683,8 +893,8 @@ test.describe("submission flow", () => {
         id: EVENT_ID,
         name: "Sebring",
         track: TRACK_NAME,
-        start_date: "2026-04-20T00:00:00.000Z",
-        end_date: "2026-05-01T00:00:00.000Z",
+        start_date: "2026-05-10T00:00:00.000Z",
+        end_date: "2026-05-20T00:00:00.000Z",
         is_active: true,
       },
       run_group: {

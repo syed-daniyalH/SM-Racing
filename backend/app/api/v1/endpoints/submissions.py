@@ -21,6 +21,8 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.voice_note import VoiceNoteSession
 from app.schemas.submission import (
+    OcrPreviewCreate,
+    OcrPreviewRead,
     RawSubmissionCreate,
     RawSubmissionResult,
     SubmissionCreate,
@@ -280,6 +282,190 @@ def _validate_submission_relations(
         )
 
     return driver, vehicle
+
+
+def _validate_ocr_preview_relations(
+    db: Session,
+    preview_in: OcrPreviewCreate,
+) -> tuple[Driver | None, Vehicle | None]:
+    driver = None
+    vehicle = None
+
+    if preview_in.driver_id:
+        driver_code = preview_in.driver_id.strip()
+        driver = db.scalar(select(Driver).where(Driver.driver_id == driver_code))
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        if not driver.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Driver is archived")
+
+    if preview_in.vehicle_id:
+        vehicle_code = preview_in.vehicle_id.strip()
+        vehicle = db.scalar(select(Vehicle).where(Vehicle.vehicle_id == vehicle_code))
+        if not vehicle:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+        if not vehicle.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vehicle is archived")
+
+    if driver and vehicle and vehicle.driver_id != driver.driver_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vehicle does not belong to the selected driver",
+        )
+
+    return driver, vehicle
+
+
+def _dict_or_empty(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _list_or_empty(value: object) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _preview_text(value: object) -> str:
+    return normalize_optional_text(value) or ""
+
+
+def _preview_session_text(session_type: object, session_number: object) -> str:
+    session_type_value = _preview_text(session_type)
+    session_number_value = _preview_text(session_number)
+    if session_type_value and session_number_value:
+        return f"{session_type_value} S{session_number_value}"
+    return session_type_value or session_number_value
+
+
+def _precomputed_image_analysis(analysis_result: object) -> dict | None:
+    analysis = _dict_or_empty(analysis_result)
+    image_analysis = analysis.get("image_analysis") or analysis.get("imageAnalysis")
+    return image_analysis if isinstance(image_analysis, dict) else None
+
+
+def _build_ocr_preview_response(
+    *,
+    image_analysis: dict | None,
+    context: dict | None,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+) -> OcrPreviewRead:
+    analysis = _dict_or_empty(image_analysis)
+    preview_context = _dict_or_empty(context)
+    setup = _dict_or_empty(analysis.get("setup"))
+    alignment = _dict_or_empty(setup.get("alignment"))
+    suspension = _dict_or_empty(setup.get("suspension"))
+    tire_temperatures = _dict_or_empty(setup.get("tire_temperatures"))
+    raw_pressures = _dict_or_empty(setup.get("pressures"))
+    sheet_fields = _dict_or_empty(setup.get("sheet_fields"))
+    post_session = _dict_or_empty(setup.get("post_session"))
+    shock_setup = _dict_or_empty(setup.get("shock_setup"))
+    sessions = [item for item in _list_or_empty(analysis.get("sessions")) if isinstance(item, dict)]
+    primary_session = sessions[0] if sessions else {}
+    template_name = _preview_text(analysis.get("template_name"))
+
+    notes: list[str] = []
+    for session in sessions:
+        note_text = _preview_text(session.get("notes"))
+        if note_text and note_text not in notes:
+            notes.append(note_text)
+
+    context_note = _preview_text(preview_context.get("notes") or preview_context.get("note"))
+    if context_note and context_note not in notes:
+        notes.append(context_note)
+
+    front_ride_height = _preview_text(alignment.get("ride_height_f"))
+    rear_ride_height = _preview_text(alignment.get("ride_height_r"))
+    front_toe = _preview_text(alignment.get("toe_front"))
+    rear_toe = _preview_text(alignment.get("toe_rear"))
+
+    metadata = {
+        "driver_text": (
+            _preview_text(primary_session.get("driver_id"))
+            or _preview_text(getattr(driver, "driver_name", None))
+            or _preview_text(getattr(driver, "driver_id", None))
+        ),
+        "vehicle_text": _preview_text(primary_session.get("vehicle_id")) or _preview_text(getattr(vehicle, "vehicle_id", None)),
+        "track_text": _preview_text(primary_session.get("track")) or _preview_text(preview_context.get("track")) or _preview_text(event.track),
+        "session_text": _preview_session_text(
+            primary_session.get("session_type") or preview_context.get("session_type"),
+            primary_session.get("session_number") or preview_context.get("session_number"),
+        ),
+        "event_name": _preview_text(event.name),
+        "run_group": _preview_text(run_group.normalized or run_group.raw_text),
+        "template_name": template_name,
+    }
+
+    structured_data = {
+        "session": {
+            "date": _preview_text(primary_session.get("date") or preview_context.get("date")),
+            "time": _preview_text(primary_session.get("time") or preview_context.get("time")),
+            "track": metadata["track_text"],
+            "session_type": _preview_text(primary_session.get("session_type") or preview_context.get("session_type")),
+            "session_number": _preview_text(primary_session.get("session_number") or preview_context.get("session_number")),
+            "duration_min": _preview_text(primary_session.get("duration_min") or preview_context.get("duration_min")),
+            "driver_id": _preview_text(primary_session.get("driver_id") or getattr(driver, "driver_id", None)),
+            "vehicle_id": _preview_text(primary_session.get("vehicle_id") or getattr(vehicle, "vehicle_id", None)),
+        },
+        "alignment": {
+            "rh_fl": front_ride_height,
+            "rh_fr": front_ride_height,
+            "rh_rl": rear_ride_height,
+            "rh_rr": rear_ride_height,
+            "ride_height_f": front_ride_height,
+            "ride_height_r": rear_ride_height,
+            "camber_fl": _preview_text(alignment.get("camber_fl")),
+            "camber_fr": _preview_text(alignment.get("camber_fr")),
+            "camber_rl": _preview_text(alignment.get("camber_rl")),
+            "camber_rr": _preview_text(alignment.get("camber_rr")),
+            "toe_fl": front_toe,
+            "toe_fr": front_toe,
+            "toe_rl": rear_toe,
+            "toe_rr": rear_toe,
+            "toe_front": front_toe,
+            "toe_rear": rear_toe,
+            "caster_l": _preview_text(alignment.get("caster_l")),
+            "caster_r": _preview_text(alignment.get("caster_r")),
+            "rake_mm": _preview_text(alignment.get("rake_mm")),
+            "wheelbase_mm": _preview_text(alignment.get("wheelbase_mm")),
+        },
+        "pressures": {
+            "cold": {
+                "fl": _preview_text(raw_pressures.get("cold_fl")),
+                "fr": _preview_text(raw_pressures.get("cold_fr")),
+                "rl": _preview_text(raw_pressures.get("cold_rl")),
+                "rr": _preview_text(raw_pressures.get("cold_rr")),
+            },
+            "hot": {
+                "fl": _preview_text(raw_pressures.get("hot_fl")),
+                "fr": _preview_text(raw_pressures.get("hot_fr")),
+                "rl": _preview_text(raw_pressures.get("hot_rl")),
+                "rr": _preview_text(raw_pressures.get("hot_rr")),
+            },
+        },
+        "suspension": {key: _preview_text(value) for key, value in suspension.items()},
+        "tire_temperatures": {key: _preview_text(value) for key, value in tire_temperatures.items()},
+        "sheet_fields": {key: _preview_text(value) for key, value in sheet_fields.items()},
+        "post_session": {key: _preview_text(value) for key, value in post_session.items()},
+        "shock_setup": {key: _preview_text(value) for key, value in shock_setup.items()},
+        "notes": notes,
+    }
+
+    return OcrPreviewRead(
+        status="success",
+        doc_type=_preview_text(analysis.get("document_type")) or "unknown",
+        template_name=template_name or None,
+        confidence=analysis.get("confidence"),
+        metadata=metadata,
+        structured_data=structured_data,
+        review_flags=[_preview_text(flag) for flag in _list_or_empty(analysis.get("warnings")) if _preview_text(flag)],
+        extracted_text=_preview_text(analysis.get("extracted_text")) or None,
+        summary=_preview_text(analysis.get("summary")) or None,
+        recommended_review_status=_preview_text(analysis.get("recommended_review_status")) or "PENDING",
+        parser_version=_preview_text(analysis.get("parser_version")) or None,
+        model=_preview_text(analysis.get("model")) or None,
+    )
 
 
 def _build_submission_candidate(
@@ -597,6 +783,88 @@ def list_submissions_by_user(
     return list(db.scalars(stmt).unique().all())
 
 
+@router.post("/ocr-preview", response_model=OcrPreviewRead)
+def preview_ocr_submission(
+    preview_in: OcrPreviewCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OcrPreviewRead:
+    if not settings.chatbot_image_analysis_enabled or not settings.openai_api_key:
+        raise _submission_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OCR_EXTRACTION_DISABLED",
+            "OCR extraction is unavailable right now. Please try again after the OCR service is enabled.",
+        )
+
+    event = db.get(Event, preview_in.event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not event.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Event is archived")
+
+    now = datetime.now(timezone.utc)
+    event_start_date = _event_submission_start_to_utc(event)
+    event_end_date = _event_submission_end_to_utc(event)
+    if event_start_date is not None and now < event_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Submission notes open when the event start date arrives",
+        )
+    if event_end_date is not None and now >= event_end_date:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Submission notes close after the event end date passes",
+        )
+
+    run_group = db.get(RunGroup, preview_in.run_group_id)
+    if not run_group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run group not found")
+    if run_group.event_id != preview_in.event_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run group does not belong to the event")
+
+    driver, vehicle = _validate_ocr_preview_relations(db, preview_in)
+
+    preview_submission = Submission(
+        submission_ref=f"OCR-PREVIEW-{uuid4().hex[:8]}",
+        event_id=event.id,
+        run_group_id=run_group.id,
+        driver_id=driver.id if driver else None,
+        vehicle_id=vehicle.id if vehicle else None,
+        created_by_id=current_user.id,
+        correlation_id=str(uuid4()),
+        raw_text=normalize_optional_text(preview_in.raw_text),
+        image_url=normalize_optional_text(preview_in.image_url),
+        payload={"context": preview_in.context},
+        analysis_result={"ocr_preview": True, "force_review_staging": True},
+        structured_ingest_status="skipped",
+        structured_ingest_warnings=[],
+        status=SubmissionStatus.PENDING,
+    )
+
+    image_analysis = analyze_submission_image(
+        submission=preview_submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+    if not image_analysis:
+        raise _submission_error(
+            status.HTTP_502_BAD_GATEWAY,
+            "OCR_EXTRACTION_FAILED",
+            "OCR extraction did not return a usable draft. Retry with a clearer image or use the typed notes flow.",
+        )
+
+    return _build_ocr_preview_response(
+        image_analysis=image_analysis,
+        context=preview_in.context,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+
 @router.post("", response_model=SubmissionRead, status_code=status.HTTP_201_CREATED)
 def create_submission(
     submission_in: SubmissionCreate,
@@ -744,13 +1012,15 @@ def create_submission(
 
         if submission.image_url and submission_input_id is None:
             try:
-                image_analysis = analyze_submission_image(
-                    submission=submission,
-                    event=event,
-                    run_group=run_group,
-                    driver=driver,
-                    vehicle=vehicle,
-                )
+                image_analysis = _precomputed_image_analysis(submission.analysis_result)
+                if image_analysis is None:
+                    image_analysis = analyze_submission_image(
+                        submission=submission,
+                        event=event,
+                        run_group=run_group,
+                        driver=driver,
+                        vehicle=vehicle,
+                    )
                 if image_analysis:
                     submission.analysis_result = {
                         **(submission.analysis_result or {}),

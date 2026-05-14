@@ -110,6 +110,8 @@ const RAW_NOTE_CUE_PATTERNS = [
 
 const normalizeRawNoteText = (value) => String(value || "").replace(/\s+/g, " ").trim();
 
+const safeBrowserStorage = () => (typeof window !== "undefined" ? window.localStorage : null);
+
 const getSubmissionMode = (submissionData) =>
   String(
     submissionData?.analysis_result?.submission_mode ||
@@ -198,6 +200,36 @@ const cleanStructuredValue = (value) => {
   }
 
   return value;
+};
+
+const normalizeOcrPreviewResponse = (data) => {
+  const preview = data?.preview || data?.data || data || {};
+  const structuredData =
+    preview?.structured_data && isPlainObject(preview.structured_data)
+      ? preview.structured_data
+      : preview?.structuredData && isPlainObject(preview.structuredData)
+        ? preview.structuredData
+        : {};
+
+  return {
+    ...preview,
+    status: String(preview?.status || "success").trim().toLowerCase() || "success",
+    docType: preview?.doc_type || preview?.docType || "unknown",
+    templateName: preview?.template_name || preview?.templateName || null,
+    confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
+    metadata:
+      preview?.metadata && isPlainObject(preview.metadata) ? preview.metadata : {},
+    structuredData,
+    reviewFlags: Array.isArray(preview?.review_flags || preview?.reviewFlags)
+      ? (preview.review_flags || preview.reviewFlags).map((flag) => String(flag).trim()).filter(Boolean)
+      : [],
+    extractedText: preview?.extracted_text || preview?.extractedText || "",
+    summary: preview?.summary || "",
+    recommendedReviewStatus:
+      preview?.recommended_review_status || preview?.recommendedReviewStatus || "PENDING",
+    parserVersion: preview?.parser_version || preview?.parserVersion || null,
+    model: preview?.model || null,
+  };
 };
 
 const buildRawSubmissionPayload = (submissionData) => {
@@ -359,6 +391,80 @@ export const createSubmission = async (submissionData) => {
     });
     throw buildApiError(error, "Failed to submit notes. Please try again.");
   }
+};
+
+export const extractOcrDraft = async (previewRequest) => {
+  try {
+    const response = await axiosInstance.post("/submissions/ocr-preview", previewRequest);
+    return normalizeOcrPreviewResponse(response.data);
+  } catch (error) {
+    console.error("Extract OCR Draft API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to extract OCR draft. Please try again.");
+  }
+};
+
+export const rerunOcrDraft = async (previewRequest) => extractOcrDraft(previewRequest);
+
+export const submitReviewedOcrNote = async (submissionData) =>
+  createSubmission({
+    ...submissionData,
+    analysis_result: {
+      ...(submissionData?.analysis_result || submissionData?.analysisResult || {}),
+      ocr_entrypoint: true,
+      ocr_review_required: true,
+      force_review_staging: true,
+      review_before_submission: true,
+    },
+  });
+
+export const saveOcrDraft = (storageKey, draftPayload) => {
+  const storage = safeBrowserStorage();
+  if (!storage || !storageKey) {
+    return false;
+  }
+
+  storage.setItem(
+    storageKey,
+    JSON.stringify({
+      savedAt: new Date().toISOString(),
+      draft: draftPayload,
+    }),
+  );
+  return true;
+};
+
+export const loadOcrDraft = (storageKey) => {
+  const storage = safeBrowserStorage();
+  if (!storage || !storageKey) {
+    return null;
+  }
+
+  const rawDraft = storage.getItem(storageKey);
+  if (!rawDraft) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawDraft);
+    return parsed?.draft || null;
+  } catch (error) {
+    console.warn("Failed to parse OCR draft:", error);
+    return null;
+  }
+};
+
+export const clearOcrDraft = (storageKey) => {
+  const storage = safeBrowserStorage();
+  if (!storage || !storageKey) {
+    return false;
+  }
+
+  storage.removeItem(storageKey);
+  return true;
 };
 
 /**

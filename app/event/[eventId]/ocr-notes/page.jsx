@@ -28,15 +28,20 @@ import { formatEventDateRange, getEventSubmissionState } from "../../../utils/ev
 import { getDrivers, getVehicles } from "../../../utils/fleetApi";
 import { getRunGroup } from "../../../utils/runGroupApi";
 import { DRIVER_OPTIONS, SESSION_TYPE_OPTIONS, VEHICLE_OPTIONS } from "../../../utils/staticOptions";
-import { createSubmission } from "../../../utils/submissionApi";
+import {
+  clearOcrDraft,
+  extractOcrDraft,
+  loadOcrDraft,
+  rerunOcrDraft,
+  saveOcrDraft,
+  submitReviewedOcrNote,
+} from "../../../utils/submissionApi";
 import { generateUUID } from "../../../utils/uuid";
 import "./OCRNotes.css";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-const GENERATED_SESSION_ID_PATTERN = /^\d{8}-\d{4}-[A-Z0-9]+-S\d+$/;
-const LEGACY_SESSION_ID_PATTERN =
-  /^[A-Z0-9]+-\d{8}-\d{4}-[A-Z0-9]+-\d+-[A-Z0-9]+-[A-Z0-9][A-Z0-9-]*$/;
+const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
 
 const getCurrentLocalDateValue = () => {
   const now = new Date();
@@ -55,26 +60,21 @@ const getCurrentLocalTimeValue = () => {
 
 const normalizeText = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
 
-const isValidDateValue = (value) => {
-  const cleaned = String(value || "").trim();
-  if (!DATE_PATTERN.test(cleaned)) {
-    return false;
+const toInputValue = (value) => {
+  if (value === null || value === undefined) {
+    return "";
   }
 
-  const [year, month, day] = cleaned.split("-").map((part) => Number(part));
-  if (![year, month, day].every((part) => Number.isInteger(part))) {
-    return false;
-  }
-
-  const parsed = new Date(year, month - 1, day);
-  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+  return String(value);
 };
 
-const isValidTimeValue = (value) => TIME_PATTERN.test(String(value || "").trim());
+const toNullableNumber = (value) => {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
 
-const isValidSessionId = (value) => {
-  const cleaned = String(value || "").trim().toUpperCase();
-  return GENERATED_SESSION_ID_PATTERN.test(cleaned) || LEGACY_SESSION_ID_PATTERN.test(cleaned);
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
 };
 
 const normalizeSessionDriverSegment = (value) =>
@@ -90,8 +90,8 @@ const buildGeneratedSessionId = (date, time, driverId, sessionNumber) => {
   const normalizedSessionNumber = String(sessionNumber ?? "").trim();
 
   if (
-    !isValidDateValue(normalizedDate) ||
-    !isValidTimeValue(normalizedTime) ||
+    !DATE_PATTERN.test(normalizedDate) ||
+    !TIME_PATTERN.test(normalizedTime) ||
     !normalizedDriverId ||
     !/^\d+$/.test(normalizedSessionNumber)
   ) {
@@ -99,15 +99,6 @@ const buildGeneratedSessionId = (date, time, driverId, sessionNumber) => {
   }
 
   return `${normalizedDate.replace(/-/g, "")}-${normalizedTime.replace(":", "")}-${normalizedDriverId}-S${normalizedSessionNumber}`;
-};
-
-const toNullableNumber = (value) => {
-  if (value === "" || value === null || value === undefined) {
-    return null;
-  }
-
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? numericValue : null;
 };
 
 const buildDriverOption = (driver) => ({
@@ -133,110 +124,586 @@ const buildVehicleOption = (vehicle) => ({
     "Unknown vehicle",
 });
 
-const createOcrFormState = () => ({
+const createIntakeState = () => ({
   date: getCurrentLocalDateValue(),
   time: getCurrentLocalTimeValue(),
-  session_id: "",
   track: "",
   driver_id: "",
   vehicle_id: "",
   session_type: SESSION_TYPE_OPTIONS[0]?.id || "Practice",
-  session_number: 1,
-  duration_min: 30,
-  tire_set: "",
-  wheelbase_mm: "",
+  session_number: "1",
+  duration_min: "",
   notes: "",
 });
 
-const formatStructuredWarning = (warning) => {
-  const fieldLabel = warning?.field ? `${warning.field}: ` : "";
-  return `${fieldLabel}${warning?.message || "Submission completed with a warning."}`;
+const CLIENT_SHEET_FIELDS = [
+  ["fuel_liters", "Fuel (Liters)"],
+  ["driver_weight_lbs", "Driver Weight (lbs)"],
+  ["scale_weight_lbs", "Scale Weight (lbs)"],
+  ["cross_weight_percent", "Cross Weight (%)"],
+  ["roll_bar_text", "Roll-Bar"],
+  ["spacer_text", "Spacer"],
+  ["bump_text", "Bump"],
+  ["rebound_text", "Rebound"],
+  ["springs_front", "Springs Front"],
+  ["springs_rear", "Springs Rear"],
+  ["bump_stops_front", "Bump-Stops Front"],
+  ["bump_stops_rear", "Bump-Stops Rear"],
+  ["wheelbase_left_mm", "Wheelbase Left"],
+  ["wheelbase_right_mm", "Wheelbase Right"],
+  ["wing_rake_deg", "Wing Rake"],
+  ["wing_angle_deg", "Wing Angle"],
+  ["wing_gurney_mm", "Wing Gurney"],
+  ["wicker_text", "Wicker"],
+  ["specs_toe_text", "Specs Toe"],
+  ["corner_weight_text", "Corner Weight"],
+  ["static_ride_height_text", "Static Ride Height"],
+  ["bump_stop_height_text", "Bump Stop Height"],
+  ["arb_front_text", "ARB Front"],
+  ["arb_rear_text", "ARB Rear"],
+  ["fuel_pumped_out_liters", "Fuel Pumped Out"],
+];
+
+const POST_SESSION_FIELDS = [
+  ["camber_text", "After Session Camber"],
+  ["toe_text", "After Session Toe"],
+  ["weight_text", "After Session Weight"],
+  ["height_text", "After Session Height"],
+  ["shocks_text", "After Session Shocks"],
+];
+
+const SHOCK_SETUP_GROUPS = [
+  ["rr", "RR"],
+  ["lr", "LR"],
+  ["lf", "LF"],
+  ["rf", "RF"],
+];
+
+const SHOCK_SETUP_FIELDS = [
+  ["hsr", "HSR"],
+  ["lsr", "LSR"],
+  ["hsb", "HSB"],
+  ["lsb", "LSB"],
+  ["total_setup", "Total Setup"],
+];
+
+const createEmptyReviewDraft = () => ({
+  docType: "unknown",
+  templateName: "",
+  confidence: null,
+  summary: "",
+  extractedText: "",
+  recommendedReviewStatus: "PENDING",
+  parserVersion: null,
+  model: null,
+  metadata: {},
+  reviewFlags: [],
+  parsedSession: {
+    date: "",
+    time: "",
+    track: "",
+    session_type: "",
+    session_number: "",
+    duration_min: "",
+    driver_id: "",
+    vehicle_id: "",
+  },
+  alignment: {
+    rh_fl: "",
+    rh_fr: "",
+    rh_rl: "",
+    rh_rr: "",
+    ride_height_f: "",
+    ride_height_r: "",
+    camber_fl: "",
+    camber_fr: "",
+    camber_rl: "",
+    camber_rr: "",
+    toe_fl: "",
+    toe_fr: "",
+    toe_rl: "",
+    toe_rr: "",
+    toe_front: "",
+    toe_rear: "",
+    caster_l: "",
+    caster_r: "",
+    rake_mm: "",
+    wheelbase_mm: "",
+  },
+  pressures: {
+    cold: { fl: "", fr: "", rl: "", rr: "" },
+    hot: { fl: "", fr: "", rl: "", rr: "" },
+  },
+  suspension: {
+    rebound_fl: "",
+    rebound_fr: "",
+    rebound_rl: "",
+    rebound_rr: "",
+    bump_fl: "",
+    bump_fr: "",
+    bump_rl: "",
+    bump_rr: "",
+    sway_bar_f: "",
+    sway_bar_r: "",
+    wing_angle_deg: "",
+  },
+  tireTemperatures: {
+    fl_in: "",
+    fl_mid: "",
+    fl_out: "",
+    fr_in: "",
+    fr_mid: "",
+    fr_out: "",
+    rl_in: "",
+    rl_mid: "",
+    rl_out: "",
+    rr_in: "",
+    rr_mid: "",
+    rr_out: "",
+  },
+  sheetFields: {
+    fuel_liters: "",
+    driver_weight_lbs: "",
+    scale_weight_lbs: "",
+    cross_weight_percent: "",
+    roll_bar_text: "",
+    spacer_text: "",
+    bump_text: "",
+    rebound_text: "",
+    springs_front: "",
+    springs_rear: "",
+    bump_stops_front: "",
+    bump_stops_rear: "",
+    wheelbase_left_mm: "",
+    wheelbase_right_mm: "",
+    wing_rake_deg: "",
+    wing_angle_deg: "",
+    wing_gurney_mm: "",
+    wicker_text: "",
+    specs_toe_text: "",
+    corner_weight_text: "",
+    static_ride_height_text: "",
+    bump_stop_height_text: "",
+    arb_front_text: "",
+    arb_rear_text: "",
+    fuel_pumped_out_liters: "",
+    notes_block: "",
+  },
+  postSession: {
+    camber_text: "",
+    toe_text: "",
+    weight_text: "",
+    height_text: "",
+    shocks_text: "",
+  },
+  shockSetup: {
+    rr_hsr: "",
+    rr_lsr: "",
+    rr_hsb: "",
+    rr_lsb: "",
+    rr_total_setup: "",
+    lr_hsr: "",
+    lr_lsr: "",
+    lr_hsb: "",
+    lr_lsb: "",
+    lr_total_setup: "",
+    lf_hsr: "",
+    lf_lsr: "",
+    lf_hsb: "",
+    lf_lsb: "",
+    lf_total_setup: "",
+    rf_hsr: "",
+    rf_lsr: "",
+    rf_hsb: "",
+    rf_lsb: "",
+    rf_total_setup: "",
+  },
+  notes: [],
+});
+
+const splitNotes = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeText(item)).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
 };
 
-const validateOcrSubmissionFields = ({
-  formState,
-  hasImage,
-  runGroupId,
-  driverOptions,
-  vehicleOptions,
+const joinNotes = (value) => splitNotes(value).join("\n");
+
+const sanitizeStringMap = (value) =>
+  Object.fromEntries(
+    Object.entries(value && typeof value === "object" ? value : {}).map(([key, item]) => [key, toInputValue(item)]),
+  );
+
+const hasMeaningfulMapValue = (value) => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.values(value).some((item) => {
+    if (item && typeof item === "object") {
+      return hasMeaningfulMapValue(item);
+    }
+
+    return normalizeText(item).length > 0;
+  });
+};
+
+const hasExtractedDraftData = (reviewDraft) =>
+  Boolean(
+    normalizeText(reviewDraft?.summary) ||
+      normalizeText(reviewDraft?.extractedText) ||
+      (Array.isArray(reviewDraft?.reviewFlags) && reviewDraft.reviewFlags.length > 0) ||
+      (Array.isArray(reviewDraft?.notes) && reviewDraft.notes.length > 0) ||
+      hasMeaningfulMapValue(reviewDraft?.alignment) ||
+      hasMeaningfulMapValue(reviewDraft?.pressures) ||
+      hasMeaningfulMapValue(reviewDraft?.suspension) ||
+      hasMeaningfulMapValue(reviewDraft?.tireTemperatures) ||
+      hasMeaningfulMapValue(reviewDraft?.sheetFields) ||
+      hasMeaningfulMapValue(reviewDraft?.postSession) ||
+      hasMeaningfulMapValue(reviewDraft?.shockSetup),
+  );
+
+const mergePreviewIntoReviewDraft = (preview) => {
+  const baseDraft = createEmptyReviewDraft();
+  const structuredData = preview?.structuredData || {};
+  const alignmentSource = structuredData?.alignment || {};
+  const pressureSource = structuredData?.pressures || {};
+  const frontRideHeight =
+    toInputValue(alignmentSource.ride_height_f || alignmentSource.rh_fl || alignmentSource.rh_fr) || "";
+  const rearRideHeight =
+    toInputValue(alignmentSource.ride_height_r || alignmentSource.rh_rl || alignmentSource.rh_rr) || "";
+  const frontToe = toInputValue(alignmentSource.toe_front || alignmentSource.toe_fl || alignmentSource.toe_fr) || "";
+  const rearToe = toInputValue(alignmentSource.toe_rear || alignmentSource.toe_rl || alignmentSource.toe_rr) || "";
+
+  return {
+    ...baseDraft,
+    docType: preview?.docType || "unknown",
+    templateName:
+      preview?.templateName || preview?.metadata?.template_name || preview?.metadata?.templateName || "",
+    confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
+    summary: preview?.summary || "",
+    extractedText: preview?.extractedText || "",
+    recommendedReviewStatus: preview?.recommendedReviewStatus || "PENDING",
+    parserVersion: preview?.parserVersion || null,
+    model: preview?.model || null,
+    metadata: preview?.metadata || {},
+    reviewFlags: Array.isArray(preview?.reviewFlags) ? preview.reviewFlags : [],
+    parsedSession: {
+      ...baseDraft.parsedSession,
+      ...sanitizeStringMap(structuredData?.session || {}),
+    },
+    alignment: {
+      ...baseDraft.alignment,
+      ...sanitizeStringMap(alignmentSource),
+      rh_fl: toInputValue(alignmentSource.rh_fl || frontRideHeight),
+      rh_fr: toInputValue(alignmentSource.rh_fr || frontRideHeight),
+      rh_rl: toInputValue(alignmentSource.rh_rl || rearRideHeight),
+      rh_rr: toInputValue(alignmentSource.rh_rr || rearRideHeight),
+      ride_height_f: frontRideHeight,
+      ride_height_r: rearRideHeight,
+      toe_fl: toInputValue(alignmentSource.toe_fl || frontToe),
+      toe_fr: toInputValue(alignmentSource.toe_fr || frontToe),
+      toe_rl: toInputValue(alignmentSource.toe_rl || rearToe),
+      toe_rr: toInputValue(alignmentSource.toe_rr || rearToe),
+      toe_front: frontToe,
+      toe_rear: rearToe,
+    },
+    pressures: {
+      cold: {
+        ...baseDraft.pressures.cold,
+        ...sanitizeStringMap(pressureSource?.cold || {}),
+      },
+      hot: {
+        ...baseDraft.pressures.hot,
+        ...sanitizeStringMap(pressureSource?.hot || {}),
+      },
+    },
+    suspension: {
+      ...baseDraft.suspension,
+      ...sanitizeStringMap(structuredData?.suspension || {}),
+    },
+    tireTemperatures: {
+      ...baseDraft.tireTemperatures,
+      ...sanitizeStringMap(structuredData?.tire_temperatures || structuredData?.tireTemperatures || {}),
+    },
+    sheetFields: {
+      ...baseDraft.sheetFields,
+      ...sanitizeStringMap(structuredData?.sheet_fields || structuredData?.sheetFields || {}),
+    },
+    postSession: {
+      ...baseDraft.postSession,
+      ...sanitizeStringMap(structuredData?.post_session || structuredData?.postSession || {}),
+    },
+    shockSetup: {
+      ...baseDraft.shockSetup,
+      ...sanitizeStringMap(structuredData?.shock_setup || structuredData?.shockSetup || {}),
+    },
+    notes: splitNotes(structuredData?.notes || []),
+  };
+};
+
+const mergePreviewIntoIntake = (intakeState, preview, eventTrack) => {
+  const extractedSession = preview?.structuredData?.session || {};
+
+  return {
+    ...intakeState,
+    track: normalizeText(intakeState.track) || toInputValue(extractedSession.track) || eventTrack || "",
+    driver_id: normalizeText(intakeState.driver_id) || toInputValue(extractedSession.driver_id),
+    vehicle_id: normalizeText(intakeState.vehicle_id) || toInputValue(extractedSession.vehicle_id),
+    session_type:
+      normalizeText(intakeState.session_type) || toInputValue(extractedSession.session_type) || intakeState.session_type,
+    session_number:
+      normalizeText(intakeState.session_number) || toInputValue(extractedSession.session_number) || intakeState.session_number,
+    duration_min:
+      normalizeText(intakeState.duration_min) || toInputValue(extractedSession.duration_min) || intakeState.duration_min,
+    notes: intakeState.notes,
+  };
+};
+
+const buildReviewedRawText = (intakeState, reviewDraft) => {
+  const parts = [
+    normalizeText(intakeState.notes),
+    normalizeText(reviewDraft.sheetFields?.notes_block),
+    joinNotes(reviewDraft.notes),
+    normalizeText(reviewDraft.summary),
+  ].filter(Boolean);
+
+  if (parts.length === 0 && normalizeText(reviewDraft.extractedText)) {
+    parts.push(normalizeText(reviewDraft.extractedText));
+  }
+
+  return parts.join("\n\n") || null;
+};
+
+const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
+  const sessionNote = joinNotes(reviewDraft.notes);
+  const frontRideHeight =
+    normalizeText(reviewDraft.alignment.ride_height_f) ||
+    normalizeText(reviewDraft.alignment.rh_fl) ||
+    normalizeText(reviewDraft.alignment.rh_fr);
+  const rearRideHeight =
+    normalizeText(reviewDraft.alignment.ride_height_r) ||
+    normalizeText(reviewDraft.alignment.rh_rl) ||
+    normalizeText(reviewDraft.alignment.rh_rr);
+  const frontToe =
+    normalizeText(reviewDraft.alignment.toe_front) ||
+    normalizeText(reviewDraft.alignment.toe_fl) ||
+    normalizeText(reviewDraft.alignment.toe_fr);
+  const rearToe =
+    normalizeText(reviewDraft.alignment.toe_rear) ||
+    normalizeText(reviewDraft.alignment.toe_rl) ||
+    normalizeText(reviewDraft.alignment.toe_rr);
+
+  return {
+    document_type: reviewDraft.docType || "unknown",
+    template_name: reviewDraft.templateName || reviewDraft.metadata?.template_name || "",
+    confidence: typeof reviewDraft.confidence === "number" ? reviewDraft.confidence : 0,
+    summary: reviewDraft.summary || "",
+    extracted_text: reviewDraft.extractedText || "",
+    events: [],
+    sessions: [
+      {
+        date: normalizeText(intakeState.date) || normalizeText(reviewDraft.parsedSession.date),
+        time: normalizeText(intakeState.time) || normalizeText(reviewDraft.parsedSession.time),
+        track:
+          normalizeText(intakeState.track) ||
+          normalizeText(reviewDraft.parsedSession.track) ||
+          normalizeText(eventTrack),
+        session_type:
+          normalizeText(intakeState.session_type) || normalizeText(reviewDraft.parsedSession.session_type),
+        session_number:
+          normalizeText(intakeState.session_number) || normalizeText(reviewDraft.parsedSession.session_number),
+        duration_min:
+          normalizeText(intakeState.duration_min) || normalizeText(reviewDraft.parsedSession.duration_min),
+        driver_id: normalizeText(intakeState.driver_id) || normalizeText(reviewDraft.parsedSession.driver_id),
+        vehicle_id: normalizeText(intakeState.vehicle_id) || normalizeText(reviewDraft.parsedSession.vehicle_id),
+        notes: sessionNote,
+      },
+    ],
+    setup: {
+      pressures: {
+        cold_fl: normalizeText(reviewDraft.pressures.cold.fl),
+        cold_fr: normalizeText(reviewDraft.pressures.cold.fr),
+        cold_rl: normalizeText(reviewDraft.pressures.cold.rl),
+        cold_rr: normalizeText(reviewDraft.pressures.cold.rr),
+        hot_fl: normalizeText(reviewDraft.pressures.hot.fl),
+        hot_fr: normalizeText(reviewDraft.pressures.hot.fr),
+        hot_rl: normalizeText(reviewDraft.pressures.hot.rl),
+        hot_rr: normalizeText(reviewDraft.pressures.hot.rr),
+      },
+      suspension: {
+        ...sanitizeStringMap(reviewDraft.suspension),
+      },
+      alignment: {
+        camber_fl: normalizeText(reviewDraft.alignment.camber_fl),
+        camber_fr: normalizeText(reviewDraft.alignment.camber_fr),
+        camber_rl: normalizeText(reviewDraft.alignment.camber_rl),
+        camber_rr: normalizeText(reviewDraft.alignment.camber_rr),
+        toe_front: frontToe,
+        toe_rear: rearToe,
+        caster_l: normalizeText(reviewDraft.alignment.caster_l),
+        caster_r: normalizeText(reviewDraft.alignment.caster_r),
+        ride_height_f: frontRideHeight,
+        ride_height_r: rearRideHeight,
+        rake_mm: normalizeText(reviewDraft.alignment.rake_mm),
+        wheelbase_mm: normalizeText(reviewDraft.alignment.wheelbase_mm),
+      },
+      tire_temperatures: {
+        ...sanitizeStringMap(reviewDraft.tireTemperatures),
+      },
+      sheet_fields: {
+        ...sanitizeStringMap(reviewDraft.sheetFields),
+      },
+      post_session: {
+        ...sanitizeStringMap(reviewDraft.postSession),
+      },
+      shock_setup: {
+        ...sanitizeStringMap(reviewDraft.shockSetup),
+      },
+    },
+    warnings: Array.isArray(reviewDraft.reviewFlags) ? reviewDraft.reviewFlags : [],
+    recommended_review_status: reviewDraft.recommendedReviewStatus || "PENDING",
+    parser_version: reviewDraft.parserVersion || undefined,
+    model: reviewDraft.model || undefined,
+  };
+};
+
+const buildReviewedSubmissionRequest = ({
+  intakeState,
+  reviewDraft,
+  eventId,
+  runGroupValue,
+  eventTrack,
+  imageDataUrl,
 }) => {
-  const errors = {};
-  const validDriverIds = new Set(
-    (driverOptions || [])
-      .map((driver) => String(driver?.id || "").trim())
-      .filter(Boolean),
-  );
-  const validVehicleIds = new Set(
-    (vehicleOptions || [])
-      .map((vehicle) => String(vehicle?.id || "").trim())
-      .filter(Boolean),
-  );
+  const generatedSessionId =
+    buildGeneratedSessionId(intakeState.date, intakeState.time, intakeState.driver_id, intakeState.session_number) ||
+    generateUUID();
+  const reviewedImageAnalysis = buildReviewedImageAnalysis(intakeState, reviewDraft, eventTrack);
+  const rideHeightFront =
+    normalizeText(reviewDraft.alignment.ride_height_f) ||
+    normalizeText(reviewDraft.alignment.rh_fl) ||
+    normalizeText(reviewDraft.alignment.rh_fr);
+  const rideHeightRear =
+    normalizeText(reviewDraft.alignment.ride_height_r) ||
+    normalizeText(reviewDraft.alignment.rh_rl) ||
+    normalizeText(reviewDraft.alignment.rh_rr);
+  const toeFront =
+    normalizeText(reviewDraft.alignment.toe_front) ||
+    normalizeText(reviewDraft.alignment.toe_fl) ||
+    normalizeText(reviewDraft.alignment.toe_fr);
+  const toeRear =
+    normalizeText(reviewDraft.alignment.toe_rear) ||
+    normalizeText(reviewDraft.alignment.toe_rl) ||
+    normalizeText(reviewDraft.alignment.toe_rr);
 
-  if (!hasImage) {
-    errors.image = "Please upload a handwritten note or setup sheet image.";
-  }
-
-  if (!isValidDateValue(formState.date)) {
-    errors.date = "Please enter a valid date.";
-  }
-
-  if (!isValidTimeValue(formState.time)) {
-    errors.time = "Please enter a valid time.";
-  }
-
-  if (!isValidSessionId(formState.session_id)) {
-    errors.session_id = "Session ID must use the generated format or a legacy session reference.";
-  }
-
-  if (!normalizeText(formState.track)) {
-    errors.track = "Track is required.";
-  }
-
-  if (!String(runGroupId || "").trim()) {
-    errors.run_group = "Run group is required before an OCR submission can start.";
-  }
-
-  const driverId = String(formState.driver_id || "").trim();
-  if (!driverId || !validDriverIds.has(driverId)) {
-    errors.driver_id = "Please select a driver.";
-  }
-
-  const vehicleId = String(formState.vehicle_id || "").trim();
-  if (!vehicleId || !validVehicleIds.has(vehicleId)) {
-    errors.vehicle_id = "Please select a vehicle.";
-  }
-
-  if (!normalizeText(formState.session_type)) {
-    errors.session_type = "Session type is required.";
-  }
-
-  const sessionNumberValue = String(formState.session_number ?? "").trim();
-  if (!sessionNumberValue) {
-    errors.session_number = "Session number is required.";
-  } else {
-    const parsedSessionNumber = Number(sessionNumberValue);
-    if (!Number.isInteger(parsedSessionNumber) || parsedSessionNumber <= 0) {
-      errors.session_number = "Session number must be a whole number greater than 0.";
-    }
-  }
-
-  const durationValue = String(formState.duration_min ?? "").trim();
-  if (durationValue) {
-    const parsedDuration = Number(durationValue);
-    if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
-      errors.duration_min = "Duration must be greater than 0.";
-    }
-  }
-
-  const wheelbaseValue = String(formState.wheelbase_mm ?? "").trim();
-  if (wheelbaseValue) {
-    const parsedWheelbase = Number(wheelbaseValue);
-    if (!Number.isFinite(parsedWheelbase) || parsedWheelbase <= 0) {
-      errors.wheelbase_mm = "Wheelbase must be greater than 0.";
-    }
-  }
-
-  return errors;
+  return {
+    submissionId: generatedSessionId,
+    session_id: generatedSessionId,
+    correlation_id: generateUUID(),
+    source: "pwa",
+    eventId,
+    runGroup: runGroupValue || undefined,
+    confidence: reviewDraft.confidence ?? 0.84,
+    raw_text: buildReviewedRawText(intakeState, reviewDraft),
+    image_url: imageDataUrl,
+    payload: {
+      data: {
+        date: normalizeText(intakeState.date) || null,
+        time: normalizeText(intakeState.time) || null,
+        session_id: generatedSessionId,
+        track: normalizeText(intakeState.track) || normalizeText(eventTrack) || null,
+        run_group: normalizeText(runGroupValue) || null,
+        driver_id: normalizeText(intakeState.driver_id) || null,
+        vehicle_id: normalizeText(intakeState.vehicle_id) || null,
+        session_type: normalizeText(intakeState.session_type) || null,
+        session_number: toNullableNumber(intakeState.session_number),
+        duration_min: toNullableNumber(intakeState.duration_min),
+        wheelbase_mm: toNullableNumber(reviewDraft.alignment.wheelbase_mm),
+        pressures: {
+          cold: {
+            fl: toNullableNumber(reviewDraft.pressures.cold.fl),
+            fr: toNullableNumber(reviewDraft.pressures.cold.fr),
+            rl: toNullableNumber(reviewDraft.pressures.cold.rl),
+            rr: toNullableNumber(reviewDraft.pressures.cold.rr),
+          },
+          hot: {
+            fl: toNullableNumber(reviewDraft.pressures.hot.fl),
+            fr: toNullableNumber(reviewDraft.pressures.hot.fr),
+            rl: toNullableNumber(reviewDraft.pressures.hot.rl),
+            rr: toNullableNumber(reviewDraft.pressures.hot.rr),
+          },
+        },
+        suspension: Object.fromEntries(
+          Object.entries(reviewDraft.suspension).map(([key, value]) => [
+            key,
+            toNullableNumber(value) ?? (normalizeText(value) || null),
+          ]),
+        ),
+        alignment: {
+          camber_fl: toNullableNumber(reviewDraft.alignment.camber_fl),
+          camber_fr: toNullableNumber(reviewDraft.alignment.camber_fr),
+          camber_rl: toNullableNumber(reviewDraft.alignment.camber_rl),
+          camber_rr: toNullableNumber(reviewDraft.alignment.camber_rr),
+          toe_front: toNullableNumber(toeFront) ?? (normalizeText(toeFront) || null),
+          toe_rear: toNullableNumber(toeRear) ?? (normalizeText(toeRear) || null),
+          caster_l: toNullableNumber(reviewDraft.alignment.caster_l),
+          caster_r: toNullableNumber(reviewDraft.alignment.caster_r),
+          ride_height_f: toNullableNumber(rideHeightFront),
+          ride_height_r: toNullableNumber(rideHeightRear),
+          rake_mm: toNullableNumber(reviewDraft.alignment.rake_mm),
+          wheelbase_mm: toNullableNumber(reviewDraft.alignment.wheelbase_mm),
+        },
+        tire_temperatures: Object.fromEntries(
+          Object.entries(reviewDraft.tireTemperatures).map(([key, value]) => [key, toNullableNumber(value)]),
+        ),
+        extended_setup: {
+          sheet_fields: {
+            ...sanitizeStringMap(reviewDraft.sheetFields),
+          },
+          post_session: {
+            ...sanitizeStringMap(reviewDraft.postSession),
+          },
+          shock_setup: {
+            ...sanitizeStringMap(reviewDraft.shockSetup),
+          },
+        },
+      },
+      ocr_review: {
+        doc_type: reviewDraft.docType,
+        template_name: reviewDraft.templateName || null,
+        confidence: reviewDraft.confidence,
+        summary: reviewDraft.summary,
+        extracted_text: reviewDraft.extractedText,
+        notes: reviewDraft.notes,
+        review_flags: reviewDraft.reviewFlags,
+        metadata: reviewDraft.metadata,
+      },
+    },
+    analysis_result: {
+      submission_mode: "detail",
+      source_type: "ocr_review",
+      confidence: reviewDraft.confidence ?? 0.84,
+      ocr_entrypoint: true,
+      ocr_review_required: true,
+      force_review_staging: true,
+      review_before_submission: true,
+      has_image_analysis: true,
+      image_analysis_review_status: reviewDraft.recommendedReviewStatus || "PENDING",
+      image_analysis: reviewedImageAnalysis,
+      ocr_metadata: reviewDraft.metadata,
+      ocr_review_flags: reviewDraft.reviewFlags,
+      ocr_workflow_state: "review_submitted",
+      ocr_doc_type: reviewDraft.docType,
+      ocr_parser_version: reviewDraft.parserVersion,
+      ocr_model: reviewDraft.model,
+    },
+  };
 };
 
 const getSubmissionFailureMessage = (errorLike) => {
@@ -244,18 +711,33 @@ const getSubmissionFailureMessage = (errorLike) => {
   const message = String(errorLike?.message || errorLike?.error || "").trim();
 
   if (code === "SUBMISSION_ALREADY_EXISTS") {
-    return "This Session ID already exists. Use a new Session ID or regenerate it before submitting.";
+    return "This OCR session already exists. Adjust the session time or session number, then submit again.";
   }
 
   if (code === "SUBMISSION_DUPLICATE") {
-    return "A matching submission already exists for this event, driver, vehicle, date, time, and session number.";
+    return "A matching OCR submission already exists for this event and session context.";
   }
 
   if (code === "SUBMISSION_SAVE_FAILED") {
-    return "The backend could not save this OCR submission. Please try once more.";
+    return "The backend could not save this OCR review submission. Please try again.";
   }
 
-  return message || "OCR submission failed. Please try again.";
+  return message || "OCR review submission failed. Please try again.";
+};
+
+const getExtractionFailureMessage = (errorLike) => {
+  const code = String(errorLike?.code || "").trim().toUpperCase();
+  const message = String(errorLike?.message || errorLike?.error || "").trim();
+
+  if (code === "OCR_EXTRACTION_DISABLED") {
+    return "OCR extraction is unavailable right now. Please try again later or use the typed notes flow.";
+  }
+
+  if (code === "OCR_EXTRACTION_FAILED") {
+    return "OCR extraction could not read a usable draft from this image. Retry with a clearer image or better lighting.";
+  }
+
+  return message || "OCR extraction failed. Please try again.";
 };
 
 const getSubmissionSuccessState = (submission) => {
@@ -267,21 +749,127 @@ const getSubmissionSuccessState = (submission) => {
     (warning) => String(warning?.code || "").trim().toUpperCase() === "IMAGE_STAGED_FOR_REVIEW",
   );
 
-  if (structuredStatus === "pending_review" || warnings.length > 0) {
+  if (structuredStatus === "pending_review" || stagedForReview) {
     return {
-      status: "sent_with_warnings",
-      message: stagedForReview
-        ? "OCR note uploaded. The image was staged for extraction and review before any structured setup data is applied."
-        : "OCR note uploaded. Review the submission details and warnings below.",
+      status: "submitted_for_review",
+      message:
+        "OCR note submitted for review. The source image and reviewed setup draft are staged for validation before final application.",
+      warnings,
+    };
+  }
+
+  if (warnings.length > 0) {
+    return {
+      status: "submitted_with_warnings",
+      message: "OCR note submitted. Review the warnings below before relying on the extracted setup values.",
       warnings,
     };
   }
 
   return {
-    status: "sent",
-    message: "OCR note uploaded successfully. Redirecting to Submissions...",
+    status: "submitted",
+    message: "OCR note submitted successfully. Review it from the event submissions history.",
     warnings: [],
   };
+};
+
+const resolveCurrentUserStorageKey = () => {
+  if (typeof window === "undefined") {
+    return "anonymous";
+  }
+
+  try {
+    const storedUser = window.localStorage.getItem("sm2_user");
+    if (!storedUser) {
+      return "anonymous";
+    }
+
+    const parsedUser = JSON.parse(storedUser);
+    return (
+      parsedUser?.id ||
+      parsedUser?._id ||
+      parsedUser?.userId ||
+      parsedUser?.email ||
+      parsedUser?.user?.id ||
+      parsedUser?.user?._id ||
+      parsedUser?.user?.userId ||
+      parsedUser?.user?.email ||
+      "anonymous"
+    );
+  } catch (error) {
+    console.warn("Failed to resolve OCR draft storage key:", error);
+    return "anonymous";
+  }
+};
+
+const getWorkflowPresentation = (workflowState) => {
+  switch (workflowState) {
+    case "waiting_for_image":
+      return {
+        label: "Waiting for Image",
+        note: "Upload a setup sheet or handwritten notes image to begin OCR extraction.",
+      };
+    case "ready_to_extract":
+      return {
+        label: "Ready to Extract",
+        note: "Minimal intake context is set. Run OCR extraction to build the first editable draft.",
+      };
+    case "extracting":
+      return {
+        label: "Extracting",
+        note: "OpenAI OCR is analyzing the uploaded sheet and building a reviewable draft.",
+      };
+    case "extract_success":
+      return {
+        label: "OCR Draft Ready",
+        note: "Review the extracted setup values, resolve warnings, and submit the reviewed draft for staging.",
+      };
+    case "extract_failed":
+      return {
+        label: "Extraction Failed",
+        note: "Keep the image, adjust the intake context if needed, and retry OCR extraction.",
+      };
+    case "editing_review":
+      return {
+        label: "Review Required",
+        note: "The extracted values are editable. Confirm or correct them before submission.",
+      };
+    case "rerunning_ocr":
+      return {
+        label: "Rerunning OCR",
+        note: "Refreshing the OCR draft from the current image and intake context.",
+      };
+    case "saving_draft":
+      return {
+        label: "Saving Draft",
+        note: "Saving this OCR workflow locally on the current device.",
+      };
+    case "draft_saved":
+      return {
+        label: "Draft Saved",
+        note: "The current OCR intake and review edits are stored locally on this device.",
+      };
+    case "submitting_review":
+      return {
+        label: "Submitting Review",
+        note: "Submitting the reviewed OCR-backed note for staging and validation.",
+      };
+    case "submit_success":
+      return {
+        label: "Ready for Submission",
+        note: "The OCR-backed note is now in the review pipeline and available from Submissions history.",
+      };
+    case "submit_failed":
+      return {
+        label: "Submission Failed",
+        note: "The reviewed OCR note did not submit cleanly. Nothing was reset, so you can correct and retry.",
+      };
+    default:
+      return {
+        label: "Waiting for Image",
+        note: "Upload a setup sheet or handwritten notes image to begin OCR extraction.",
+      };
+  }
 };
 
 export default function OCRNotesPage() {
@@ -293,18 +881,25 @@ export default function OCRNotesPage() {
   const [runGroup, setRunGroup] = useState(null);
   const [driverOptions, setDriverOptions] = useState(DRIVER_OPTIONS);
   const [vehicleOptions, setVehicleOptions] = useState(VEHICLE_OPTIONS);
-  const [formState, setFormState] = useState(() => createOcrFormState());
+  const [intakeState, setIntakeState] = useState(() => createIntakeState());
+  const [reviewDraft, setReviewDraft] = useState(() => createEmptyReviewDraft());
   const [imageDataUrl, setImageDataUrl] = useState(null);
   const [imageName, setImageName] = useState("");
-  const [sessionIdMode, setSessionIdMode] = useState("auto");
   const [fieldErrors, setFieldErrors] = useState({});
-  const [validationAttempted, setValidationAttempted] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [pageError, setPageError] = useState("");
-  const [submissionStatus, setSubmissionStatus] = useState("idle");
-  const [submissionFeedback, setSubmissionFeedback] = useState("");
   const [submissionWarnings, setSubmissionWarnings] = useState([]);
+  const [workflowState, setWorkflowState] = useState("idle");
+  const [workflowMessage, setWorkflowMessage] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [dropzoneActive, setDropzoneActive] = useState(false);
+  const [reviewDirty, setReviewDirty] = useState(false);
+  const [currentUserStorageKey, setCurrentUserStorageKey] = useState("anonymous");
+  const [hasLoadedDraft, setHasLoadedDraft] = useState(false);
+
+  useEffect(() => {
+    setCurrentUserStorageKey(resolveCurrentUserStorageKey());
+  }, []);
 
   const loadPageData = useCallback(async () => {
     if (!routeEventId) {
@@ -385,7 +980,7 @@ export default function OCRNotesPage() {
       return;
     }
 
-    setFormState((prev) => {
+    setIntakeState((prev) => {
       if (normalizeText(prev.track)) {
         return prev;
       }
@@ -394,36 +989,8 @@ export default function OCRNotesPage() {
     });
   }, [eventTrack]);
 
-  const generatedSessionId = useMemo(
-    () =>
-      buildGeneratedSessionId(
-        formState.date,
-        formState.time,
-        formState.driver_id,
-        formState.session_number,
-      ),
-    [formState.date, formState.time, formState.driver_id, formState.session_number],
-  );
-
-  useEffect(() => {
-    if (sessionIdMode !== "auto") {
-      return;
-    }
-
-    setFormState((prev) => {
-      if (prev.session_id === generatedSessionId) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        session_id: generatedSessionId,
-      };
-    });
-  }, [generatedSessionId, sessionIdMode]);
-
   const vehicleOptionsForDriver = useMemo(() => {
-    const selectedDriverId = String(formState.driver_id || "").trim();
+    const selectedDriverId = String(intakeState.driver_id || "").trim();
     if (!selectedDriverId) {
       return vehicleOptions;
     }
@@ -432,59 +999,178 @@ export default function OCRNotesPage() {
       (vehicle) => String(vehicle.driverId || "").trim() === selectedDriverId,
     );
     return filteredVehicles.length > 0 ? filteredVehicles : vehicleOptions;
-  }, [formState.driver_id, vehicleOptions]);
+  }, [intakeState.driver_id, vehicleOptions]);
 
   useEffect(() => {
-    if (!formState.vehicle_id) {
-      return;
-    }
-
-    const selectedDriverId = String(formState.driver_id || "").trim();
-    if (!selectedDriverId) {
+    if (!intakeState.vehicle_id || !intakeState.driver_id) {
       return;
     }
 
     const vehicleStillValid = vehicleOptionsForDriver.some(
-      (vehicle) => String(vehicle.id || "").trim() === String(formState.vehicle_id || "").trim(),
+      (vehicle) => String(vehicle.id || "").trim() === String(intakeState.vehicle_id || "").trim(),
     );
 
     if (!vehicleStillValid) {
-      setFormState((prev) => ({ ...prev, vehicle_id: "" }));
+      setIntakeState((prev) => ({ ...prev, vehicle_id: "" }));
     }
-  }, [formState.driver_id, formState.vehicle_id, vehicleOptionsForDriver]);
+  }, [intakeState.driver_id, intakeState.vehicle_id, vehicleOptionsForDriver]);
+
+  const draftStorageKey = useMemo(() => {
+    if (!routeEventId || !currentUserStorageKey) {
+      return null;
+    }
+
+    return `sm2:ocr-draft:${routeEventId}:${currentUserStorageKey}`;
+  }, [currentUserStorageKey, routeEventId]);
+
+  useEffect(() => {
+    if (!draftStorageKey || hasLoadedDraft) {
+      return;
+    }
+
+    const storedDraft = loadOcrDraft(draftStorageKey);
+    if (storedDraft) {
+      setIntakeState((prev) => ({
+        ...prev,
+        ...sanitizeStringMap(storedDraft.intakeState || {}),
+        track: normalizeText(storedDraft?.intakeState?.track) || prev.track,
+      }));
+      setReviewDraft((prev) => ({
+        ...prev,
+        ...mergePreviewIntoReviewDraft({
+          structuredData: {
+            session: storedDraft?.reviewDraft?.parsedSession || {},
+            alignment: storedDraft?.reviewDraft?.alignment || {},
+            pressures: storedDraft?.reviewDraft?.pressures || {},
+            suspension: storedDraft?.reviewDraft?.suspension || {},
+            tire_temperatures:
+              storedDraft?.reviewDraft?.tireTemperatures || storedDraft?.reviewDraft?.tire_temperatures || {},
+            sheet_fields: storedDraft?.reviewDraft?.sheetFields || storedDraft?.reviewDraft?.sheet_fields || {},
+            post_session: storedDraft?.reviewDraft?.postSession || storedDraft?.reviewDraft?.post_session || {},
+            shock_setup: storedDraft?.reviewDraft?.shockSetup || storedDraft?.reviewDraft?.shock_setup || {},
+            notes: storedDraft?.reviewDraft?.notes || [],
+          },
+          docType: storedDraft?.reviewDraft?.docType,
+          templateName: storedDraft?.reviewDraft?.templateName,
+          confidence: storedDraft?.reviewDraft?.confidence,
+          summary: storedDraft?.reviewDraft?.summary,
+          extractedText: storedDraft?.reviewDraft?.extractedText,
+          recommendedReviewStatus: storedDraft?.reviewDraft?.recommendedReviewStatus,
+          parserVersion: storedDraft?.reviewDraft?.parserVersion,
+          model: storedDraft?.reviewDraft?.model,
+          metadata: storedDraft?.reviewDraft?.metadata,
+          reviewFlags: storedDraft?.reviewDraft?.reviewFlags,
+        }),
+      }));
+      setImageDataUrl(storedDraft?.imageDataUrl || null);
+      setImageName(storedDraft?.imageName || "");
+      setReviewDirty(Boolean(storedDraft?.reviewDirty));
+      setWorkflowState(storedDraft?.workflowState || (storedDraft?.reviewDraft ? "extract_success" : "ready_to_extract"));
+      setWorkflowMessage("Draft restored from this device.");
+      setDraftRestored(true);
+    }
+
+    setHasLoadedDraft(true);
+  }, [draftStorageKey, hasLoadedDraft]);
 
   const selectedDriverLabel =
-    driverOptions.find((driver) => driver.id === formState.driver_id)?.label || "Not selected";
+    driverOptions.find((driver) => driver.id === intakeState.driver_id)?.label ||
+    reviewDraft.metadata?.driver_text ||
+    "Optional";
   const selectedVehicleLabel =
-    vehicleOptionsForDriver.find((vehicle) => vehicle.id === formState.vehicle_id)?.label || "Not selected";
+    vehicleOptionsForDriver.find((vehicle) => vehicle.id === intakeState.vehicle_id)?.label ||
+    reviewDraft.metadata?.vehicle_text ||
+    "Optional";
+  const generatedSessionId = useMemo(
+    () =>
+      buildGeneratedSessionId(
+        intakeState.date,
+        intakeState.time,
+        intakeState.driver_id,
+        intakeState.session_number,
+      ),
+    [intakeState.date, intakeState.time, intakeState.driver_id, intakeState.session_number],
+  );
+  const hasExtractedDraft = hasExtractedDraftData(reviewDraft);
+  const hasImage = Boolean(imageDataUrl);
+  const activeAsyncState = ["extracting", "rerunning_ocr", "saving_draft", "submitting_review"].includes(workflowState);
+
+  const effectiveWorkflowState = useMemo(() => {
+    if (workflowState === "submit_success" || workflowState === "submit_failed") {
+      return workflowState;
+    }
+
+    if (workflowState === "draft_saved") {
+      return "draft_saved";
+    }
+
+    if (workflowState === "extract_failed" && !hasExtractedDraft) {
+      return "extract_failed";
+    }
+
+    if (workflowState === "extracting" || workflowState === "rerunning_ocr" || workflowState === "saving_draft" || workflowState === "submitting_review") {
+      return workflowState;
+    }
+
+    if (!hasImage) {
+      return "waiting_for_image";
+    }
+
+    if (!hasExtractedDraft) {
+      return "ready_to_extract";
+    }
+
+    if (reviewDirty) {
+      return "editing_review";
+    }
+
+    return "extract_success";
+  }, [hasExtractedDraft, hasImage, reviewDirty, workflowState]);
+
+  const workflowPresentation = getWorkflowPresentation(effectiveWorkflowState);
   const submissionWindowNote = !submissionState.isOpen
     ? "This event is closed for new OCR-backed submissions."
     : !hasRunGroup
-      ? "Run group configuration is required before OCR submissions can be staged."
-      : "OCR-backed submissions are ready for this event and run group.";
+      ? "Run group configuration is required before drivers or mechanics can stage OCR notes."
+      : workflowPresentation.note;
 
   const getFieldClassName = (baseClassName, fieldName) =>
     fieldErrors[fieldName] ? `${baseClassName} input-error` : baseClassName;
 
-  const handleFieldChange = (field, value) => {
-    setFormState((prev) => ({ ...prev, [field]: value }));
+  const clearFieldError = (fieldName) => {
     setFieldErrors((prev) => {
-      if (!prev[field]) {
+      if (!prev[fieldName]) {
         return prev;
       }
 
       return {
         ...prev,
-        [field]: "",
+        [fieldName]: "",
       };
     });
   };
 
-  const handleImageChange = (eventLike) => {
-    const file = eventLike.target.files?.[0];
+  const handleIntakeChange = (field, value) => {
+    setIntakeState((prev) => ({ ...prev, [field]: value }));
+    clearFieldError(field);
+  };
+
+  const handleReviewEdit = (updater) => {
+    setReviewDraft((prev) => updater(prev));
+    setReviewDirty(true);
+    setWorkflowState("editing_review");
+  };
+
+  const applyImageFile = (file) => {
     if (!file) {
-      setImageDataUrl(null);
-      setImageName("");
+      return;
+    }
+
+    if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        image: "Upload a JPG, PNG, or WEBP image.",
+      }));
       return;
     }
 
@@ -492,168 +1178,239 @@ export default function OCRNotesPage() {
     reader.onloadend = () => {
       setImageDataUrl(typeof reader.result === "string" ? reader.result : null);
       setImageName(file.name);
-      setFieldErrors((prev) => ({
-        ...prev,
-        image: "",
-      }));
+      clearFieldError("image");
+      if (!hasExtractedDraft) {
+        setWorkflowState("ready_to_extract");
+      }
     };
     reader.readAsDataURL(file);
   };
 
-  const resetForm = () => {
-    setFormState({
-      ...createOcrFormState(),
-      track: eventTrack,
-    });
-    setImageDataUrl(null);
-    setImageName("");
-    setSessionIdMode("auto");
-    setFieldErrors({});
-    setValidationAttempted(false);
-    setPageError("");
-    setSubmissionStatus("idle");
-    setSubmissionFeedback("");
-    setSubmissionWarnings([]);
+  const handleImageInputChange = (eventLike) => {
+    const file = eventLike.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    applyImageFile(file);
   };
 
-  const handleSubmit = async (submitEvent) => {
-    submitEvent.preventDefault();
+  const handleDrop = (eventLike) => {
+    eventLike.preventDefault();
+    setDropzoneActive(false);
+    const file = eventLike.dataTransfer?.files?.[0];
+    if (!file) {
+      return;
+    }
 
+    applyImageFile(file);
+  };
+
+  const handleRemoveImage = () => {
+    setImageDataUrl(null);
+    setImageName("");
+    setReviewDraft(createEmptyReviewDraft());
+    setReviewDirty(false);
+    setSubmissionWarnings([]);
+    setWorkflowState("waiting_for_image");
+    setWorkflowMessage("");
+    setPageError("");
+  };
+
+  const resetForm = useCallback(() => {
+    setIntakeState({
+      ...createIntakeState(),
+      track: eventTrack,
+    });
+    setReviewDraft(createEmptyReviewDraft());
+    setImageDataUrl(null);
+    setImageName("");
+    setFieldErrors({});
+    setPageError("");
+    setSubmissionWarnings([]);
+    setWorkflowState("idle");
+    setWorkflowMessage("");
+    setDraftRestored(false);
+    setReviewDirty(false);
+    if (draftStorageKey) {
+      clearOcrDraft(draftStorageKey);
+    }
+  }, [draftStorageKey, eventTrack]);
+
+  const handleExtract = async ({ rerun = false } = {}) => {
     if (!canSubmitOcr) {
-      setSubmissionStatus("failed");
-      setSubmissionFeedback("");
-      setSubmissionWarnings([]);
+      setPageError(
+        !hasRunGroup
+          ? "Run group is required before OCR Notes can extract."
+          : "This event is closed. OCR extraction is disabled.",
+      );
+      setWorkflowState("extract_failed");
+      return;
+    }
+
+    if (!imageDataUrl) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        image: "Upload a handwritten note or setup sheet image first.",
+      }));
+      setWorkflowState("waiting_for_image");
+      return;
+    }
+
+    setPageError("");
+    setSubmissionWarnings([]);
+    setWorkflowState(rerun ? "rerunning_ocr" : "extracting");
+    setWorkflowMessage("");
+
+    try {
+      const preview = await (rerun ? rerunOcrDraft : extractOcrDraft)({
+        event_id: event?._id || event?.id || routeEventId,
+        run_group_id: runGroupId,
+        driver_id: normalizeText(intakeState.driver_id) || null,
+        vehicle_id: normalizeText(intakeState.vehicle_id) || null,
+        raw_text: normalizeText(intakeState.notes) || null,
+        image_url: imageDataUrl,
+        context: {
+          date: normalizeText(intakeState.date) || null,
+          time: normalizeText(intakeState.time) || null,
+          track: normalizeText(intakeState.track) || normalizeText(eventTrack) || null,
+          session_type: normalizeText(intakeState.session_type) || null,
+          session_number: normalizeText(intakeState.session_number) || null,
+          duration_min: normalizeText(intakeState.duration_min) || null,
+          notes: normalizeText(intakeState.notes) || null,
+        },
+      });
+
+      setReviewDraft(mergePreviewIntoReviewDraft(preview));
+      setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
+      setReviewDirty(false);
+      setWorkflowState("extract_success");
+      setWorkflowMessage("OCR draft ready. Review and correct the extracted setup values before submitting.");
+    } catch (error) {
+      console.error("Failed to extract OCR draft:", error);
+      setWorkflowState("extract_failed");
+      setPageError(getExtractionFailureMessage(error));
+    }
+  };
+
+  const handleSaveDraft = () => {
+    if (!draftStorageKey) {
+      return;
+    }
+
+    setWorkflowState("saving_draft");
+    setPageError("");
+
+    try {
+      saveOcrDraft(draftStorageKey, {
+        intakeState,
+        reviewDraft,
+        imageDataUrl,
+        imageName,
+        reviewDirty,
+        workflowState: hasExtractedDraft ? "extract_success" : hasImage ? "ready_to_extract" : "waiting_for_image",
+      });
+      setWorkflowState("draft_saved");
+      setWorkflowMessage("OCR draft saved locally on this device.");
+    } catch (error) {
+      console.error("Failed to save OCR draft:", error);
+      setWorkflowState(hasExtractedDraft ? "editing_review" : hasImage ? "ready_to_extract" : "waiting_for_image");
+      setPageError("Could not save the OCR draft locally on this device.");
+    }
+  };
+
+  const handleSubmitForReview = async () => {
+    if (!canSubmitOcr) {
       setPageError(
         !hasRunGroup
           ? "Run group is required before OCR Notes can submit."
-          : "This event is closed. OCR submissions are disabled.",
+          : "This event is closed. OCR review submissions are disabled.",
       );
+      setWorkflowState("submit_failed");
       return;
     }
 
-    const nextErrors = validateOcrSubmissionFields({
-      formState,
-      hasImage: Boolean(imageDataUrl),
-      runGroupId,
-      driverOptions,
-      vehicleOptions: vehicleOptionsForDriver,
-    });
+    const nextErrors = {};
+
+    if (!imageDataUrl) {
+      nextErrors.image = "Upload a handwritten note or setup sheet image first.";
+    }
+
+    if (!hasExtractedDraft) {
+      nextErrors.extract = "Run OCR extraction before submitting for review.";
+    }
+
+    if (Boolean(normalizeText(intakeState.driver_id)) !== Boolean(normalizeText(intakeState.vehicle_id))) {
+      nextErrors.driver_vehicle = "Driver and vehicle must be provided together if either one is selected.";
+    }
 
     if (Object.keys(nextErrors).length > 0) {
-      setFieldErrors(nextErrors);
-      setValidationAttempted(true);
-      setSubmissionStatus("failed");
-      setSubmissionFeedback("");
-      setSubmissionWarnings([]);
-      setPageError("Please fix the highlighted fields before submitting.");
+      setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
+      setPageError("Complete the OCR extraction workflow before submitting.");
+      setWorkflowState("submit_failed");
       return;
     }
 
-    setIsSubmitting(true);
     setPageError("");
-    setSubmissionStatus("pending");
-    setSubmissionFeedback("");
     setSubmissionWarnings([]);
+    setWorkflowState("submitting_review");
+    setWorkflowMessage("");
 
     try {
-      const normalizedFormState = {
-        ...formState,
-        session_id: normalizeText(formState.session_id) || generateUUID(),
-        track: normalizeText(formState.track) || eventTrack || "",
-      };
-
-      const response = await createSubmission({
-        submissionId: normalizedFormState.session_id,
-        session_id: normalizedFormState.session_id,
-        correlation_id: generateUUID(),
-        source: "pwa",
-        eventId: event?._id || event?.id || routeEventId,
-        runGroup: runGroupValue || undefined,
-        action: "ADD_SEANCE",
-        confidence: 0.85,
-        data: {
-          date: normalizedFormState.date || null,
-          time: normalizedFormState.time || null,
-          session_id: normalizedFormState.session_id || null,
-          track: normalizedFormState.track || null,
-          run_group: runGroupValue || null,
-          driver_id: normalizedFormState.driver_id || null,
-          vehicle_id: normalizedFormState.vehicle_id || null,
-          session_type: normalizedFormState.session_type || null,
-          session_number: toNullableNumber(normalizedFormState.session_number),
-          duration_min: toNullableNumber(normalizedFormState.duration_min),
-          tire_set: normalizeText(normalizedFormState.tire_set) || null,
-          wheelbase_mm: toNullableNumber(normalizedFormState.wheelbase_mm),
-          capture_channel: "ocr_notes",
-        },
-        analysis_result: {
-          action: "ADD_SEANCE",
-          confidence: 0.85,
-          run_group: runGroupValue || undefined,
-          submission_mode: "detail",
-          source_channel: "ocr_notes",
-          ocr_entrypoint: true,
-          review_before_submission: true,
-        },
-        raw_text: normalizeText(normalizedFormState.notes) || undefined,
-        image_url: imageDataUrl || undefined,
-      });
-
-      if (!response.success) {
-        throw response;
-      }
-
-      const successState = getSubmissionSuccessState(response.submission);
-      setSubmissionStatus(successState.status);
-      setSubmissionFeedback(successState.message);
+      const response = await submitReviewedOcrNote(
+        buildReviewedSubmissionRequest({
+          intakeState,
+          reviewDraft,
+          eventId: event?._id || event?.id || routeEventId,
+          runGroupValue,
+          eventTrack,
+          imageDataUrl,
+        }),
+      );
+      const successState = getSubmissionSuccessState(response?.submission);
       setSubmissionWarnings(successState.warnings);
-
-      if (successState.status === "sent") {
-        window.setTimeout(() => {
-          router.push(`/event/${routeEventId}/submissions`);
-        }, 1800);
+      setWorkflowState("submit_success");
+      setWorkflowMessage(successState.message);
+      setReviewDirty(false);
+      if (draftStorageKey) {
+        clearOcrDraft(draftStorageKey);
       }
     } catch (error) {
-      console.error("OCR submission error:", error);
-      setSubmissionStatus("failed");
-      setSubmissionFeedback("");
-      setSubmissionWarnings([]);
+      console.error("Failed to submit OCR note for review:", error);
+      setWorkflowState("submit_failed");
       setPageError(getSubmissionFailureMessage(error));
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
-  if (loading && !event) {
+  if (loading) {
     return (
-      <ProtectedRoute requireDriver={true}>
-        <Loader
-          fullHeight
-          label="Loading OCR workspace"
-          sublabel="Fetching the active event, run group, and capture context..."
-        />
+      <ProtectedRoute allowedRoles={["OWNER", "ADMIN", "MECHANIC", "DRIVER"]}>
+        <div className="ocr-notes-page">
+          <div className="ocr-notes-orb ocr-notes-orb-one" />
+          <div className="ocr-notes-orb ocr-notes-orb-two" />
+          <div className="ocr-notes-shell ocr-notes-state-shell">
+            <Loader fullScreen={false} message="Preparing OCR Notes" sublabel="Fetching the active event, run group, and capture context..." />
+          </div>
+        </div>
       </ProtectedRoute>
     );
   }
 
-  if (pageError && !event) {
+  if (!event) {
     return (
-      <ProtectedRoute requireDriver={true}>
+      <ProtectedRoute allowedRoles={["OWNER", "ADMIN", "MECHANIC", "DRIVER"]}>
         <div className="ocr-notes-page">
           <div className="ocr-notes-orb ocr-notes-orb-one" />
           <div className="ocr-notes-orb ocr-notes-orb-two" />
-
           <div className="ocr-notes-shell ocr-notes-state-shell">
             <div className="ocr-notes-state-card">
               <div className="ocr-notes-state-icon danger">
                 <WarningAmberRoundedIcon fontSize="inherit" />
               </div>
-              <p className="ocr-notes-eyebrow">
-                <DocumentScannerRoundedIcon fontSize="inherit" />
-                OCR Flow
-              </p>
-              <h1>OCR Notes unavailable</h1>
-              <p>{pageError}</p>
+              <p className="ocr-notes-eyebrow">OCR Notes</p>
+              <h1>Unable to load the OCR workspace</h1>
+              <p>{pageError || "The event context could not be loaded. Return to the events list or retry."}</p>
+
               <div className="ocr-notes-state-actions">
                 <button type="button" className="ocr-notes-button-primary" onClick={loadPageData}>
                   Retry Load
@@ -670,7 +1427,7 @@ export default function OCRNotesPage() {
   }
 
   return (
-    <ProtectedRoute requireDriver={true}>
+    <ProtectedRoute allowedRoles={["OWNER", "ADMIN", "MECHANIC", "DRIVER"]}>
       <div className="ocr-notes-page">
         <div className="ocr-notes-orb ocr-notes-orb-one" />
         <div className="ocr-notes-orb ocr-notes-orb-two" />
@@ -678,34 +1435,25 @@ export default function OCRNotesPage() {
         <div className="ocr-notes-shell">
           <header className="ocr-notes-topbar">
             <div className="ocr-notes-topbar-copy">
-              <ScreenBackButton fallbackHref={`/event/${routeEventId}`} label="Back" />
+              <ScreenBackButton fallbackHref={`/event/${routeEventId}`} label="Back to Event" />
               <p className="ocr-notes-eyebrow">
                 <DocumentScannerRoundedIcon fontSize="inherit" />
                 OCR Flow
               </p>
               <h1 className="ocr-notes-title">OCR Notes</h1>
               <p className="ocr-notes-subtitle">
-                Upload setup sheets or handwritten notes, extract values, and review before submission.
+                Upload a setup sheet or handwritten notes image, extract the draft first, then review and correct the
+                captured values before sending anything into the review pipeline.
               </p>
             </div>
 
             <div className="ocr-notes-topbar-meta">
               <div className="ocr-notes-badge-row">
-                <StatusBadge
-                  label={submissionState.isOpen ? "Event Open" : "Event Closed"}
-                  tone={submissionState.isOpen ? "success" : "neutral"}
-                />
-                <StatusBadge
-                  label={hasRunGroup ? "Run Group Ready" : "Run Group Missing"}
-                  tone={hasRunGroup ? "success" : "warning"}
-                />
+                <StatusBadge status={submissionState.isOpen ? "active" : "inactive"} />
+                <StatusBadge status={hasRunGroup ? "active" : "warning"} label={hasRunGroup ? "Run Group Ready" : "Run Group Missing"} />
               </div>
-              <button
-                type="button"
-                className="ocr-notes-refresh"
-                onClick={loadPageData}
-                disabled={loading}
-              >
+
+              <button type="button" className="ocr-notes-refresh" onClick={loadPageData} disabled={activeAsyncState}>
                 <RefreshRoundedIcon fontSize="inherit" />
                 Refresh Context
               </button>
@@ -719,503 +1467,922 @@ export default function OCRNotesPage() {
             </div>
             <div className="ocr-notes-context-item">
               <span>Track</span>
-              <strong>{eventTrack || "Not provided"}</strong>
+              <strong>{eventTrack || "Pending track"}</strong>
             </div>
             <div className="ocr-notes-context-item">
               <span>Run Group</span>
-              <strong>{hasRunGroup ? runGroupValue : "Not Configured"}</strong>
+              <strong>{runGroupValue}</strong>
             </div>
             <div className="ocr-notes-context-item">
-              <span>Date Range</span>
-              <strong>{eventDates}</strong>
+              <span>Window</span>
+              <strong>{eventDates || "Dates pending"}</strong>
             </div>
           </section>
 
           <section className="ocr-notes-status-strip">
             <div className="ocr-notes-status-item">
-              <span>Capture State</span>
-              <strong>{canSubmitOcr ? "Ready to Submit" : "Read Only"}</strong>
+              <span>OCR Status</span>
+              <strong>{workflowPresentation.label}</strong>
             </div>
             <div className="ocr-notes-status-item">
-              <span>Image Review</span>
-              <strong>{imageDataUrl ? "Attachment Ready" : "Waiting for Upload"}</strong>
+              <span>Confidence</span>
+              <strong>{typeof reviewDraft.confidence === "number" ? `${Math.round(reviewDraft.confidence * 100)}%` : "Pending extract"}</strong>
+            </div>
+            <div className="ocr-notes-status-item">
+              <span>Review Flags</span>
+              <strong>{reviewDraft.reviewFlags.length > 0 ? `${reviewDraft.reviewFlags.length} flagged` : "No flags yet"}</strong>
             </div>
             <div className="ocr-notes-status-item">
               <span>Session ID</span>
-              <strong>{normalizeText(formState.session_id) || "Will generate automatically"}</strong>
-            </div>
-            <div className="ocr-notes-status-item">
-              <span>Submission Notes</span>
-              <strong>{normalizeText(formState.notes) ? "Included" : "Optional"}</strong>
+              <strong>{generatedSessionId || "Generated on submit"}</strong>
             </div>
           </section>
 
           <p className="ocr-notes-status-note">{submissionWindowNote}</p>
 
-          {!submissionState.isOpen ? (
-            <div className="ocr-notes-banner neutral">
-              <PendingActionsRoundedIcon fontSize="inherit" />
-              <div>
-                <strong>Submission window closed.</strong>
-                <span>This event is outside the active submission window, so OCR-backed submissions are read only.</span>
-              </div>
+          <div className="ocr-notes-banner neutral">
+            <DocumentScannerRoundedIcon fontSize="inherit" />
+            <div>
+              <strong>Extract first, then review</strong>
+              <span>
+                This OCR flow keeps the initial intake light. The editable setup sections appear only after the OCR
+                draft is returned.
+              </span>
             </div>
-          ) : null}
+          </div>
 
           {!hasRunGroup ? (
             <div className="ocr-notes-banner warning">
               <WarningAmberRoundedIcon fontSize="inherit" />
               <div>
-                <strong>Run group required.</strong>
+                <strong>Run group missing</strong>
                 <span>Configure the event run group before drivers or mechanics start the OCR flow.</span>
               </div>
             </div>
           ) : null}
 
-          {submissionStatus === "sent" ? (
+          {draftRestored ? (
             <div className="ocr-notes-banner success">
               <CheckCircleRoundedIcon fontSize="inherit" />
               <div>
-                <strong>OCR note submitted.</strong>
-                <span>{submissionFeedback}</span>
+                <strong>Draft restored</strong>
+                <span>Your last OCR draft for this event was restored from this device.</span>
               </div>
             </div>
           ) : null}
 
-          {submissionStatus === "sent_with_warnings" ? (
-            <div className="ocr-notes-banner warning" data-testid="ocr-submission-warning">
+          {workflowMessage ? (
+            <div
+              className={`ocr-notes-banner${
+                effectiveWorkflowState === "submit_success" || effectiveWorkflowState === "draft_saved"
+                  ? " success"
+                  : effectiveWorkflowState === "extract_failed" || effectiveWorkflowState === "submit_failed"
+                    ? " danger"
+                    : " neutral"
+              }`}
+            >
+              {effectiveWorkflowState === "submit_success" || effectiveWorkflowState === "draft_saved" ? (
+                <CheckCircleRoundedIcon fontSize="inherit" />
+              ) : (
+                <PendingActionsRoundedIcon fontSize="inherit" />
+              )}
+              <div>
+                <strong>{workflowPresentation.label}</strong>
+                <span>{workflowMessage}</span>
+              </div>
+            </div>
+          ) : null}
+
+          {submissionWarnings.length > 0 ? (
+            <div className="ocr-notes-banner warning" data-testid="ocr-review-warnings">
               <WarningAmberRoundedIcon fontSize="inherit" />
               <div>
-                <strong>OCR note staged with review warnings.</strong>
-                <span>{submissionFeedback}</span>
-                {submissionWarnings.length ? (
-                  <ul className="ocr-notes-banner-list">
-                    {submissionWarnings.map((warning, index) => (
-                      <li key={`${warning?.code || "ocr-warning"}-${index}`}>{formatStructuredWarning(warning)}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                <strong>Review warnings</strong>
+                <span>The submission was accepted, but there are warnings to review.</span>
+                <ul className="ocr-notes-banner-list">
+                  {submissionWarnings.map((warning, index) => (
+                    <li key={`${warning?.code || "warning"}-${index}`}>
+                      {warning?.field ? `${warning.field}: ` : ""}
+                      {warning?.message || "Submission completed with a warning."}
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           ) : null}
 
-          {submissionStatus === "pending" && isSubmitting ? (
-            <div className="ocr-notes-banner neutral">
-              <PendingActionsRoundedIcon fontSize="inherit" />
-              <div>
-                <strong>Submitting OCR note.</strong>
-                <span>Uploading the image and linking the session context now.</span>
-              </div>
-            </div>
-          ) : null}
-
-          {pageError && event ? (
-            <div className="ocr-notes-banner danger" data-testid="ocr-submission-error">
+          {pageError ? (
+            <div className="ocr-notes-banner danger" data-testid="ocr-review-error">
               <WarningAmberRoundedIcon fontSize="inherit" />
               <div>
-                <strong>Unable to continue.</strong>
+                <strong>Action required</strong>
                 <span>{pageError}</span>
               </div>
             </div>
           ) : null}
 
-          <form onSubmit={handleSubmit}>
-            <section className="ocr-notes-main-grid">
-              <div className="ocr-notes-panel">
-                <div className="ocr-notes-panel-head">
-                  <div>
-                    <p className="ocr-notes-panel-eyebrow">Required Details</p>
-                    <h2>Session context</h2>
-                  </div>
-                  <StatusBadge label={canSubmitOcr ? "Driver Ready" : "Read Only"} tone={canSubmitOcr ? "success" : "neutral"} />
+          <section className="ocr-notes-main-grid">
+            <div className="ocr-notes-panel">
+              <div className="ocr-notes-panel-head">
+                <div>
+                  <p className="ocr-notes-panel-eyebrow">Stage 1</p>
+                  <h2>Minimal intake</h2>
                 </div>
-
-                <div className="ocr-notes-form-grid">
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-date">Date</label>
-                    <input
-                      id="ocr-submission-date"
-                      data-testid="ocr-submission-date"
-                      className={getFieldClassName("ocr-notes-input", "date")}
-                      type="date"
-                      value={formState.date}
-                      onChange={(eventLike) => handleFieldChange("date", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.date)}
-                    />
-                    {fieldErrors.date ? <p className="ocr-notes-field-error">{fieldErrors.date}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-time">Time</label>
-                    <input
-                      id="ocr-submission-time"
-                      data-testid="ocr-submission-time"
-                      className={getFieldClassName("ocr-notes-input", "time")}
-                      type="time"
-                      step="60"
-                      value={formState.time}
-                      onChange={(eventLike) => handleFieldChange("time", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.time)}
-                    />
-                    {fieldErrors.time ? <p className="ocr-notes-field-error">{fieldErrors.time}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field ocr-notes-field-wide">
-                    <label htmlFor="ocr-submission-session-id">Session ID</label>
-                    <input
-                      id="ocr-submission-session-id"
-                      data-testid="ocr-submission-session-id"
-                      className={getFieldClassName("ocr-notes-input", "session_id")}
-                      type="text"
-                      value={formState.session_id}
-                      onChange={(eventLike) => {
-                        setSessionIdMode("manual");
-                        handleFieldChange("session_id", eventLike.target.value.toUpperCase());
-                      }}
-                      placeholder="YYYYMMDD-HHMM-DRIVERID-S1"
-                      maxLength={120}
-                      spellCheck={false}
-                      autoComplete="off"
-                      aria-invalid={Boolean(fieldErrors.session_id)}
-                    />
-                    <div className="ocr-notes-inline-actions">
-                      <p className="ocr-notes-field-hint">
-                        Auto-generated from date, time, driver, and session number. You can still edit it.
-                      </p>
-                      <button
-                        type="button"
-                        className="ocr-notes-inline-button"
-                        onClick={() => {
-                          setSessionIdMode("auto");
-                          handleFieldChange("session_id", generatedSessionId);
-                        }}
-                      >
-                        Use Generated ID
-                      </button>
-                    </div>
-                    {fieldErrors.session_id ? <p className="ocr-notes-field-error">{fieldErrors.session_id}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field ocr-notes-field-wide">
-                    <label htmlFor="ocr-submission-track">Track</label>
-                    <input
-                      id="ocr-submission-track"
-                      data-testid="ocr-submission-track"
-                      className={getFieldClassName("ocr-notes-input", "track")}
-                      type="text"
-                      value={formState.track}
-                      onChange={(eventLike) => handleFieldChange("track", eventLike.target.value)}
-                      placeholder="Enter the active track"
-                      aria-invalid={Boolean(fieldErrors.track)}
-                    />
-                    {fieldErrors.track ? <p className="ocr-notes-field-error">{fieldErrors.track}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label id="ocr-submission-driver-label" htmlFor="ocr-submission-driver">
-                      Driver
-                    </label>
-                    <Select value={formState.driver_id} onValueChange={(value) => handleFieldChange("driver_id", value)}>
-                      <SelectTrigger
-                        id="ocr-submission-driver"
-                        data-testid="ocr-submission-driver"
-                        aria-invalid={Boolean(fieldErrors.driver_id)}
-                        aria-labelledby="ocr-submission-driver-label"
-                        className={getFieldClassName("ocr-notes-select-trigger", "driver_id")}
-                      >
-                        <SelectValue placeholder="Select driver" />
-                      </SelectTrigger>
-                      <SelectContent
-                        position="popper"
-                        align="start"
-                        className="ocr-notes-select-content"
-                      >
-                        {driverOptions.map((driver) => (
-                          <SelectItem
-                            key={driver.id}
-                            value={driver.id}
-                            className="ocr-notes-select-item"
-                          >
-                            {driver.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {fieldErrors.driver_id ? <p className="ocr-notes-field-error">{fieldErrors.driver_id}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label id="ocr-submission-vehicle-label" htmlFor="ocr-submission-vehicle">
-                      Vehicle
-                    </label>
-                    <Select value={formState.vehicle_id} onValueChange={(value) => handleFieldChange("vehicle_id", value)}>
-                      <SelectTrigger
-                        id="ocr-submission-vehicle"
-                        data-testid="ocr-submission-vehicle"
-                        aria-invalid={Boolean(fieldErrors.vehicle_id)}
-                        aria-labelledby="ocr-submission-vehicle-label"
-                        className={getFieldClassName("ocr-notes-select-trigger", "vehicle_id")}
-                      >
-                        <SelectValue placeholder="Select vehicle" />
-                      </SelectTrigger>
-                      <SelectContent
-                        position="popper"
-                        align="start"
-                        className="ocr-notes-select-content"
-                      >
-                        {vehicleOptionsForDriver.map((vehicle) => (
-                          <SelectItem
-                            key={vehicle.id}
-                            value={vehicle.id}
-                            className="ocr-notes-select-item"
-                          >
-                            {vehicle.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {fieldErrors.vehicle_id ? <p className="ocr-notes-field-error">{fieldErrors.vehicle_id}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label id="ocr-submission-session-type-label" htmlFor="ocr-submission-session-type">
-                      Session Type
-                    </label>
-                    <Select value={formState.session_type} onValueChange={(value) => handleFieldChange("session_type", value)}>
-                      <SelectTrigger
-                        id="ocr-submission-session-type"
-                        data-testid="ocr-submission-session-type"
-                        aria-invalid={Boolean(fieldErrors.session_type)}
-                        aria-labelledby="ocr-submission-session-type-label"
-                        className={getFieldClassName("ocr-notes-select-trigger", "session_type")}
-                      >
-                        <SelectValue placeholder="Select session type" />
-                      </SelectTrigger>
-                      <SelectContent
-                        position="popper"
-                        align="start"
-                        className="ocr-notes-select-content"
-                      >
-                        {SESSION_TYPE_OPTIONS.map((option) => (
-                          <SelectItem
-                            key={option.id}
-                            value={option.id}
-                            className="ocr-notes-select-item"
-                          >
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {fieldErrors.session_type ? <p className="ocr-notes-field-error">{fieldErrors.session_type}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-session-number">Session Number</label>
-                    <input
-                      id="ocr-submission-session-number"
-                      data-testid="ocr-submission-session-number"
-                      className={getFieldClassName("ocr-notes-input", "session_number")}
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={formState.session_number}
-                      onChange={(eventLike) => handleFieldChange("session_number", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.session_number)}
-                    />
-                    {fieldErrors.session_number ? <p className="ocr-notes-field-error">{fieldErrors.session_number}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-duration">Duration (min)</label>
-                    <input
-                      id="ocr-submission-duration"
-                      data-testid="ocr-submission-duration"
-                      className={getFieldClassName("ocr-notes-input", "duration_min")}
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={formState.duration_min}
-                      onChange={(eventLike) => handleFieldChange("duration_min", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.duration_min)}
-                    />
-                    {fieldErrors.duration_min ? <p className="ocr-notes-field-error">{fieldErrors.duration_min}</p> : null}
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-tire-set">Tire Set</label>
-                    <input
-                      id="ocr-submission-tire-set"
-                      data-testid="ocr-submission-tire-set"
-                      className="ocr-notes-input"
-                      type="text"
-                      value={formState.tire_set}
-                      onChange={(eventLike) => handleFieldChange("tire_set", eventLike.target.value)}
-                      placeholder="Optional"
-                    />
-                  </div>
-
-                  <div className="ocr-notes-field">
-                    <label htmlFor="ocr-submission-wheelbase">Wheelbase (mm)</label>
-                    <input
-                      id="ocr-submission-wheelbase"
-                      data-testid="ocr-submission-wheelbase"
-                      className={getFieldClassName("ocr-notes-input", "wheelbase_mm")}
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={formState.wheelbase_mm}
-                      onChange={(eventLike) => handleFieldChange("wheelbase_mm", eventLike.target.value)}
-                      aria-invalid={Boolean(fieldErrors.wheelbase_mm)}
-                    />
-                    {fieldErrors.wheelbase_mm ? <p className="ocr-notes-field-error">{fieldErrors.wheelbase_mm}</p> : null}
-                  </div>
-                </div>
+                <PendingActionsRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
               </div>
 
-              <div className="ocr-notes-panel">
-                <div className="ocr-notes-panel-head">
-                  <div>
-                    <p className="ocr-notes-panel-eyebrow">OCR Capture</p>
-                    <h2>Upload and review</h2>
-                  </div>
-                  <PhotoCameraBackRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
+              <p className="ocr-notes-panel-copy">
+                Keep the manual context light before OCR. Event and run group stay fixed while track, session, driver,
+                and vehicle can be filled only if they help extraction or review.
+              </p>
+
+              <div className="ocr-notes-form-grid">
+                <div className="ocr-notes-field ocr-notes-field-wide">
+                  <label htmlFor="ocr-submission-track">Track</label>
+                  <input
+                    id="ocr-submission-track"
+                    data-testid="ocr-submission-track"
+                    className={getFieldClassName("ocr-notes-input", "track")}
+                    type="text"
+                    value={intakeState.track}
+                    onChange={(eventLike) => handleIntakeChange("track", eventLike.target.value)}
+                    placeholder="Prefilled from event when available"
+                  />
                 </div>
 
-                <p className="ocr-notes-panel-copy">
-                  Attach a setup sheet or handwritten notes image. The OCR flow will preserve the event, run group,
-                  driver, vehicle, and session metadata with the uploaded file.
-                </p>
-
-                <div className="ocr-notes-upload-shell">
-                  <label className={`ocr-notes-upload-dropzone${fieldErrors.image ? " input-error" : ""}`}>
-                    <input
-                      data-testid="ocr-submission-image-input"
-                      className="ocr-notes-upload-input"
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageChange}
-                    />
-                    <UploadFileRoundedIcon fontSize="inherit" />
-                    <strong>{imageName || "Upload setup sheet or handwritten note"}</strong>
-                    <span>PNG, JPG, or WEBP images are accepted here.</span>
+                <div className="ocr-notes-field">
+                  <label id="ocr-submission-driver-label" htmlFor="ocr-submission-driver">
+                    Driver
                   </label>
-                  {fieldErrors.image ? <p className="ocr-notes-field-error">{fieldErrors.image}</p> : null}
+                  <Select value={intakeState.driver_id} onValueChange={(value) => handleIntakeChange("driver_id", value)}>
+                    <SelectTrigger
+                      id="ocr-submission-driver"
+                      data-testid="ocr-submission-driver"
+                      aria-labelledby="ocr-submission-driver-label"
+                      className={getFieldClassName("ocr-notes-select-trigger", "driver_id")}
+                    >
+                      <SelectValue placeholder="Optional driver" />
+                    </SelectTrigger>
+                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                      {driverOptions.map((driver) => (
+                        <SelectItem key={driver.id} value={driver.id} className="ocr-notes-select-item">
+                          {driver.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <div className="ocr-notes-preview-shell">
-                  {imageDataUrl ? (
-                    <>
-                      <Image
-                        src={imageDataUrl}
-                        alt="OCR note preview"
-                        className="ocr-notes-preview-image"
-                        width={1200}
-                        height={900}
-                        unoptimized
-                      />
-                      <button type="button" className="ocr-notes-inline-button" onClick={() => {
-                        setImageDataUrl(null);
-                        setImageName("");
-                      }}>
-                        Remove Image
-                      </button>
-                    </>
-                  ) : (
-                    <div className="ocr-notes-preview-empty">
-                      <DocumentScannerRoundedIcon fontSize="inherit" />
-                      <span>No image selected yet.</span>
-                    </div>
-                  )}
+                <div className="ocr-notes-field">
+                  <label id="ocr-submission-vehicle-label" htmlFor="ocr-submission-vehicle">
+                    Vehicle
+                  </label>
+                  <Select value={intakeState.vehicle_id} onValueChange={(value) => handleIntakeChange("vehicle_id", value)}>
+                    <SelectTrigger
+                      id="ocr-submission-vehicle"
+                      data-testid="ocr-submission-vehicle"
+                      aria-labelledby="ocr-submission-vehicle-label"
+                      className={getFieldClassName("ocr-notes-select-trigger", "vehicle_id")}
+                    >
+                      <SelectValue placeholder="Optional vehicle" />
+                    </SelectTrigger>
+                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                      {vehicleOptionsForDriver.map((vehicle) => (
+                        <SelectItem key={vehicle.id} value={vehicle.id} className="ocr-notes-select-item">
+                          {vehicle.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="ocr-notes-field">
+                  <label id="ocr-submission-session-type-label" htmlFor="ocr-submission-session-type">
+                    Session Type
+                  </label>
+                  <Select value={intakeState.session_type} onValueChange={(value) => handleIntakeChange("session_type", value)}>
+                    <SelectTrigger
+                      id="ocr-submission-session-type"
+                      data-testid="ocr-submission-session-type"
+                      aria-labelledby="ocr-submission-session-type-label"
+                      className="ocr-notes-select-trigger"
+                    >
+                      <SelectValue placeholder="Select session type" />
+                    </SelectTrigger>
+                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                      {SESSION_TYPE_OPTIONS.map((option) => (
+                        <SelectItem key={option.id} value={option.id} className="ocr-notes-select-item">
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="ocr-notes-field">
+                  <label htmlFor="ocr-submission-session-number">Session Number</label>
+                  <input
+                    id="ocr-submission-session-number"
+                    data-testid="ocr-submission-session-number"
+                    className="ocr-notes-input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={intakeState.session_number}
+                    onChange={(eventLike) => handleIntakeChange("session_number", eventLike.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+
+                <div className="ocr-notes-field">
+                  <label htmlFor="ocr-submission-date">Date</label>
+                  <input
+                    id="ocr-submission-date"
+                    data-testid="ocr-submission-date"
+                    className="ocr-notes-input"
+                    type="date"
+                    value={intakeState.date}
+                    onChange={(eventLike) => handleIntakeChange("date", eventLike.target.value)}
+                  />
+                  <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
+                </div>
+
+                <div className="ocr-notes-field">
+                  <label htmlFor="ocr-submission-time">Time</label>
+                  <input
+                    id="ocr-submission-time"
+                    data-testid="ocr-submission-time"
+                    className="ocr-notes-input"
+                    type="time"
+                    value={intakeState.time}
+                    onChange={(eventLike) => handleIntakeChange("time", eventLike.target.value)}
+                  />
+                  <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
+                </div>
+
+                <div className="ocr-notes-field">
+                  <label htmlFor="ocr-submission-duration">Duration (min)</label>
+                  <input
+                    id="ocr-submission-duration"
+                    data-testid="ocr-submission-duration"
+                    className="ocr-notes-input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={intakeState.duration_min}
+                    onChange={(eventLike) => handleIntakeChange("duration_min", eventLike.target.value)}
+                    placeholder="Optional"
+                  />
                 </div>
 
                 <div className="ocr-notes-field ocr-notes-field-wide">
-                  <label htmlFor="ocr-submission-notes">Additional Notes</label>
+                  <label htmlFor="ocr-submission-notes">Short Context</label>
                   <textarea
                     id="ocr-submission-notes"
                     data-testid="ocr-submission-notes"
                     className="ocr-notes-textarea"
-                    rows={6}
-                    value={formState.notes}
-                    onChange={(eventLike) => handleFieldChange("notes", eventLike.target.value)}
-                    placeholder="Optional context to accompany the uploaded sheet before review."
+                    rows={5}
+                    value={intakeState.notes}
+                    onChange={(eventLike) => handleIntakeChange("notes", eventLike.target.value)}
+                    placeholder="Optional callouts before extraction, like tire condition or handwriting notes."
                   />
                   <p className="ocr-notes-field-hint">
-                    Add a short summary, corrections, or callouts that should travel with the OCR-backed submission.
+                    Keep this brief. The OCR image remains the primary source and the extracted draft appears next.
                   </p>
                 </div>
+              </div>
+            </div>
 
-                <div className="ocr-notes-review-card">
-                  <p className="ocr-notes-panel-eyebrow">Review Snapshot</p>
-                  <ul className="ocr-notes-review-list">
-                    <li>
-                      <span>Event</span>
-                      <strong>{event?.name || "Unknown event"}</strong>
-                    </li>
-                    <li>
-                      <span>Run Group</span>
-                      <strong>{hasRunGroup ? runGroupValue : "Not Configured"}</strong>
-                    </li>
-                    <li>
-                      <span>Driver</span>
-                      <strong>{selectedDriverLabel}</strong>
-                    </li>
-                    <li>
-                      <span>Vehicle</span>
-                      <strong>{selectedVehicleLabel}</strong>
-                    </li>
-                    <li>
-                      <span>Session</span>
-                      <strong>
-                        {normalizeText(formState.session_type) || "Session type"} / S
-                        {String(formState.session_number || "").trim() || "-"}
-                      </strong>
-                    </li>
-                    <li>
-                      <span>Attachment</span>
-                      <strong>{imageName || "Not selected"}</strong>
-                    </li>
-                  </ul>
+            <div className="ocr-notes-panel">
+              <div className="ocr-notes-panel-head">
+                <div>
+                  <p className="ocr-notes-panel-eyebrow">Stage 2</p>
+                  <h2>OCR capture and status</h2>
+                </div>
+                <PhotoCameraBackRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
+              </div>
+
+              <p className="ocr-notes-panel-copy">
+                Upload one setup sheet or handwritten note image, extract the OCR draft, and then review the values on
+                this same screen before anything is submitted.
+              </p>
+
+              <div className="ocr-notes-upload-shell">
+                <label
+                  className={`ocr-notes-upload-dropzone${fieldErrors.image ? " input-error" : ""}${dropzoneActive ? " is-active" : ""}`}
+                  onDragOver={(eventLike) => {
+                    eventLike.preventDefault();
+                    setDropzoneActive(true);
+                  }}
+                  onDragLeave={() => setDropzoneActive(false)}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    data-testid="ocr-submission-image-input"
+                    className="ocr-notes-upload-input"
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp"
+                    onChange={handleImageInputChange}
+                  />
+                  <UploadFileRoundedIcon fontSize="inherit" />
+                  <strong>{imageName || "Upload setup sheet or handwritten note"}</strong>
+                  <span>Drag and drop or click to upload a JPG, PNG, or WEBP image.</span>
+                </label>
+                {fieldErrors.image ? <p className="ocr-notes-field-error">{fieldErrors.image}</p> : null}
+                {fieldErrors.extract ? <p className="ocr-notes-field-error">{fieldErrors.extract}</p> : null}
+                {fieldErrors.driver_vehicle ? <p className="ocr-notes-field-error">{fieldErrors.driver_vehicle}</p> : null}
+              </div>
+
+              <div className="ocr-notes-preview-shell">
+                {imageDataUrl ? (
+                  <>
+                    <Image
+                      src={imageDataUrl}
+                      alt="OCR note preview"
+                      className="ocr-notes-preview-image"
+                      width={1200}
+                      height={900}
+                      unoptimized
+                    />
+                    <div className="ocr-notes-inline-actions">
+                      <p className="ocr-notes-field-hint">The current OCR flow uses a single image at a time for extraction and review.</p>
+                      <button type="button" className="ocr-notes-inline-button" onClick={handleRemoveImage}>
+                        Remove Image
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="ocr-notes-preview-empty">
+                    <DocumentScannerRoundedIcon fontSize="inherit" />
+                    <span>No image selected yet.</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="ocr-notes-review-card">
+                <p className="ocr-notes-panel-eyebrow">Review Snapshot</p>
+                <ul className="ocr-notes-review-list">
+                  <li>
+                    <span>Driver</span>
+                    <strong>{selectedDriverLabel}</strong>
+                  </li>
+                  <li>
+                    <span>Vehicle</span>
+                    <strong>{selectedVehicleLabel}</strong>
+                  </li>
+                  <li>
+                    <span>Session</span>
+                    <strong>
+                      {normalizeText(intakeState.session_type) || "Session type"} / S
+                      {normalizeText(intakeState.session_number) || "-"}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>Doc Type</span>
+                    <strong>{reviewDraft.docType === "unknown" ? "Pending extract" : reviewDraft.docType.replace(/_/g, " ")}</strong>
+                  </li>
+                  <li>
+                    <span>Flags</span>
+                    <strong>{reviewDraft.reviewFlags.length > 0 ? `${reviewDraft.reviewFlags.length} flagged` : "None"}</strong>
+                  </li>
+                  <li>
+                    <span>Attachment</span>
+                    <strong>{imageName || "Not selected"}</strong>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="ocr-notes-status-card">
+                <div className="ocr-notes-status-card-head">
+                  <strong>OCR runtime state</strong>
+                  {hasExtractedDraft && hasImage ? (
+                    <button
+                      type="button"
+                      className="ocr-notes-inline-button"
+                      onClick={() => handleExtract({ rerun: true })}
+                      disabled={activeAsyncState || !canSubmitOcr}
+                    >
+                      {workflowState === "rerunning_ocr" ? "Rerunning..." : "Rerun OCR"}
+                    </button>
+                  ) : null}
+                </div>
+                <p>{workflowPresentation.note}</p>
+
+                {reviewDraft.reviewFlags.length > 0 ? (
+                  <div className="ocr-notes-flag-row">
+                    {reviewDraft.reviewFlags.map((flag, index) => (
+                      <span key={`${flag}-${index}`} className="ocr-notes-flag-chip">
+                        {flag}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ocr-notes-field-hint">Any OCR warnings or ambiguous labels will appear here after extraction.</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {hasExtractedDraft ? (
+            <section className="ocr-notes-review-workspace" data-testid="ocr-review-sections">
+              <div className="ocr-notes-panel">
+                <div className="ocr-notes-panel-head">
+                  <div>
+                    <p className="ocr-notes-panel-eyebrow">Stage 3</p>
+                    <h2>Editable OCR review</h2>
+                  </div>
+                  <DocumentScannerRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
+                </div>
+
+                <p className="ocr-notes-panel-copy">
+                  The OCR draft is editable. Resolve ambiguous handwriting, correct setup values, and keep the note in
+                  review mode until the team validates it downstream.
+                </p>
+
+                <div className="ocr-notes-review-grid">
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Ride Height</h3>
+                      <span>Editable OCR values</span>
+                    </div>
+                    <div className="ocr-notes-matrix-grid">
+                      {[
+                        ["rh_fl", "RH FL"],
+                        ["rh_fr", "RH FR"],
+                        ["rh_rl", "RH RL"],
+                        ["rh_rr", "RH RR"],
+                      ].map(([field, label]) => (
+                        <label key={field} className="ocr-notes-mini-field">
+                          <span>{label}</span>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.alignment[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                alignment: {
+                                  ...prev.alignment,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Camber</h3>
+                      <span>Front and rear corners</span>
+                    </div>
+                    <div className="ocr-notes-matrix-grid">
+                      {[
+                        ["camber_fl", "Camber FL"],
+                        ["camber_fr", "Camber FR"],
+                        ["camber_rl", "Camber RL"],
+                        ["camber_rr", "Camber RR"],
+                      ].map(([field, label]) => (
+                        <label key={field} className="ocr-notes-mini-field">
+                          <span>{label}</span>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.alignment[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                alignment: {
+                                  ...prev.alignment,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Toe</h3>
+                      <span>Review mapped front and rear values</span>
+                    </div>
+                    <div className="ocr-notes-matrix-grid">
+                      {[
+                        ["toe_fl", "Toe FL"],
+                        ["toe_fr", "Toe FR"],
+                        ["toe_rl", "Toe RL"],
+                        ["toe_rr", "Toe RR"],
+                      ].map(([field, label]) => (
+                        <label key={field} className="ocr-notes-mini-field">
+                          <span>{label}</span>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.alignment[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                alignment: {
+                                  ...prev.alignment,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Wheelbase and Alignment</h3>
+                      <span>Keep extracted geometry editable</span>
+                    </div>
+                    <div className="ocr-notes-form-grid">
+                      {[
+                        ["wheelbase_mm", "Wheelbase (mm)"],
+                        ["caster_l", "Caster L"],
+                        ["caster_r", "Caster R"],
+                        ["rake_mm", "Rake (mm)"],
+                      ].map(([field, label]) => (
+                        <div key={field} className="ocr-notes-field">
+                          <label>{label}</label>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.alignment[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                alignment: {
+                                  ...prev.alignment,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Pressures</h3>
+                      <span>Cold and hot tire pressures</span>
+                    </div>
+                    <div className="ocr-notes-pressure-grid">
+                      {[
+                        ["cold", "Cold"],
+                        ["hot", "Hot"],
+                      ].map(([phaseKey, phaseLabel]) => (
+                        <div key={phaseKey} className="ocr-notes-pressure-panel">
+                          <strong>{phaseLabel}</strong>
+                          <div className="ocr-notes-matrix-grid">
+                            {[
+                              ["fl", "FL"],
+                              ["fr", "FR"],
+                              ["rl", "RL"],
+                              ["rr", "RR"],
+                            ].map(([cornerKey, cornerLabel]) => (
+                              <label key={`${phaseKey}-${cornerKey}`} className="ocr-notes-mini-field">
+                                <span>{cornerLabel}</span>
+                                <input
+                                  className="ocr-notes-input"
+                                  type="text"
+                                  value={reviewDraft.pressures[phaseKey][cornerKey]}
+                                  onChange={(eventLike) =>
+                                    handleReviewEdit((prev) => ({
+                                      ...prev,
+                                      pressures: {
+                                        ...prev.pressures,
+                                        [phaseKey]: {
+                                          ...prev.pressures[phaseKey],
+                                          [cornerKey]: eventLike.target.value,
+                                        },
+                                      },
+                                    }))
+                                  }
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Suspension / Shocks</h3>
+                      <span>Rebound, bump, bars, and wing</span>
+                    </div>
+                    <div className="ocr-notes-form-grid">
+                      {[
+                        ["rebound_fl", "Rebound FL"],
+                        ["rebound_fr", "Rebound FR"],
+                        ["rebound_rl", "Rebound RL"],
+                        ["rebound_rr", "Rebound RR"],
+                        ["bump_fl", "Bump FL"],
+                        ["bump_fr", "Bump FR"],
+                        ["bump_rl", "Bump RL"],
+                        ["bump_rr", "Bump RR"],
+                        ["sway_bar_f", "Sway Bar F"],
+                        ["sway_bar_r", "Sway Bar R"],
+                        ["wing_angle_deg", "Wing Angle"],
+                      ].map(([field, label]) => (
+                        <div key={field} className="ocr-notes-field">
+                          <label>{label}</label>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.suspension[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                suspension: {
+                                  ...prev.suspension,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Client Sheet Fields</h3>
+                      <span>Template-specific setup labels and side-specific values</span>
+                    </div>
+                    <div className="ocr-notes-form-grid">
+                      {CLIENT_SHEET_FIELDS.map(([field, label]) => (
+                        <div key={field} className="ocr-notes-field">
+                          <label>{label}</label>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.sheetFields[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                sheetFields: {
+                                  ...prev.sheetFields,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Shock Setup Page</h3>
+                      <span>Dedicated RR, LR, LF, and RF shock-sheet values</span>
+                    </div>
+                    <div className="ocr-notes-pressure-grid">
+                      {SHOCK_SETUP_GROUPS.map(([cornerKey, cornerLabel]) => (
+                        <div key={cornerKey} className="ocr-notes-pressure-panel">
+                          <strong>{cornerLabel}</strong>
+                          <div className="ocr-notes-matrix-grid">
+                            {SHOCK_SETUP_FIELDS.map(([fieldKey, fieldLabel]) => {
+                              const field = `${cornerKey}_${fieldKey}`;
+                              return (
+                                <label key={field} className="ocr-notes-mini-field">
+                                  <span>{fieldLabel}</span>
+                                  <input
+                                    className="ocr-notes-input"
+                                    type="text"
+                                    value={reviewDraft.shockSetup[field]}
+                                    onChange={(eventLike) =>
+                                      handleReviewEdit((prev) => ({
+                                        ...prev,
+                                        shockSetup: {
+                                          ...prev.shockSetup,
+                                          [field]: eventLike.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>After Session / Template Notes</h3>
+                      <span>Keep the lower-sheet fields and long notes reviewable</span>
+                    </div>
+                    <div className="ocr-notes-form-grid">
+                      {POST_SESSION_FIELDS.map(([field, label]) => (
+                        <div key={field} className="ocr-notes-field">
+                          <label>{label}</label>
+                          <input
+                            className="ocr-notes-input"
+                            type="text"
+                            value={reviewDraft.postSession[field]}
+                            onChange={(eventLike) =>
+                              handleReviewEdit((prev) => ({
+                                ...prev,
+                                postSession: {
+                                  ...prev.postSession,
+                                  [field]: eventLike.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="ocr-notes-field ocr-notes-field-wide">
+                      <label>Template Notes Block</label>
+                      <textarea
+                        className="ocr-notes-textarea"
+                        rows={5}
+                        value={reviewDraft.sheetFields.notes_block}
+                        onChange={(eventLike) =>
+                          handleReviewEdit((prev) => ({
+                            ...prev,
+                            sheetFields: {
+                              ...prev.sheetFields,
+                              notes_block: eventLike.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Notes / Unstructured OCR</h3>
+                      <span>Preserve extracted context and freeform lines</span>
+                    </div>
+                    <div className="ocr-notes-field ocr-notes-field-wide">
+                      <label>Summary</label>
+                      <textarea
+                        className="ocr-notes-textarea"
+                        rows={3}
+                        value={reviewDraft.summary}
+                        onChange={(eventLike) =>
+                          handleReviewEdit((prev) => ({
+                            ...prev,
+                            summary: eventLike.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="ocr-notes-field ocr-notes-field-wide">
+                      <label>Unstructured OCR Output</label>
+                      <textarea
+                        className="ocr-notes-textarea"
+                        rows={6}
+                        value={reviewDraft.extractedText}
+                        onChange={(eventLike) =>
+                          handleReviewEdit((prev) => ({
+                            ...prev,
+                            extractedText: eventLike.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="ocr-notes-field ocr-notes-field-wide">
+                      <label>Review Notes</label>
+                      <textarea
+                        className="ocr-notes-textarea"
+                        rows={5}
+                        value={joinNotes(reviewDraft.notes)}
+                        onChange={(eventLike) =>
+                          handleReviewEdit((prev) => ({
+                            ...prev,
+                            notes: splitNotes(eventLike.target.value),
+                          }))
+                        }
+                        placeholder="One line per extracted note or correction."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ocr-notes-review-section">
+                    <div className="ocr-notes-review-section-head">
+                      <h3>Warnings and Review Flags</h3>
+                      <span>Keep ambiguous values visible</span>
+                    </div>
+                    <div className="ocr-notes-flag-row">
+                      {reviewDraft.reviewFlags.length > 0 ? (
+                        reviewDraft.reviewFlags.map((flag, index) => (
+                          <span key={`${flag}-${index}`} className="ocr-notes-flag-chip">
+                            {flag}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="ocr-notes-flag-chip subdued">No review flags returned from OCR.</span>
+                      )}
+                    </div>
+                    <div className="ocr-notes-metadata-list">
+                      <div>
+                        <span>Driver Text</span>
+                        <strong>{reviewDraft.metadata?.driver_text || "Not detected"}</strong>
+                      </div>
+                      <div>
+                        <span>Track Text</span>
+                        <strong>{reviewDraft.metadata?.track_text || "Not detected"}</strong>
+                      </div>
+                      <div>
+                        <span>Session Text</span>
+                        <strong>{reviewDraft.metadata?.session_text || "Not detected"}</strong>
+                      </div>
+                      <div>
+                        <span>Template</span>
+                        <strong>{reviewDraft.templateName || reviewDraft.metadata?.template_name || "Generic OCR"}</strong>
+                      </div>
+                      <div>
+                        <span>Review Status</span>
+                        <strong>{reviewDraft.recommendedReviewStatus || "PENDING"}</strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
+          ) : null}
 
-            <footer className="ocr-notes-footer">
-              <div className="ocr-notes-footer-copy">
-                <h3>Submit the OCR-backed note</h3>
-                <p>
-                  This creates an image-backed submission for the selected event and queues the OCR extraction review
-                  path without changing the typed Notes or Voice Submission flows.
-                </p>
-              </div>
+          <footer className="ocr-notes-footer">
+            <div className="ocr-notes-footer-copy">
+              <h3>Stage, save, or submit the OCR draft</h3>
+              <p>
+                The OCR flow now extracts first, then keeps the draft editable. Save it locally if you need to pause,
+                or submit the reviewed result for validation when it is ready.
+              </p>
+            </div>
 
-              <div className="ocr-notes-footer-actions">
-                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(`/event/${routeEventId}`)}>
-                  Back to Event
-                </button>
-                <button type="button" className="ocr-notes-button-secondary" onClick={resetForm}>
-                  Reset Form
-                </button>
-                <button
-                  type="submit"
-                  data-testid="ocr-submission-submit"
-                  className="ocr-notes-button-primary"
-                  disabled={isSubmitting || !canSubmitOcr}
-                >
-                  {isSubmitting ? "Submitting OCR Note..." : "Submit OCR Note"}
-                </button>
-              </div>
-            </footer>
-          </form>
+            <div className="ocr-notes-footer-actions">
+              <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(`/event/${routeEventId}`)}>
+                Back to Event
+              </button>
+              <button type="button" className="ocr-notes-button-secondary" onClick={resetForm} disabled={activeAsyncState}>
+                Reset Form
+              </button>
+              <button
+                type="button"
+                data-testid="ocr-save-draft-button"
+                className="ocr-notes-button-secondary"
+                onClick={handleSaveDraft}
+                disabled={activeAsyncState || (!hasImage && !hasExtractedDraft && !normalizeText(intakeState.notes))}
+              >
+                {workflowState === "saving_draft" ? "Saving Draft..." : "Save Draft"}
+              </button>
+              <button
+                type="button"
+                data-testid="ocr-extract-button"
+                className="ocr-notes-button-secondary"
+                onClick={() => handleExtract({ rerun: hasExtractedDraft })}
+                disabled={activeAsyncState || !hasImage || !canSubmitOcr}
+              >
+                {workflowState === "extracting"
+                  ? "Extracting..."
+                  : workflowState === "rerunning_ocr"
+                    ? "Rerunning..."
+                    : hasExtractedDraft
+                      ? "Rerun OCR"
+                      : "Extract Notes"}
+              </button>
+              <button
+                type="button"
+                data-testid="ocr-submit-review-button"
+                className="ocr-notes-button-primary"
+                onClick={handleSubmitForReview}
+                disabled={activeAsyncState || !hasExtractedDraft || !canSubmitOcr}
+              >
+                {workflowState === "submitting_review" ? "Submitting..." : "Submit for Review"}
+              </button>
+            </div>
+          </footer>
 
-          {(submissionStatus === "sent" || submissionStatus === "sent_with_warnings") && (
+          {workflowState === "submit_success" ? (
             <section className="ocr-notes-success-panel">
               <div className="ocr-notes-success-copy">
                 <p className="ocr-notes-panel-eyebrow">Next Steps</p>
-                <h2>Keep the submission flow moving</h2>
+                <h2>Keep the review workflow moving</h2>
                 <p>
-                  Open the event history to confirm the OCR-backed note, start another upload, or jump back into the
-                  typed notes flow without losing event context.
+                  Open submissions history to verify the staged OCR note, upload another setup sheet, or jump back into
+                  the typed notes flow without leaving the event context behind.
                 </p>
               </div>
 
@@ -1262,10 +2429,6 @@ export default function OCRNotesPage() {
                 </button>
               </div>
             </section>
-          )}
-
-          {validationAttempted && fieldErrors.run_group ? (
-            <p className="ocr-notes-inline-warning">{fieldErrors.run_group}</p>
           ) : null}
         </div>
       </div>

@@ -16,7 +16,7 @@ from app.models.vehicle import Vehicle
 
 logger = logging.getLogger(__name__)
 IMAGE_ANALYSIS_SCHEMA_NAME = "sm_racing_image_analysis"
-IMAGE_ANALYSIS_PARSER_VERSION = "sm-racing-image-analysis-v1"
+IMAGE_ANALYSIS_PARSER_VERSION = "sm-racing-image-analysis-v2"
 
 
 IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -27,6 +27,7 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["schedule", "setup_sheet", "session_note", "unknown"],
         },
+        "template_name": {"type": "string"},
         "confidence": {"type": "number"},
         "summary": {"type": "string"},
         "extracted_text": {"type": "string"},
@@ -196,8 +197,142 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
                         "rr_out",
                     ],
                 },
+                "sheet_fields": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "fuel_liters": {"type": "string"},
+                        "driver_weight_lbs": {"type": "string"},
+                        "scale_weight_lbs": {"type": "string"},
+                        "cross_weight_percent": {"type": "string"},
+                        "roll_bar_text": {"type": "string"},
+                        "spacer_text": {"type": "string"},
+                        "bump_text": {"type": "string"},
+                        "rebound_text": {"type": "string"},
+                        "springs_front": {"type": "string"},
+                        "springs_rear": {"type": "string"},
+                        "bump_stops_front": {"type": "string"},
+                        "bump_stops_rear": {"type": "string"},
+                        "wheelbase_left_mm": {"type": "string"},
+                        "wheelbase_right_mm": {"type": "string"},
+                        "wing_rake_deg": {"type": "string"},
+                        "wing_angle_deg": {"type": "string"},
+                        "wing_gurney_mm": {"type": "string"},
+                        "wicker_text": {"type": "string"},
+                        "specs_toe_text": {"type": "string"},
+                        "corner_weight_text": {"type": "string"},
+                        "static_ride_height_text": {"type": "string"},
+                        "bump_stop_height_text": {"type": "string"},
+                        "arb_front_text": {"type": "string"},
+                        "arb_rear_text": {"type": "string"},
+                        "fuel_pumped_out_liters": {"type": "string"},
+                        "notes_block": {"type": "string"},
+                    },
+                    "required": [
+                        "fuel_liters",
+                        "driver_weight_lbs",
+                        "scale_weight_lbs",
+                        "cross_weight_percent",
+                        "roll_bar_text",
+                        "spacer_text",
+                        "bump_text",
+                        "rebound_text",
+                        "springs_front",
+                        "springs_rear",
+                        "bump_stops_front",
+                        "bump_stops_rear",
+                        "wheelbase_left_mm",
+                        "wheelbase_right_mm",
+                        "wing_rake_deg",
+                        "wing_angle_deg",
+                        "wing_gurney_mm",
+                        "wicker_text",
+                        "specs_toe_text",
+                        "corner_weight_text",
+                        "static_ride_height_text",
+                        "bump_stop_height_text",
+                        "arb_front_text",
+                        "arb_rear_text",
+                        "fuel_pumped_out_liters",
+                        "notes_block",
+                    ],
+                },
+                "post_session": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "camber_text": {"type": "string"},
+                        "toe_text": {"type": "string"},
+                        "weight_text": {"type": "string"},
+                        "height_text": {"type": "string"},
+                        "shocks_text": {"type": "string"},
+                    },
+                    "required": [
+                        "camber_text",
+                        "toe_text",
+                        "weight_text",
+                        "height_text",
+                        "shocks_text",
+                    ],
+                },
+                "shock_setup": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "rr_hsr": {"type": "string"},
+                        "rr_lsr": {"type": "string"},
+                        "rr_hsb": {"type": "string"},
+                        "rr_lsb": {"type": "string"},
+                        "rr_total_setup": {"type": "string"},
+                        "lr_hsr": {"type": "string"},
+                        "lr_lsr": {"type": "string"},
+                        "lr_hsb": {"type": "string"},
+                        "lr_lsb": {"type": "string"},
+                        "lr_total_setup": {"type": "string"},
+                        "lf_hsr": {"type": "string"},
+                        "lf_lsr": {"type": "string"},
+                        "lf_hsb": {"type": "string"},
+                        "lf_lsb": {"type": "string"},
+                        "lf_total_setup": {"type": "string"},
+                        "rf_hsr": {"type": "string"},
+                        "rf_lsr": {"type": "string"},
+                        "rf_hsb": {"type": "string"},
+                        "rf_lsb": {"type": "string"},
+                        "rf_total_setup": {"type": "string"},
+                    },
+                    "required": [
+                        "rr_hsr",
+                        "rr_lsr",
+                        "rr_hsb",
+                        "rr_lsb",
+                        "rr_total_setup",
+                        "lr_hsr",
+                        "lr_lsr",
+                        "lr_hsb",
+                        "lr_lsb",
+                        "lr_total_setup",
+                        "lf_hsr",
+                        "lf_lsr",
+                        "lf_hsb",
+                        "lf_lsb",
+                        "lf_total_setup",
+                        "rf_hsr",
+                        "rf_lsr",
+                        "rf_hsb",
+                        "rf_lsb",
+                        "rf_total_setup",
+                    ],
+                },
             },
-            "required": ["pressures", "suspension", "alignment", "tire_temperatures"],
+            "required": [
+                "pressures",
+                "suspension",
+                "alignment",
+                "tire_temperatures",
+                "sheet_fields",
+                "post_session",
+                "shock_setup",
+            ],
         },
         "warnings": {"type": "array", "items": {"type": "string"}},
         "recommended_review_status": {
@@ -207,6 +342,7 @@ IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
     },
     "required": [
         "document_type",
+        "template_name",
         "confidence",
         "summary",
         "extracted_text",
@@ -269,7 +405,12 @@ def analyze_submission_image(
         "Analyze this SM Racing image for review. It may be a schedule, setup sheet, "
         "session note, or unrelated image. Extract only visible information. Use empty strings "
         "or empty arrays for missing data. Do not invent events, session IDs, driver IDs, car IDs, "
-        "or setup values. Keep recommended_review_status as PENDING unless the image is unrelated."
+        "or setup values. Keep recommended_review_status as PENDING unless the image is unrelated. "
+        "These images may be race setup templates, handwritten quadrant notes, or shocks setup sheets. "
+        "Recognize common motorsport shorthand such as RH=ride height, CW/corner weight, FL/FR/RL/RR, "
+        "and HSB/HBS as high-speed bump. Populate sheet_fields for template-specific labels like "
+        "roll-bar, spacer, fuel, wing, wheelbase left/right, and after-session set-down. Populate "
+        "shock_setup when the page is a dedicated shocks setup sheet."
         "\n\n"
         f"{_context_line(event=event, run_group=run_group, driver=driver, vehicle=vehicle)}"
     )

@@ -15,7 +15,7 @@ from app.services import submission_delivery_service as delivery_service
 from app.services import make_webhook_service as make_service
 from app.services import submission_ingest_service as ingest_service
 from app.services import submission_payload_service as payload_service
-from app.schemas.submission import SubmissionUpdate
+from app.schemas.submission import OcrPreviewCreate, SubmissionUpdate
 
 
 def _dt(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
@@ -338,6 +338,22 @@ class _DeliverySession:
         return None
 
     def refresh(self, obj):
+        return None
+
+
+class _PreviewSession:
+    def __init__(self, *, event, run_group):
+        self.event = event
+        self.run_group = run_group
+
+    def get(self, model, pk):
+        if model.__name__ == "Event" and pk == self.event.id:
+            return self.event
+        if model.__name__ == "RunGroup" and pk == self.run_group.id:
+            return self.run_group
+        return None
+
+    def scalar(self, _statement):
         return None
 
 
@@ -763,6 +779,286 @@ def test_quick_hybrid_notes_still_persist_structured_data():
     assert analysis["source_type"] == "quick_hybrid"
     assert analysis["has_structured_data"] is True
     assert payload_service.should_persist_structured_submission(analysis) is True
+
+
+def test_review_required_ocr_submissions_skip_immediate_structured_persist():
+    analysis = payload_service.merge_submission_analysis(
+        _submission_payload(),
+        raw_text="reviewed OCR note",
+        image_url="data:image/png;base64,AAAA",
+        analysis_result={
+            "submission_mode": "detail",
+            "ocr_review_required": True,
+            "force_review_staging": True,
+        },
+    )
+
+    assert analysis["has_structured_data"] is True
+    assert payload_service.should_persist_structured_submission(analysis) is False
+
+
+def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "setup_sheet",
+            "template_name": "farnbacher_86_setup_sheet",
+            "confidence": 0.84,
+            "summary": "Front geometry sheet",
+            "extracted_text": "RH front 65, rear 68",
+            "events": [],
+            "sessions": [
+                {
+                    "date": "2026-04-23",
+                    "time": "15:31",
+                    "track": "Sebring International Raceway",
+                    "session_type": "Practice",
+                    "session_number": "3",
+                    "duration_min": "30",
+                    "driver_id": "NG",
+                    "vehicle_id": "NG-GT4-2025",
+                    "notes": "Rear ride height looks uncertain",
+                }
+            ],
+            "setup": {
+                "pressures": {
+                    "cold_fl": "22.0",
+                    "cold_fr": "22.1",
+                    "cold_rl": "22.4",
+                    "cold_rr": "22.5",
+                    "hot_fl": "",
+                    "hot_fr": "",
+                    "hot_rl": "",
+                    "hot_rr": "",
+                },
+                "suspension": {
+                    "rebound_fl": "12",
+                    "rebound_fr": "12",
+                    "rebound_rl": "11",
+                    "rebound_rr": "11",
+                    "bump_fl": "",
+                    "bump_fr": "",
+                    "bump_rl": "",
+                    "bump_rr": "",
+                    "sway_bar_f": "",
+                    "sway_bar_r": "",
+                    "wing_angle_deg": "",
+                },
+                "alignment": {
+                    "camber_fl": "-1.5",
+                    "camber_fr": "-1.4",
+                    "camber_rl": "-2.0",
+                    "camber_rr": "-2.0",
+                    "toe_front": "0.05",
+                    "toe_rear": "0.10",
+                    "caster_l": "6.5",
+                    "caster_r": "6.4",
+                    "ride_height_f": "65",
+                    "ride_height_r": "68",
+                    "rake_mm": "3",
+                    "wheelbase_mm": "2550",
+                },
+                "sheet_fields": {
+                    "fuel_liters": "22.5",
+                    "driver_weight_lbs": "180",
+                    "scale_weight_lbs": "1280",
+                    "cross_weight_percent": "50.0",
+                    "roll_bar_text": "3",
+                    "spacer_text": "2",
+                    "bump_text": "12",
+                    "rebound_text": "14",
+                    "springs_front": "900",
+                    "springs_rear": "1000",
+                    "bump_stops_front": "10",
+                    "bump_stops_rear": "12",
+                    "wheelbase_left_mm": "2550",
+                    "wheelbase_right_mm": "2552",
+                    "wing_rake_deg": "1.5",
+                    "wing_angle_deg": "4",
+                    "wing_gurney_mm": "2",
+                    "fuel_pumped_out_liters": "3.0",
+                    "notes_block": "Out with 15g fuel",
+                },
+                "post_session": {
+                    "camber_text": "front tech values",
+                    "toe_text": "1 out / 2.5 in",
+                    "weight_text": "1280",
+                    "height_text": "80 / 121",
+                    "shocks_text": "pending",
+                },
+                "shock_setup": {
+                    "rr_hsr": "7",
+                    "rr_lsr": "6",
+                    "rr_hsb": "9",
+                    "rr_lsb": "8",
+                    "rr_total_setup": "30",
+                    "lr_hsr": "",
+                    "lr_lsr": "",
+                    "lr_hsb": "",
+                    "lr_lsb": "",
+                    "lr_total_setup": "",
+                    "lf_hsr": "",
+                    "lf_lsr": "",
+                    "lf_hsb": "",
+                    "lf_lsb": "",
+                    "lf_total_setup": "",
+                    "rf_hsr": "",
+                    "rf_lsr": "",
+                    "rf_hsb": "",
+                    "rf_lsb": "",
+                    "rf_total_setup": "",
+                },
+                "tire_temperatures": {},
+            },
+            "warnings": ["ambiguous handwriting"],
+            "recommended_review_status": "PENDING",
+            "parser_version": "sm-racing-image-analysis-v1",
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+            context={"track": "Sebring International Raceway"},
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "success"
+    assert result.doc_type == "setup_sheet"
+    assert result.template_name == "farnbacher_86_setup_sheet"
+    assert result.metadata["track_text"] == "Sebring International Raceway"
+    assert result.structured_data["alignment"]["rh_fl"] == "65"
+    assert result.structured_data["alignment"]["toe_rl"] == "0.10"
+    assert result.structured_data["pressures"]["cold"]["fl"] == "22.0"
+    assert result.structured_data["sheet_fields"]["fuel_liters"] == "22.5"
+    assert result.structured_data["post_session"]["toe_text"] == "1 out / 2.5 in"
+    assert result.structured_data["shock_setup"]["rr_hsr"] == "7"
+    assert result.review_flags == ["ambiguous handwriting"]
+    assert result.recommended_review_status == "PENDING"
+
+
+def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "session_note",
+            "confidence": 0.41,
+            "summary": "",
+            "extracted_text": "",
+            "events": [],
+            "sessions": [],
+            "setup": {},
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "success"
+    assert result.structured_data["alignment"]["rh_fl"] == ""
+    assert result.structured_data["pressures"]["cold"]["fl"] == ""
+    assert result.structured_data["notes"] == []
+    assert result.review_flags == []
+
+
+def test_preview_ocr_submission_reports_service_failure(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(chatbot_image_analysis_enabled=True, openai_api_key="test-key"),
+    )
+    monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", lambda **_kwargs: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        submissions_endpoints.preview_ocr_submission(
+            OcrPreviewCreate(
+                event_id=event.id,
+                run_group_id=run_group.id,
+                image_url="data:image/png;base64,AAAA",
+            ),
+            session,
+            current_user,
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["code"] == "OCR_EXTRACTION_FAILED"
 
 
 def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):

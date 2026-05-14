@@ -252,6 +252,14 @@ def merge_submission_analysis(
 
 def should_persist_structured_submission(analysis_result: Any) -> bool:
     analysis = _dict_or_empty(analysis_result)
+    if bool(
+        analysis.get("force_review_staging")
+        or analysis.get("forceReviewStaging")
+        or analysis.get("ocr_review_required")
+        or analysis.get("ocrReviewRequired")
+    ):
+        return False
+
     return bool(
         analysis.get("has_structured_data")
         or analysis.get("hasStructuredData"),
