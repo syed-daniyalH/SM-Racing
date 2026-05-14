@@ -973,7 +973,7 @@ test.describe("submission flow", () => {
     await expect(page.getByAltText("OCR note preview")).toBeVisible();
     await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
     await expect(page.getByLabel("RH FL")).toBeVisible();
-    await expect(page.getByTestId("ocr-submit-review-button")).toBeEnabled();
+    await expect(page.getByTestId("ocr-submit-review-button")).toBeDisabled();
 
     await page.getByLabel("RH FL").fill("102");
     await expect(page.getByTestId("ocr-submit-review-button")).toBeEnabled();

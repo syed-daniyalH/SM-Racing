@@ -298,7 +298,7 @@ export default function EventDetail() {
         ? "Closed after event"
         : "Schedule needed";
   const noteBannerCopy = canCaptureNotes
-    ? "Use Submit Notes for typed entry, OCR Notes for handwritten setup sheets and photo-backed capture, Voice Submission for the dedicated Deepgram workflow, or View Submissions to review the event history."
+    ? ""
     : submissionState.isUpcoming
       ? "Submission notes will open when the event start date arrives."
       : submissionState.hasEnded
@@ -427,7 +427,7 @@ export default function EventDetail() {
                   <span className="event-detail-info-value">{accessLabel}</span>
                 </li>
               </ul>
-              <div className="event-detail-note-banner">{noteBannerCopy}</div>
+              {noteBannerCopy ? <div className="event-detail-note-banner">{noteBannerCopy}</div> : null}
             </article>
           </section>
 

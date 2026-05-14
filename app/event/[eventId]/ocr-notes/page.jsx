@@ -451,7 +451,6 @@ const hasExtractedDraftData = (reviewDraft) =>
     normalizeText(reviewDraft?.summary) ||
       normalizeText(reviewDraft?.rawText) ||
       normalizeText(reviewDraft?.extractedText) ||
-      (Array.isArray(reviewDraft?.reviewFlags) && reviewDraft.reviewFlags.length > 0) ||
       (Array.isArray(reviewDraft?.notes) && reviewDraft.notes.length > 0) ||
       hasMeaningfulMapValue(reviewDraft?.alignment) ||
       hasMeaningfulMapValue(reviewDraft?.pressures) ||
@@ -1240,6 +1239,26 @@ export default function OCRNotesPage() {
 
     return "extract_success";
   }, [hasExtractedDraft, hasImage, reviewDirty, workflowState]);
+  const isHardExtractFailure = effectiveWorkflowState === "extract_failed" && !hasExtractedDraft;
+  const confidenceDisplay =
+    typeof reviewDraft.confidence === "number"
+      ? `${Math.round(reviewDraft.confidence * 100)}%`
+      : isHardExtractFailure
+        ? "Unavailable"
+        : "Pending extract";
+  const docTypeDisplay =
+    reviewDraft.docType && reviewDraft.docType !== "unknown"
+      ? reviewDraft.docType.replace(/_/g, " ")
+      : isHardExtractFailure
+        ? "Not extracted"
+        : "Pending extract";
+  const modelDisplay = reviewDraft.modelUsed
+    ? `${reviewDraft.modelUsed}${reviewDraft.fallbackUsed ? " (fallback)" : ""}`
+    : isHardExtractFailure
+      ? "Not returned"
+      : "Pending extract";
+  const runtimeRetryLabel =
+    workflowState === "rerunning_ocr" ? "Rerunning..." : hasExtractedDraft ? "Rerun OCR" : "Retry OCR";
 
   const suspensionFieldCount = useMemo(() => countMeaningfulValues(reviewDraft.suspension), [reviewDraft.suspension]);
   const templateFieldCount = useMemo(
@@ -1669,19 +1688,15 @@ export default function OCRNotesPage() {
             </div>
             <div className="ocr-notes-status-item">
               <span>Confidence</span>
-              <strong>{typeof reviewDraft.confidence === "number" ? `${Math.round(reviewDraft.confidence * 100)}%` : "Pending extract"}</strong>
+              <strong>{confidenceDisplay}</strong>
             </div>
             <div className="ocr-notes-status-item">
               <span>Document Type</span>
-              <strong>{reviewDraft.docType === "unknown" ? "Pending extract" : reviewDraft.docType.replace(/_/g, " ")}</strong>
+              <strong>{docTypeDisplay}</strong>
             </div>
             <div className="ocr-notes-status-item">
               <span>Model</span>
-              <strong>
-                {reviewDraft.modelUsed
-                  ? `${reviewDraft.modelUsed}${reviewDraft.fallbackUsed ? " (fallback)" : ""}`
-                  : "Pending extract"}
-              </strong>
+              <strong>{modelDisplay}</strong>
             </div>
             <div className="ocr-notes-status-item">
               <span>Review Flags</span>
@@ -2044,15 +2059,11 @@ export default function OCRNotesPage() {
                   </li>
                   <li>
                     <span>Doc Type</span>
-                    <strong>{reviewDraft.docType === "unknown" ? "Pending extract" : reviewDraft.docType.replace(/_/g, " ")}</strong>
+                    <strong>{docTypeDisplay}</strong>
                   </li>
                   <li>
                     <span>Model Used</span>
-                    <strong>
-                      {reviewDraft.modelUsed
-                        ? `${reviewDraft.modelUsed}${reviewDraft.fallbackUsed ? " (fallback)" : ""}`
-                        : "Pending extract"}
-                    </strong>
+                    <strong>{modelDisplay}</strong>
                   </li>
                   <li>
                     <span>Flags</span>
@@ -2068,14 +2079,14 @@ export default function OCRNotesPage() {
               <div className="ocr-notes-status-card">
                 <div className="ocr-notes-status-card-head">
                   <strong>OCR runtime state</strong>
-                  {hasExtractedDraft && hasImage ? (
+                  {hasImage && (hasExtractedDraft || isHardExtractFailure) ? (
                     <button
                       type="button"
                       className="ocr-notes-inline-button"
-                      onClick={() => handleExtract({ rerun: true })}
+                      onClick={() => handleExtract({ rerun: hasExtractedDraft })}
                       disabled={activeAsyncState || !canSubmitOcr}
                     >
-                      {workflowState === "rerunning_ocr" ? "Rerunning..." : "Rerun OCR"}
+                      {runtimeRetryLabel}
                     </button>
                   ) : null}
                 </div>
@@ -2084,7 +2095,7 @@ export default function OCRNotesPage() {
                 <div className="ocr-notes-metadata-list">
                   <div>
                     <span>Model Used</span>
-                    <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
+                    <strong>{modelDisplay}</strong>
                   </div>
                   <div>
                     <span>Fallback Used</span>
@@ -2092,11 +2103,7 @@ export default function OCRNotesPage() {
                   </div>
                   <div>
                     <span>Confidence</span>
-                    <strong>
-                      {typeof reviewDraft.confidence === "number"
-                        ? `${Math.round(reviewDraft.confidence * 100)}%`
-                        : "Pending extract"}
-                    </strong>
+                    <strong>{confidenceDisplay}</strong>
                   </div>
                 </div>
 
@@ -2121,14 +2128,15 @@ export default function OCRNotesPage() {
                 <div className="ocr-notes-panel-head">
                   <div>
                     <p className="ocr-notes-panel-eyebrow">Stage 3</p>
-                    <h2>Editable OCR review</h2>
+                    <h2>{isHardExtractFailure ? "Manual correction fallback" : "Editable OCR review"}</h2>
                   </div>
                   <DocumentScannerRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
                 </div>
 
                 <p className="ocr-notes-panel-copy">
-                  The OCR draft stays editable, but the screen now keeps the high-value setup fields front and center.
-                  Advanced template fields stay tucked away until you actually need them.
+                  {isHardExtractFailure
+                    ? "OCR could not create a safe draft from this image. Keep the image attached, retry extraction if needed, or fill the key setup fields manually before submitting for review."
+                    : "The OCR draft stays editable, but the screen now keeps the high-value setup fields front and center. Advanced template fields stay tucked away until you actually need them."}
                 </p>
 
                 <div className="ocr-notes-review-grid ocr-notes-review-grid-core">
@@ -2456,7 +2464,7 @@ export default function OCRNotesPage() {
                               </div>
                               <div>
                                 <span>Model Used</span>
-                                <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
+                                <strong>{modelDisplay}</strong>
                               </div>
                               <div>
                                 <span>Fallback Used</span>
