@@ -18,6 +18,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 import Loader from "../../../components/Common/Loader";
 import ScreenBackButton from "../../../components/Common/ScreenBackButton";
@@ -422,6 +428,23 @@ const hasMeaningfulMapValue = (value) => {
     return normalizeText(item).length > 0;
   });
 };
+
+const countMeaningfulValues = (value) => {
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+
+  return Object.values(value).reduce((total, item) => {
+    if (item && typeof item === "object") {
+      return total + countMeaningfulValues(item);
+    }
+
+    return total + (normalizeText(item).length > 0 ? 1 : 0);
+  }, 0);
+};
+
+const formatCapturedSummary = (count, populatedLabel, emptyLabel = "Available for manual entry") =>
+  count > 0 ? `${count} ${populatedLabel}${count === 1 ? "" : "s"} captured` : emptyLabel;
 
 const hasExtractedDraftData = (reviewDraft) =>
   Boolean(
@@ -1217,6 +1240,47 @@ export default function OCRNotesPage() {
 
     return "extract_success";
   }, [hasExtractedDraft, hasImage, reviewDirty, workflowState]);
+
+  const suspensionFieldCount = useMemo(() => countMeaningfulValues(reviewDraft.suspension), [reviewDraft.suspension]);
+  const templateFieldCount = useMemo(
+    () => countMeaningfulValues(reviewDraft.sheetFields) + countMeaningfulValues(reviewDraft.postSession),
+    [reviewDraft.sheetFields, reviewDraft.postSession],
+  );
+  const shockSetupFieldCount = useMemo(() => countMeaningfulValues(reviewDraft.shockSetup), [reviewDraft.shockSetup]);
+  const noteSignalCount = useMemo(
+    () =>
+      splitNotes(reviewDraft.notes).length +
+      reviewDraft.reviewFlags.length +
+      (normalizeText(reviewDraft.summary) ? 1 : 0) +
+      (normalizeText(reviewDraft.rawText || reviewDraft.extractedText) ? 1 : 0) +
+      (Array.isArray(reviewDraft.rawEvidence?.visible_text) ? reviewDraft.rawEvidence.visible_text.length : 0) +
+      (Array.isArray(reviewDraft.rawEvidence?.unmapped_values) ? reviewDraft.rawEvidence.unmapped_values.length : 0),
+    [
+      reviewDraft.notes,
+      reviewDraft.reviewFlags,
+      reviewDraft.summary,
+      reviewDraft.rawText,
+      reviewDraft.extractedText,
+      reviewDraft.rawEvidence,
+    ],
+  );
+  const defaultAdvancedAccordionSections = useMemo(() => {
+    const sections = ["notes"];
+
+    if (suspensionFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet") {
+      sections.push("suspension");
+    }
+
+    if (templateFieldCount > 0) {
+      sections.push("template");
+    }
+
+    if (shockSetupFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet") {
+      sections.push("shock-sheet");
+    }
+
+    return sections;
+  }, [reviewDraft.docType, shockSetupFieldCount, suspensionFieldCount, templateFieldCount]);
 
   const workflowPresentation = getWorkflowPresentation(effectiveWorkflowState);
   const submissionWindowNote = !submissionState.isOpen
@@ -2063,11 +2127,11 @@ export default function OCRNotesPage() {
                 </div>
 
                 <p className="ocr-notes-panel-copy">
-                  The OCR draft is editable. Resolve ambiguous handwriting, correct setup values, and keep the note in
-                  review mode until the team validates it downstream.
+                  The OCR draft stays editable, but the screen now keeps the high-value setup fields front and center.
+                  Advanced template fields stay tucked away until you actually need them.
                 </p>
 
-                <div className="ocr-notes-review-grid">
+                <div className="ocr-notes-review-grid ocr-notes-review-grid-core">
                   <div className="ocr-notes-review-section">
                     <div className="ocr-notes-review-section-head">
                       <h3>Ride Height</h3>
@@ -2245,288 +2309,372 @@ export default function OCRNotesPage() {
                       ))}
                     </div>
                   </div>
+                </div>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>Suspension / Shocks</h3>
-                      <span>Rebound, bump, bars, and wing</span>
-                    </div>
-                    <div className="ocr-notes-form-grid">
-                      {[
-                        ["rebound_fl", "Rebound FL"],
-                        ["rebound_fr", "Rebound FR"],
-                        ["rebound_rl", "Rebound RL"],
-                        ["rebound_rr", "Rebound RR"],
-                        ["bump_fl", "Bump FL"],
-                        ["bump_fr", "Bump FR"],
-                        ["bump_rl", "Bump RL"],
-                        ["bump_rr", "Bump RR"],
-                        ["hsr_fl", "HSR FL"],
-                        ["hsr_fr", "HSR FR"],
-                        ["hsr_rl", "HSR RL"],
-                        ["hsr_rr", "HSR RR"],
-                        ["lsr_fl", "LSR FL"],
-                        ["lsr_fr", "LSR FR"],
-                        ["lsr_rl", "LSR RL"],
-                        ["lsr_rr", "LSR RR"],
-                        ["hsb_fl", "HSB FL"],
-                        ["hsb_fr", "HSB FR"],
-                        ["hsb_rl", "HSB RL"],
-                        ["hsb_rr", "HSB RR"],
-                        ["lsb_fl", "LSB FL"],
-                        ["lsb_fr", "LSB FR"],
-                        ["lsb_rl", "LSB RL"],
-                        ["lsb_rr", "LSB RR"],
-                        ["sway_bar_f", "Sway Bar F"],
-                        ["sway_bar_r", "Sway Bar R"],
-                        ["wing_angle_deg", "Wing Angle"],
-                      ].map(([field, label]) => (
-                        <div key={field} className="ocr-notes-field">
-                          <label>{label}</label>
-                          <input
-                            className="ocr-notes-input"
-                            type="text"
-                            value={reviewDraft.suspension[field]}
-                            onChange={(eventLike) =>
-                              handleReviewEdit((prev) => ({
-                                ...prev,
-                                suspension: {
-                                  ...prev.suspension,
-                                  [field]: eventLike.target.value,
-                                },
-                              }))
-                            }
-                          />
-                        </div>
-                      ))}
-                    </div>
+                <div className="ocr-notes-review-advanced-shell">
+                  <div className="ocr-notes-review-advanced-head">
+                    <h3>Advanced and reference fields</h3>
+                    <span>Open only the sections you need for review or manual correction.</span>
                   </div>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>Client Sheet Fields</h3>
-                      <span>Template-specific setup labels and side-specific values</span>
-                    </div>
-                    <div className="ocr-notes-form-grid">
-                      {CLIENT_SHEET_FIELDS.map(([field, label]) => (
-                        <div key={field} className="ocr-notes-field">
-                          <label>{label}</label>
-                          <input
-                            className="ocr-notes-input"
-                            type="text"
-                            value={reviewDraft.sheetFields[field]}
-                            onChange={(eventLike) =>
-                              handleReviewEdit((prev) => ({
-                                ...prev,
-                                sheetFields: {
-                                  ...prev.sheetFields,
-                                  [field]: eventLike.target.value,
-                                },
-                              }))
-                            }
-                          />
+                  <Accordion
+                    type="multiple"
+                    defaultValue={defaultAdvancedAccordionSections}
+                    className="ocr-notes-review-accordion"
+                  >
+                    <AccordionItem value="notes" className="ocr-notes-review-accordion-item">
+                      <AccordionTrigger className="ocr-notes-review-accordion-trigger">
+                        <div className="ocr-notes-review-accordion-copy">
+                          <strong>Notes, Raw OCR, and Review Flags</strong>
+                          <span>
+                            {reviewDraft.reviewFlags.length > 0
+                              ? `${reviewDraft.reviewFlags.length} review flag${
+                                  reviewDraft.reviewFlags.length === 1 ? "" : "s"
+                                } and ${formatCapturedSummary(noteSignalCount, "note signal")}`
+                              : formatCapturedSummary(
+                                  noteSignalCount,
+                                  "note signal",
+                                  "Raw OCR text, notes, and flags remain available here.",
+                                )}
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="ocr-notes-review-accordion-content">
+                        <div className="ocr-notes-review-grid ocr-notes-review-grid-advanced">
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>Notes / Unstructured OCR</h3>
+                              <span>Preserve extracted context and freeform lines</span>
+                            </div>
+                            <div className="ocr-notes-field ocr-notes-field-wide">
+                              <label>Summary</label>
+                              <textarea
+                                className="ocr-notes-textarea"
+                                rows={3}
+                                value={reviewDraft.summary}
+                                onChange={(eventLike) =>
+                                  handleReviewEdit((prev) => ({
+                                    ...prev,
+                                    summary: eventLike.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="ocr-notes-field ocr-notes-field-wide">
+                              <label>Raw OCR Text</label>
+                              <textarea
+                                className="ocr-notes-textarea"
+                                rows={6}
+                                value={reviewDraft.rawText || reviewDraft.extractedText}
+                                onChange={(eventLike) =>
+                                  handleReviewEdit((prev) => ({
+                                    ...prev,
+                                    rawText: eventLike.target.value,
+                                    extractedText: eventLike.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            {Array.isArray(reviewDraft.rawEvidence?.visible_text) &&
+                            reviewDraft.rawEvidence.visible_text.length > 0 ? (
+                              <div className="ocr-notes-metadata-list">
+                                <div>
+                                  <span>Visible Text Lines</span>
+                                  <strong>{reviewDraft.rawEvidence.visible_text.length}</strong>
+                                </div>
+                                <div>
+                                  <span>Detected Grids</span>
+                                  <strong>
+                                    {Array.isArray(reviewDraft.rawEvidence?.detected_grids)
+                                      ? reviewDraft.rawEvidence.detected_grids.length
+                                      : 0}
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Unmapped Values</span>
+                                  <strong>
+                                    {Array.isArray(reviewDraft.rawEvidence?.unmapped_values)
+                                      ? reviewDraft.rawEvidence.unmapped_values.length
+                                      : 0}
+                                  </strong>
+                                </div>
+                              </div>
+                            ) : null}
+                            <div className="ocr-notes-field ocr-notes-field-wide">
+                              <label>Review Notes</label>
+                              <textarea
+                                className="ocr-notes-textarea"
+                                rows={5}
+                                value={joinNotes(reviewDraft.notes)}
+                                onChange={(eventLike) =>
+                                  handleReviewEdit((prev) => ({
+                                    ...prev,
+                                    notes: splitNotes(eventLike.target.value),
+                                  }))
+                                }
+                                placeholder="One line per extracted note or correction."
+                              />
+                            </div>
+                          </div>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>Shock Setup Page</h3>
-                      <span>Dedicated RR, LR, LF, and RF shock-sheet values</span>
-                    </div>
-                    <div className="ocr-notes-pressure-grid">
-                      {SHOCK_SETUP_GROUPS.map(([cornerKey, cornerLabel]) => (
-                        <div key={cornerKey} className="ocr-notes-pressure-panel">
-                          <strong>{cornerLabel}</strong>
-                          <div className="ocr-notes-matrix-grid">
-                            {SHOCK_SETUP_FIELDS.map(([fieldKey, fieldLabel]) => {
-                              const field = `${cornerKey}_${fieldKey}`;
-                              return (
-                                <label key={field} className="ocr-notes-mini-field">
-                                  <span>{fieldLabel}</span>
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>Warnings and Review Flags</h3>
+                              <span>Keep ambiguous values visible</span>
+                            </div>
+                            <div className="ocr-notes-flag-row">
+                              {reviewDraft.reviewFlags.length > 0 ? (
+                                reviewDraft.reviewFlags.map((flag, index) => (
+                                  <span key={`${flag}-${index}`} className="ocr-notes-flag-chip">
+                                    {flag}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="ocr-notes-flag-chip subdued">
+                                  No review flags returned from OCR.
+                                </span>
+                              )}
+                            </div>
+                            <div className="ocr-notes-metadata-list">
+                              <div>
+                                <span>Driver Text</span>
+                                <strong>{reviewDraft.metadata?.driver_text || "Not detected"}</strong>
+                              </div>
+                              <div>
+                                <span>Track Text</span>
+                                <strong>{reviewDraft.metadata?.track_text || "Not detected"}</strong>
+                              </div>
+                              <div>
+                                <span>Session Text</span>
+                                <strong>{reviewDraft.metadata?.session_text || "Not detected"}</strong>
+                              </div>
+                              <div>
+                                <span>Template</span>
+                                <strong>
+                                  {reviewDraft.templateName || reviewDraft.metadata?.template_name || "Generic OCR"}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Model Used</span>
+                                <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
+                              </div>
+                              <div>
+                                <span>Fallback Used</span>
+                                <strong>{reviewDraft.fallbackUsed ? "Yes" : "No"}</strong>
+                              </div>
+                              <div>
+                                <span>Review Status</span>
+                                <strong>{reviewDraft.recommendedReviewStatus || "PENDING"}</strong>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem value="suspension" className="ocr-notes-review-accordion-item">
+                      <AccordionTrigger className="ocr-notes-review-accordion-trigger">
+                        <div className="ocr-notes-review-accordion-copy">
+                          <strong>Suspension / Shocks</strong>
+                          <span>{formatCapturedSummary(suspensionFieldCount, "suspension value")}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="ocr-notes-review-accordion-content">
+                        <div className="ocr-notes-review-grid ocr-notes-review-grid-advanced">
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>Suspension / Shocks</h3>
+                              <span>Rebound, bump, bars, and wing</span>
+                            </div>
+                            <div className="ocr-notes-form-grid">
+                              {[
+                                ["rebound_fl", "Rebound FL"],
+                                ["rebound_fr", "Rebound FR"],
+                                ["rebound_rl", "Rebound RL"],
+                                ["rebound_rr", "Rebound RR"],
+                                ["bump_fl", "Bump FL"],
+                                ["bump_fr", "Bump FR"],
+                                ["bump_rl", "Bump RL"],
+                                ["bump_rr", "Bump RR"],
+                                ["hsr_fl", "HSR FL"],
+                                ["hsr_fr", "HSR FR"],
+                                ["hsr_rl", "HSR RL"],
+                                ["hsr_rr", "HSR RR"],
+                                ["lsr_fl", "LSR FL"],
+                                ["lsr_fr", "LSR FR"],
+                                ["lsr_rl", "LSR RL"],
+                                ["lsr_rr", "LSR RR"],
+                                ["hsb_fl", "HSB FL"],
+                                ["hsb_fr", "HSB FR"],
+                                ["hsb_rl", "HSB RL"],
+                                ["hsb_rr", "HSB RR"],
+                                ["lsb_fl", "LSB FL"],
+                                ["lsb_fr", "LSB FR"],
+                                ["lsb_rl", "LSB RL"],
+                                ["lsb_rr", "LSB RR"],
+                                ["sway_bar_f", "Sway Bar F"],
+                                ["sway_bar_r", "Sway Bar R"],
+                                ["wing_angle_deg", "Wing Angle"],
+                              ].map(([field, label]) => (
+                                <div key={field} className="ocr-notes-field">
+                                  <label>{label}</label>
                                   <input
                                     className="ocr-notes-input"
                                     type="text"
-                                    value={reviewDraft.shockSetup[field]}
+                                    value={reviewDraft.suspension[field]}
                                     onChange={(eventLike) =>
                                       handleReviewEdit((prev) => ({
                                         ...prev,
-                                        shockSetup: {
-                                          ...prev.shockSetup,
+                                        suspension: {
+                                          ...prev.suspension,
                                           [field]: eventLike.target.value,
                                         },
                                       }))
                                     }
                                   />
-                                </label>
-                              );
-                            })}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>After Session / Template Notes</h3>
-                      <span>Keep the lower-sheet fields and long notes reviewable</span>
-                    </div>
-                    <div className="ocr-notes-form-grid">
-                      {POST_SESSION_FIELDS.map(([field, label]) => (
-                        <div key={field} className="ocr-notes-field">
-                          <label>{label}</label>
-                          <input
-                            className="ocr-notes-input"
-                            type="text"
-                            value={reviewDraft.postSession[field]}
-                            onChange={(eventLike) =>
-                              handleReviewEdit((prev) => ({
-                                ...prev,
-                                postSession: {
-                                  ...prev.postSession,
-                                  [field]: eventLike.target.value,
-                                },
-                              }))
-                            }
-                          />
+                    <AccordionItem value="template" className="ocr-notes-review-accordion-item">
+                      <AccordionTrigger className="ocr-notes-review-accordion-trigger">
+                        <div className="ocr-notes-review-accordion-copy">
+                          <strong>Template-specific fields</strong>
+                          <span>{formatCapturedSummary(templateFieldCount, "template value")}</span>
                         </div>
-                      ))}
-                    </div>
-                    <div className="ocr-notes-field ocr-notes-field-wide">
-                      <label>Template Notes Block</label>
-                      <textarea
-                        className="ocr-notes-textarea"
-                        rows={5}
-                        value={reviewDraft.sheetFields.notes_block}
-                        onChange={(eventLike) =>
-                          handleReviewEdit((prev) => ({
-                            ...prev,
-                            sheetFields: {
-                              ...prev.sheetFields,
-                              notes_block: eventLike.target.value,
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="ocr-notes-review-accordion-content">
+                        <div className="ocr-notes-review-grid ocr-notes-review-grid-advanced">
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>Client Sheet Fields</h3>
+                              <span>Template-specific setup labels and side-specific values</span>
+                            </div>
+                            <div className="ocr-notes-form-grid">
+                              {CLIENT_SHEET_FIELDS.map(([field, label]) => (
+                                <div key={field} className="ocr-notes-field">
+                                  <label>{label}</label>
+                                  <input
+                                    className="ocr-notes-input"
+                                    type="text"
+                                    value={reviewDraft.sheetFields[field]}
+                                    onChange={(eventLike) =>
+                                      handleReviewEdit((prev) => ({
+                                        ...prev,
+                                        sheetFields: {
+                                          ...prev.sheetFields,
+                                          [field]: eventLike.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>Notes / Unstructured OCR</h3>
-                      <span>Preserve extracted context and freeform lines</span>
-                    </div>
-                    <div className="ocr-notes-field ocr-notes-field-wide">
-                      <label>Summary</label>
-                      <textarea
-                        className="ocr-notes-textarea"
-                        rows={3}
-                        value={reviewDraft.summary}
-                        onChange={(eventLike) =>
-                          handleReviewEdit((prev) => ({
-                            ...prev,
-                            summary: eventLike.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="ocr-notes-field ocr-notes-field-wide">
-                      <label>Raw OCR Text</label>
-                      <textarea
-                        className="ocr-notes-textarea"
-                        rows={6}
-                        value={reviewDraft.rawText || reviewDraft.extractedText}
-                        onChange={(eventLike) =>
-                          handleReviewEdit((prev) => ({
-                            ...prev,
-                            rawText: eventLike.target.value,
-                            extractedText: eventLike.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    {Array.isArray(reviewDraft.rawEvidence?.visible_text) && reviewDraft.rawEvidence.visible_text.length > 0 ? (
-                      <div className="ocr-notes-metadata-list">
-                        <div>
-                          <span>Visible Text Lines</span>
-                          <strong>{reviewDraft.rawEvidence.visible_text.length}</strong>
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>After Session / Template Notes</h3>
+                              <span>Keep the lower-sheet fields and long notes reviewable</span>
+                            </div>
+                            <div className="ocr-notes-form-grid">
+                              {POST_SESSION_FIELDS.map(([field, label]) => (
+                                <div key={field} className="ocr-notes-field">
+                                  <label>{label}</label>
+                                  <input
+                                    className="ocr-notes-input"
+                                    type="text"
+                                    value={reviewDraft.postSession[field]}
+                                    onChange={(eventLike) =>
+                                      handleReviewEdit((prev) => ({
+                                        ...prev,
+                                        postSession: {
+                                          ...prev.postSession,
+                                          [field]: eventLike.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className="ocr-notes-field ocr-notes-field-wide">
+                              <label>Template Notes Block</label>
+                              <textarea
+                                className="ocr-notes-textarea"
+                                rows={5}
+                                value={reviewDraft.sheetFields.notes_block}
+                                onChange={(eventLike) =>
+                                  handleReviewEdit((prev) => ({
+                                    ...prev,
+                                    sheetFields: {
+                                      ...prev.sheetFields,
+                                      notes_block: eventLike.target.value,
+                                    },
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <span>Detected Grids</span>
-                          <strong>{Array.isArray(reviewDraft.rawEvidence?.detected_grids) ? reviewDraft.rawEvidence.detected_grids.length : 0}</strong>
-                        </div>
-                        <div>
-                          <span>Unmapped Values</span>
-                          <strong>{Array.isArray(reviewDraft.rawEvidence?.unmapped_values) ? reviewDraft.rawEvidence.unmapped_values.length : 0}</strong>
-                        </div>
-                      </div>
-                    ) : null}
-                    <div className="ocr-notes-field ocr-notes-field-wide">
-                      <label>Review Notes</label>
-                      <textarea
-                        className="ocr-notes-textarea"
-                        rows={5}
-                        value={joinNotes(reviewDraft.notes)}
-                        onChange={(eventLike) =>
-                          handleReviewEdit((prev) => ({
-                            ...prev,
-                            notes: splitNotes(eventLike.target.value),
-                          }))
-                        }
-                        placeholder="One line per extracted note or correction."
-                      />
-                    </div>
-                  </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-                  <div className="ocr-notes-review-section">
-                    <div className="ocr-notes-review-section-head">
-                      <h3>Warnings and Review Flags</h3>
-                      <span>Keep ambiguous values visible</span>
-                    </div>
-                    <div className="ocr-notes-flag-row">
-                      {reviewDraft.reviewFlags.length > 0 ? (
-                        reviewDraft.reviewFlags.map((flag, index) => (
-                          <span key={`${flag}-${index}`} className="ocr-notes-flag-chip">
-                            {flag}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="ocr-notes-flag-chip subdued">No review flags returned from OCR.</span>
-                      )}
-                    </div>
-                    <div className="ocr-notes-metadata-list">
-                      <div>
-                        <span>Driver Text</span>
-                        <strong>{reviewDraft.metadata?.driver_text || "Not detected"}</strong>
-                      </div>
-                      <div>
-                        <span>Track Text</span>
-                        <strong>{reviewDraft.metadata?.track_text || "Not detected"}</strong>
-                      </div>
-                      <div>
-                        <span>Session Text</span>
-                        <strong>{reviewDraft.metadata?.session_text || "Not detected"}</strong>
-                      </div>
-                      <div>
-                        <span>Template</span>
-                        <strong>{reviewDraft.templateName || reviewDraft.metadata?.template_name || "Generic OCR"}</strong>
-                      </div>
-                      <div>
-                        <span>Model Used</span>
-                        <strong>{reviewDraft.modelUsed || "Pending extract"}</strong>
-                      </div>
-                      <div>
-                        <span>Fallback Used</span>
-                        <strong>{reviewDraft.fallbackUsed ? "Yes" : "No"}</strong>
-                      </div>
-                      <div>
-                        <span>Review Status</span>
-                        <strong>{reviewDraft.recommendedReviewStatus || "PENDING"}</strong>
-                      </div>
-                    </div>
-                  </div>
+                    <AccordionItem value="shock-sheet" className="ocr-notes-review-accordion-item">
+                      <AccordionTrigger className="ocr-notes-review-accordion-trigger">
+                        <div className="ocr-notes-review-accordion-copy">
+                          <strong>Shock setup sheet</strong>
+                          <span>{formatCapturedSummary(shockSetupFieldCount, "shock setup value")}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="ocr-notes-review-accordion-content">
+                        <div className="ocr-notes-review-grid ocr-notes-review-grid-advanced">
+                          <div className="ocr-notes-review-section">
+                            <div className="ocr-notes-review-section-head">
+                              <h3>Shock Setup Page</h3>
+                              <span>Dedicated RR, LR, LF, and RF shock-sheet values</span>
+                            </div>
+                            <div className="ocr-notes-pressure-grid">
+                              {SHOCK_SETUP_GROUPS.map(([cornerKey, cornerLabel]) => (
+                                <div key={cornerKey} className="ocr-notes-pressure-panel">
+                                  <strong>{cornerLabel}</strong>
+                                  <div className="ocr-notes-matrix-grid">
+                                    {SHOCK_SETUP_FIELDS.map(([fieldKey, fieldLabel]) => {
+                                      const field = `${cornerKey}_${fieldKey}`;
+                                      return (
+                                        <label key={field} className="ocr-notes-mini-field">
+                                          <span>{fieldLabel}</span>
+                                          <input
+                                            className="ocr-notes-input"
+                                            type="text"
+                                            value={reviewDraft.shockSetup[field]}
+                                            onChange={(eventLike) =>
+                                              handleReviewEdit((prev) => ({
+                                                ...prev,
+                                                shockSetup: {
+                                                  ...prev.shockSetup,
+                                                  [field]: eventLike.target.value,
+                                                },
+                                              }))
+                                            }
+                                          />
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </div>
               </div>
             </section>

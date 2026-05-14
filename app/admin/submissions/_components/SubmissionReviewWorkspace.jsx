@@ -10,6 +10,7 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined"
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined"
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined"
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined"
+import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded"
 import ReceiptLongOutlinedIcon from "@mui/icons-material/ReceiptLongOutlined"
 import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined"
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined"
@@ -854,6 +855,38 @@ const Section = ({ id, icon: Icon, eyebrow, title, description, children, meta, 
   </section>
 )
 
+const CollapsibleSection = ({
+  icon: Icon,
+  eyebrow,
+  title,
+  description,
+  summary,
+  children,
+  defaultOpen = false,
+}) => (
+  <details className="submission-detail-collapsible-card" {...(defaultOpen ? { open: true } : {})}>
+    <summary className="submission-detail-collapsible-summary">
+      <div className="submission-detail-collapsible-heading">
+        <span className="submission-section-eyebrow">
+          {Icon ? <Icon fontSize="inherit" /> : null}
+          {eyebrow}
+        </span>
+        <div className="submission-detail-collapsible-title-row">
+          <h3>{title}</h3>
+          {summary ? <span className="submission-detail-section-score">{summary}</span> : null}
+        </div>
+        {description ? <p>{description}</p> : null}
+      </div>
+
+      <span className="submission-detail-collapsible-chevron" aria-hidden="true">
+        <KeyboardArrowDownRoundedIcon fontSize="inherit" />
+      </span>
+    </summary>
+
+    <div className="submission-detail-collapsible-body">{children}</div>
+  </details>
+)
+
 const InfoPill = ({ label, value, tone = "neutral" }) => (
   <div className={`submission-info-pill submission-info-${tone}`}>
     <span className="submission-info-label">{label}</span>
@@ -1184,21 +1217,19 @@ export default function SubmissionReviewWorkspace({
             </div>
           </Section>
 
-          <Section
-            id="raw"
+          <CollapsibleSection
             icon={DescriptionOutlinedIcon}
             eyebrow="Raw Input"
             title={workspace.raw.title}
             description={workspace.raw.description}
-            meta={
-              <>
-                {record?.sourceTypeLabel ? <StatusBadge label={record.sourceTypeLabel} tone={record.sourceTypeTone || "neutral"} /> : null}
-                {record?.confidenceLabel ? (
-                  <StatusBadge label={record.confidenceLabel} tone={workspace.confidenceTone} />
-                ) : null}
-              </>
-            }
+            summary={workspace.raw.cards.length ? `${workspace.raw.cards.length} cards` : "No raw cards"}
           >
+            <div className="submission-detail-collapsible-badge-row">
+              {record?.sourceTypeLabel ? <StatusBadge label={record.sourceTypeLabel} tone={record.sourceTypeTone || "neutral"} /> : null}
+              {record?.confidenceLabel ? (
+                <StatusBadge label={record.confidenceLabel} tone={workspace.confidenceTone} />
+              ) : null}
+            </div>
             <div className="submission-raw-grid">
               {workspace.raw.cards.map((card) => (
                 <RawCard key={`${workspace.hero.title}-${card.title}`} card={card} />
@@ -1217,7 +1248,7 @@ export default function SubmissionReviewWorkspace({
                 </div>
               </div>
             ) : null}
-          </Section>
+          </CollapsibleSection>
 
           <Section
             id="parsed"
@@ -1272,12 +1303,12 @@ export default function SubmissionReviewWorkspace({
             ) : null}
           </Section>
 
-          <Section
-            id="audit"
+          <CollapsibleSection
             icon={TimelineOutlinedIcon}
             eyebrow="Audit Log"
             title="History and Review Trail"
             description="Track when the record was created, processed, edited, approved, rejected, or archived."
+            summary={workspace.system.timeline.length ? `${workspace.system.timeline.length} events` : "No history"}
           >
             <ul className="submission-detail-timeline">
               {workspace.system.timeline.length ? (
@@ -1288,14 +1319,14 @@ export default function SubmissionReviewWorkspace({
                 <li className="submission-detail-timeline-empty">No audit entries available yet.</li>
               )}
             </ul>
-          </Section>
+          </CollapsibleSection>
 
-          <Section
-            id="attachments"
+          <CollapsibleSection
             icon={AttachFileOutlinedIcon}
             eyebrow="Attachments"
             title="Media Preview and Downloads"
             description="View or download images and audio files that were uploaded with the submission."
+            summary={workspace.system.attachments.length ? `${workspace.system.attachments.length} items` : "No media"}
           >
             {workspace.system.attachments.length ? (
               <div className="submission-detail-attachment-grid">
@@ -1309,13 +1340,14 @@ export default function SubmissionReviewWorkspace({
                 <span>No attachments stored for this submission.</span>
               </div>
             )}
-          </Section>
+          </CollapsibleSection>
 
-          <Section
+          <CollapsibleSection
             icon={VisibilityOutlinedIcon}
             eyebrow="Storage Snapshot"
             title="Backend Record Preview"
             description="Confirm the stored payload, review state, and metadata currently held by the API."
+            summary="8 fields"
           >
             <div className="submission-detail-storage-grid">
               <KeyValue label="Created At" value={record?.createdAt || item?.created || rawPayload?.createdAt || "-"} />
@@ -1327,7 +1359,7 @@ export default function SubmissionReviewWorkspace({
               <KeyValue label="Source Channel" value={record?.sourceChannel || "Chatbot response"} />
               <KeyValue label="Parser Version" value={record?.parserVersion || "chatbot-summary"} />
             </div>
-          </Section>
+          </CollapsibleSection>
         </aside>
       </div>
     </div>

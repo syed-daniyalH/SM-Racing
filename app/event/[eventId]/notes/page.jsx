@@ -115,6 +115,33 @@ const toNullableNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const countFilledValues = (value) => {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + countFilledValues(item), 0);
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value).reduce(
+      (total, item) => total + countFilledValues(item),
+      0,
+    );
+  }
+
+  if (typeof value === "string") {
+    return value.trim() ? 1 : 0;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? 1 : 0;
+  }
+
+  return value ? 1 : 0;
+};
+
 const getPressureWarnings = (pressures = {}) => {
   const warnings = [];
 
@@ -1807,6 +1834,21 @@ export default function NotesSubmission() {
   const generatedSessionId = isQuickTab
     ? generatedQuickSessionId
     : generatedDetailSessionId;
+  const detailAdvancedFieldCount = useMemo(
+    () =>
+      countFilledValues({
+        suspension: detailForm.suspension,
+        alignment: detailForm.alignment,
+        tire_temperatures: detailForm.tire_temperatures,
+        tire_inventory: detailForm.tire_inventory,
+      }),
+    [
+      detailForm.alignment,
+      detailForm.suspension,
+      detailForm.tire_inventory,
+      detailForm.tire_temperatures,
+    ],
+  );
   const activeFieldTouched = fieldTouched[activeTabKey] || {};
   const activeValidationAttempted = validationAttempted[activeTabKey] || false;
   const validationErrors = useMemo(
@@ -2476,18 +2518,34 @@ export default function NotesSubmission() {
                     rows={4}
                   />
 
-                  <div style={{ marginTop: "0.5rem" }}>
-                    <label className="form-label sub-label">Photo</label>
-                    <input
-                      data-testid="detail-photo-input"
+                <div style={{ marginTop: "0.5rem" }}>
+                  <label className="form-label sub-label">Photo</label>
+                  <input
+                    data-testid="detail-photo-input"
                       className="input"
                       type="file"
                       accept="image/*"
-                      onChange={(e) => handleImageChange(e, setImageValue)}
-                    />
-                  </div>
+                    onChange={(e) => handleImageChange(e, setImageValue)}
+                  />
                 </div>
+              </div>
 
+              <details className="notes-advanced-details">
+                <summary className="notes-advanced-details-summary">
+                  <div className="notes-advanced-details-copy">
+                    <span className="notes-advanced-details-eyebrow">Advanced Setup Fields</span>
+                    <strong>Open the full chassis, temperature, and inventory sections only when needed.</strong>
+                    <p>
+                      Keep the detailed form lighter by expanding these optional sections only when you need the full
+                      structured dataset.
+                    </p>
+                  </div>
+                  <span className="notes-advanced-details-badge">
+                    {detailAdvancedFieldCount ? `${detailAdvancedFieldCount} values present` : "Optional"}
+                  </span>
+                </summary>
+
+                <div className="notes-advanced-details-body">
                 <div className="form-group">
                   <label className="form-label">Suspension</label>
                   <div className="grid-2">
@@ -3344,6 +3402,8 @@ export default function NotesSubmission() {
                     </div>
                   </div>
                 </div>
+                </div>
+              </details>
               </>
             )}
 

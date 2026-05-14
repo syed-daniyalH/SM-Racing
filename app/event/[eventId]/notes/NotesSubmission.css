@@ -159,6 +159,83 @@
   margin-bottom: 1.15rem;
 }
 
+.notes-advanced-details {
+  margin-bottom: 1.15rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+    linear-gradient(160deg, rgba(18, 18, 18, 0.96), rgba(10, 10, 10, 0.96));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.notes-advanced-details[open] {
+  border-color: rgba(255, 149, 0, 0.2);
+}
+
+.notes-advanced-details-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.05rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.notes-advanced-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.notes-advanced-details-copy {
+  min-width: 0;
+}
+
+.notes-advanced-details-eyebrow {
+  display: inline-flex;
+  margin-bottom: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ffbf9f;
+}
+
+.notes-advanced-details-copy strong {
+  display: block;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.notes-advanced-details-copy p {
+  margin: 0.35rem 0 0;
+  color: var(--color-text-light);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.notes-advanced-details-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.notes-advanced-details-body {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0 1.05rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .form-label {
   display: block;
   font-size: 0.75rem;
@@ -756,6 +833,15 @@
 @media (max-width: 768px) {
   .grid-2 {
     grid-template-columns: 1fr;
+  }
+
+  .notes-advanced-details-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notes-advanced-details-badge {
+    align-self: flex-start;
   }
 
   .raw-notes-header {

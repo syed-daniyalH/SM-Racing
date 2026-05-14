@@ -271,6 +271,7 @@
 .event-detail-panels {
   display: grid;
   grid-template-columns: minmax(0, 1.22fr) minmax(0, 0.92fr);
+  align-items: start;
   gap: 1rem;
   margin-bottom: 1rem;
 }
@@ -298,7 +299,7 @@
 }
 
 .event-detail-run-group-card {
-  min-height: 280px;
+  min-height: clamp(220px, 26vw, 280px);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
