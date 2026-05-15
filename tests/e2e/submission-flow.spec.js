@@ -982,6 +982,169 @@ test.describe("submission flow", () => {
     await expect(page.getByAltText("OCR note preview")).toBeVisible();
   });
 
+  test("ocr notes keep printed-form review focused on the upper setup block", async ({ page }) => {
+    await mockSubmissionApp(page, {
+      buildOcrPreviewResponse: () => ({
+        status: "partial_extracted",
+        message: "Partial OCR extracted. Please review highlighted fields.",
+        doc_type: "printed_form_with_values",
+        confidence: 0.74,
+        model_used: "gpt-5.4",
+        fallback_used: false,
+        metadata: {
+          driver_text: "Alex G",
+          track_text: TRACK_NAME,
+          session_text: "04/18/26 10:15 AM",
+        },
+        structured_data: {
+          alignment: {
+            rh_fl: "80.0",
+            rh_fr: "81.1",
+            rh_rl: "121.0",
+            rh_rr: "120.8",
+            ride_height_f: "80.0",
+            ride_height_r: "121.0",
+            camber_fl: "3.8",
+            camber_fr: "4.0",
+            camber_rl: "3.3",
+            camber_rr: "3.7",
+            toe_fl: "0.10 out",
+            toe_fr: "0.12 out",
+            toe_rl: "0.05 in",
+            toe_rr: "0.06 in",
+            toe_front: "0.10 out",
+            toe_rear: "0.05 in",
+            caster_l: "",
+            caster_r: "",
+            rake_mm: "2.5",
+            wheelbase_mm: "109.9",
+          },
+          pressures: {
+            cold: { fl: "22.8", fr: "23.1", rl: "21.9", rr: "22.2" },
+            hot: { fl: "", fr: "", rl: "", rr: "" },
+          },
+          suspension: {},
+          sheet_fields: {
+            fuel_liters: "42",
+            driver_weight_lbs: "178",
+            scale_weight_lbs: "1278",
+            cross_weight_percent: "50.2%",
+            roll_bar_text: "3 front / 2 rear",
+            spacer_text: "8",
+            bump_text: "6",
+            rebound_text: "9",
+            springs_front: "900",
+            springs_rear: "1050",
+            bump_stops_front: "6",
+            bump_stops_rear: "8",
+            wheelbase_left_mm: "109.8",
+            wheelbase_right_mm: "109.9",
+            wing_rake_deg: "2.5",
+            wing_angle_deg: "7",
+            wing_gurney_mm: "12",
+            notes_block: "Good overall balance; slight push on entry.",
+            fuel_pumped_out_liters: "",
+          },
+          post_session: {
+            camber_text: "3.6 / 3.8 / 3.1 / 3.5",
+            toe_text: "0.08 out / 0.10 out / 0.04 in / 0.05 in",
+            weight_text: "528 / 533 / 842 / 846",
+            height_text: "80.2 / 81.3 / 121.1 / 120.9",
+            shocks_text: "6 / 9 / 6 / 9",
+          },
+          shock_setup: { rr: {}, lr: {}, lf: {}, rf: {} },
+          notes: [
+            "Good overall balance, slight push on entry.",
+            "Entry stability improved with more front bar.",
+          ],
+        },
+        raw_evidence: {
+          visible_text: ["Alex G", "Sebring", "Fuel 42", "Camber 3.8 4.0 3.3 3.7"],
+          detected_grids: [{ label: "Camber" }, { label: "Toe" }, { label: "Height" }],
+          detected_labels: [{ label: "CAMBER" }, { label: "TOE" }],
+          unmapped_values: ["Good overall balance, slight push on entry."],
+          template_labels: ["CAMBER", "TOE", "HEIGHT", "WEIGHT"],
+          quality_flags: [],
+        },
+        review_flags: ["Manual review required"],
+        raw_text: "Alex G Sebring Fuel 42 Camber 3.8 4.0 3.3 3.7",
+        extracted_text: "Alex G Sebring Fuel 42 Camber 3.8 4.0 3.3 3.7",
+        summary: "Printed setup sheet parsed with upper and lower sections",
+        recommended_review_status: "PENDING",
+        parser_version: "ocr-v1",
+        field_evidence: [
+          {
+            category: "alignment",
+            key: "camber_fl",
+            raw: "3.8",
+            value: "3.8",
+            unit: "",
+            confidence: 0.74,
+            needs_review: true,
+            source: "layout_grid",
+            inferred_from_layout: true,
+          },
+          {
+            category: "session_context",
+            key: "track_text",
+            raw: TRACK_NAME,
+            value: TRACK_NAME,
+            unit: "",
+            confidence: 0.74,
+            needs_review: true,
+            source: "ocr_text",
+            inferred_from_layout: false,
+          },
+          {
+            category: "post_session",
+            key: "camber_text",
+            raw: "3.6 / 3.8 / 3.1 / 3.5",
+            value: "3.6 / 3.8 / 3.1 / 3.5",
+            unit: "",
+            confidence: 0.74,
+            needs_review: true,
+            source: "after_session_block",
+            inferred_from_layout: false,
+          },
+        ],
+        normalized_sections: {
+          session_context: {
+            driver_text: "Alex G",
+            track_text: TRACK_NAME,
+            session_text: "04/18/26 10:15 AM",
+          },
+          post_session: {
+            camber_text: "3.6 / 3.8 / 3.1 / 3.5",
+            toe_text: "0.08 out / 0.10 out / 0.04 in / 0.05 in",
+            weight_text: "528 / 533 / 842 / 846",
+            height_text: "80.2 / 81.3 / 121.1 / 120.9",
+            shocks_text: "6 / 9 / 6 / 9",
+            fuel_pumped_out_liters: "",
+          },
+        },
+        preprocessing: { selected_variant: "cropped_paper" },
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "printed-form.png",
+      mimeType: "image/png",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    await expect(page.getByLabel("Fuel (Liters)")).toBeVisible();
+    await expect(page.getByLabel("Driver Weight (lbs)")).toBeVisible();
+    await expect(page.getByLabel("Roll-Bar")).toBeVisible();
+    await expect(page.getByText("Header / Session").first()).toBeVisible();
+    const afterSessionTrigger = page.getByRole("button", { name: /After Session Set-Down & Notes/i });
+    await expect(afterSessionTrigger).toBeVisible();
+    await expect(afterSessionTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByLabel("After Session Camber")).not.toBeVisible();
+    await expect(page.getByRole("button", { name: /Shock setup sheet/i })).not.toBeVisible();
+  });
+
   test("ocr notes keep raw OCR text visible when parser fallback is used", async ({ page }) => {
     await mockSubmissionApp(page, {
       buildOcrPreviewResponse: () => ({

@@ -69,6 +69,39 @@ OCR_DOCUMENT_TYPES = (
     "low_quality_review_required",
     "unknown",
 )
+PRINTED_FORM_PRIMARY_SHEET_FIELD_KEYS = (
+    "fuel_liters",
+    "driver_weight_lbs",
+    "scale_weight_lbs",
+    "cross_weight_percent",
+    "roll_bar_text",
+    "spacer_text",
+    "bump_text",
+    "rebound_text",
+    "springs_front",
+    "springs_rear",
+    "bump_stops_front",
+    "bump_stops_rear",
+    "wheelbase_left_mm",
+    "wheelbase_right_mm",
+    "wing_rake_deg",
+    "wing_angle_deg",
+    "wing_gurney_mm",
+    "wicker_text",
+    "specs_toe_text",
+    "corner_weight_text",
+    "static_ride_height_text",
+    "bump_stop_height_text",
+    "arb_front_text",
+    "arb_rear_text",
+)
+PRINTED_FORM_AFTER_SESSION_FIELD_KEYS = (
+    "camber_text",
+    "toe_text",
+    "weight_text",
+    "height_text",
+    "shocks_text",
+)
 OCR_ABBREVIATION_MAP = {
     "RH": "ride_height",
     "R H": "ride_height",
@@ -1337,6 +1370,19 @@ def _build_field_evidence_from_setup(
             needs_review=needs_review,
         )
 
+    post_session = _dict(setup.get("post_session"))
+    for key, value in post_session.items():
+        _append_field_evidence(
+            field_evidence,
+            category="post_session",
+            key=key,
+            raw=value,
+            value=value,
+            confidence=evidence_confidence,
+            source="after_session_block",
+            needs_review=needs_review,
+        )
+
     shock_setup = _dict(setup.get("shock_setup"))
     for corner, values in shock_setup.items():
         for key, value in _dict(values).items():
@@ -1401,6 +1447,7 @@ def _build_normalized_sections(
     sheet_fields = _dict(setup.get("sheet_fields"))
     suspension = _dict(setup.get("suspension"))
     shock_setup = _dict(setup.get("shock_setup"))
+    post_session = _dict(setup.get("post_session"))
 
     return {
         "session_context": {
@@ -1452,6 +1499,10 @@ def _build_normalized_sections(
             "rear": _normalize_text(sheet_fields.get("bump_stops_rear")),
             "height_text": _normalize_text(sheet_fields.get("bump_stop_height_text")),
         },
+        "post_session": {
+            **post_session,
+            "fuel_pumped_out_liters": _normalize_text(sheet_fields.get("fuel_pumped_out_liters")),
+        },
         "notes": notes,
         "unmapped_values": raw_evidence.get("unmapped_values", []),
     }
@@ -1472,6 +1523,82 @@ def _count_meaningful_fields(setup: dict[str, Any], notes: list[str], raw_text: 
     if raw_text:
         total += 1
     return total
+
+
+def _count_non_empty_fields(group: dict[str, Any], keys: tuple[str, ...]) -> int:
+    return sum(1 for key in keys if _normalize_text(group.get(key)))
+
+
+def _count_printed_form_primary_fields(setup: dict[str, Any]) -> int:
+    alignment = _dict(setup.get("alignment"))
+    pressures = _dict(setup.get("pressures"))
+    sheet_fields = _dict(setup.get("sheet_fields"))
+
+    return (
+        _count_non_empty_fields(
+            alignment,
+            (
+                "rh_fl",
+                "rh_fr",
+                "rh_rl",
+                "rh_rr",
+                "ride_height_f",
+                "ride_height_r",
+                "camber_fl",
+                "camber_fr",
+                "camber_rl",
+                "camber_rr",
+                "toe_fl",
+                "toe_fr",
+                "toe_rl",
+                "toe_rr",
+                "toe_front",
+                "toe_rear",
+                "wheelbase_mm",
+            ),
+        )
+        + _count_non_empty_fields(
+            pressures,
+            (
+                "cold_fl",
+                "cold_fr",
+                "cold_rl",
+                "cold_rr",
+                "hot_fl",
+                "hot_fr",
+                "hot_rl",
+                "hot_rr",
+            ),
+        )
+        + _count_non_empty_fields(sheet_fields, PRINTED_FORM_PRIMARY_SHEET_FIELD_KEYS)
+    )
+
+
+def _count_printed_form_after_session_fields(setup: dict[str, Any]) -> int:
+    sheet_fields = _dict(setup.get("sheet_fields"))
+    post_session = _dict(setup.get("post_session"))
+    return _count_non_empty_fields(post_session, PRINTED_FORM_AFTER_SESSION_FIELD_KEYS) + (
+        1 if _normalize_text(sheet_fields.get("fuel_pumped_out_liters")) else 0
+    )
+
+
+def _has_strong_printed_form_layout(
+    *,
+    doc_type: str,
+    classifier: dict[str, Any],
+    raw_evidence: dict[str, Any],
+    template_name: str,
+) -> bool:
+    if doc_type != "printed_form_with_values":
+        return False
+
+    classifier_confidence = _normalize_float(classifier.get("confidence"))
+    template_label_count = len(raw_evidence.get("template_labels", []))
+    return (
+        classifier_confidence >= 0.7
+        or template_label_count >= 3
+        or bool(template_name)
+    )
 
 
 def _apply_corner_grid(
@@ -1588,6 +1715,8 @@ def _derive_ocr_status(
     has_values: bool,
     confidence: float,
     field_count: int,
+    primary_field_count: int = 0,
+    layout_confident: bool = False,
     raw_text: str,
     raw_evidence: dict[str, Any],
     warnings: list[str],
@@ -1609,6 +1738,18 @@ def _derive_ocr_status(
         return OCR_STATUS_LOW_QUALITY
 
     raw_signal_count = len(raw_evidence.get("visible_text", [])) + len(raw_evidence.get("unmapped_values", []))
+
+    if doc_type == "printed_form_with_values":
+        if (
+            primary_field_count >= max(OCR_MIN_MEANINGFUL_FIELDS * 2, 6)
+            and layout_confident
+            and raw_text
+            and confidence >= 0.45
+        ):
+            return OCR_STATUS_PARTIAL_EXTRACTED if warnings else OCR_STATUS_SUCCESS
+
+        if primary_field_count >= OCR_MIN_MEANINGFUL_FIELDS and (layout_confident or raw_text):
+            return OCR_STATUS_PARTIAL_EXTRACTED
 
     if field_count >= OCR_MIN_MEANINGFUL_FIELDS and confidence >= OCR_PRIMARY_CONFIDENCE_THRESHOLD and raw_text:
         if warnings:
@@ -1737,6 +1878,14 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         extracted_text = "\n".join(normalized_setup["notes"])
 
     field_count = _count_meaningful_fields(normalized_setup, normalized_setup["notes"], extracted_text)
+    printed_form_primary_field_count = _count_printed_form_primary_fields(normalized_setup)
+    printed_form_after_session_field_count = _count_printed_form_after_session_fields(normalized_setup)
+    printed_form_layout_confident = _has_strong_printed_form_layout(
+        doc_type=doc_type,
+        classifier=classifier,
+        raw_evidence=raw_evidence,
+        template_name=template_name,
+    )
     has_values = has_values or field_count > 0 or (
         bool(extracted_text) and doc_type not in {"blank_setup_sheet", "shock_setup_sheet"}
     )
@@ -1764,11 +1913,21 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         _append_warning(warnings, "Some values could not be mapped")
 
     flag_text = " ".join(warnings).lower()
-    if requested_status not in {OCR_STATUS_EXTRACTION_FAILED, OCR_STATUS_BLANK_TEMPLATE} and doc_type not in {"blank_setup_sheet", "unknown"} and (
-        confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD
-        or any(keyword in flag_text for keyword in OCR_SEVERE_QUALITY_FLAG_KEYWORDS)
-    ):
-        doc_type = "low_quality_review_required"
+    should_downgrade_for_quality = (
+        requested_status not in {OCR_STATUS_EXTRACTION_FAILED, OCR_STATUS_BLANK_TEMPLATE}
+        and doc_type not in {"blank_setup_sheet", "unknown"}
+        and (
+            confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD
+            or any(keyword in flag_text for keyword in OCR_SEVERE_QUALITY_FLAG_KEYWORDS)
+        )
+    )
+    if should_downgrade_for_quality:
+        if not (
+            doc_type == "printed_form_with_values"
+            and printed_form_layout_confident
+            and printed_form_primary_field_count >= OCR_MIN_MEANINGFUL_FIELDS
+        ):
+            doc_type = "low_quality_review_required"
 
     recommended_review_status = _normalize_text(analysis.get("recommended_review_status")) or "PENDING"
     if doc_type != "unknown":
@@ -1780,6 +1939,8 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         has_values=has_values,
         confidence=confidence,
         field_count=field_count,
+        primary_field_count=printed_form_primary_field_count,
+        layout_confident=printed_form_layout_confident,
         raw_text=extracted_text,
         raw_evidence=raw_evidence,
         warnings=warnings,
@@ -1840,6 +2001,8 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
             "notes": _normalize_notes(preprocessing.get("preprocessing_notes")),
         },
         "_field_count": field_count,
+        "_printed_form_primary_field_count": printed_form_primary_field_count,
+        "_printed_form_after_session_field_count": printed_form_after_session_field_count,
     }
 
 
@@ -2226,9 +2389,16 @@ def _document_specific_prompt_addendum(doc_type: str) -> str:
     if doc_type == "printed_form_with_values":
         return (
             "Document-specific rules:\n"
-            "- Extract handwritten or machine-written values from printed fields and 2x2 grids.\n"
-            "- Preserve field labels and nearby notes.\n"
-            "- Treat missing values as empty, not failure.\n"
+            "- This is a structured printed setup sheet with handwritten values.\n"
+            "- Read it by zones instead of flattening the whole page at once.\n"
+            "- Zone 1 header/session context: date, time, driver, track, and header/session labels.\n"
+            "- Zone 2 upper/main setup block: map camber, toe, pressures, ride height, corner weight / weight / percentage, "
+            "roll-bar, spacer, bump, rebound, fuel, driver weight, springs, bump-stops, wheel base, wing, and notes.\n"
+            "- Zone 3 notes block: preserve the handwritten notes lines in setup.notes and sheet_fields.notes_block.\n"
+            "- Zone 4 lower after-session block: map any values under 'After Session Set-Down' or similar labels into setup.post_session only.\n"
+            "- Do not let lower after-session values overwrite the upper/main setup values.\n"
+            "- Treat missing fields as empty, not failure.\n"
+            "- Preserve field labels, nearby notes, and any unmatched printed-field values in raw_evidence and field_evidence.\n"
         )
     if doc_type == "handwritten_setup_grid":
         return (

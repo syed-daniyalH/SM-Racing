@@ -170,12 +170,60 @@ const CLIENT_SHEET_FIELDS = [
   ["fuel_pumped_out_liters", "Fuel Pumped Out"],
 ];
 
+const PRINTED_FORM_PRIMARY_FIELDS = CLIENT_SHEET_FIELDS.filter(
+  ([field]) => field !== "fuel_pumped_out_liters",
+);
+
+const PRINTED_FORM_MAIN_FIELD_GROUPS = [
+  {
+    title: "Upper Setup Sheet",
+    subtitle: "Fuel, bars, bump, rebound, weights, and springs",
+    fields: [
+      ["fuel_liters", "Fuel (Liters)"],
+      ["driver_weight_lbs", "Driver Weight (lbs)"],
+      ["scale_weight_lbs", "Scale Weight (lbs)"],
+      ["cross_weight_percent", "Cross Weight (%)"],
+      ["roll_bar_text", "Roll-Bar"],
+      ["spacer_text", "Spacer"],
+      ["bump_text", "Bump"],
+      ["rebound_text", "Rebound"],
+      ["springs_front", "Springs Front"],
+      ["springs_rear", "Springs Rear"],
+      ["bump_stops_front", "Bump-Stops Front"],
+      ["bump_stops_rear", "Bump-Stops Rear"],
+    ],
+  },
+  {
+    title: "Geometry and Aero Labels",
+    subtitle: "Wheelbase, wing, ARB, and template-specific setup values",
+    fields: [
+      ["wheelbase_left_mm", "Wheelbase Left"],
+      ["wheelbase_right_mm", "Wheelbase Right"],
+      ["wing_rake_deg", "Wing Rake"],
+      ["wing_angle_deg", "Wing Angle"],
+      ["wing_gurney_mm", "Wing Gurney"],
+      ["wicker_text", "Wicker"],
+      ["specs_toe_text", "Specs Toe"],
+      ["corner_weight_text", "Corner Weight"],
+      ["static_ride_height_text", "Static Ride Height"],
+      ["bump_stop_height_text", "Bump Stop Height"],
+      ["arb_front_text", "ARB Front"],
+      ["arb_rear_text", "ARB Rear"],
+    ],
+  },
+];
+
 const POST_SESSION_FIELDS = [
   ["camber_text", "After Session Camber"],
   ["toe_text", "After Session Toe"],
   ["weight_text", "After Session Weight"],
   ["height_text", "After Session Height"],
   ["shocks_text", "After Session Shocks"],
+];
+
+const PRINTED_FORM_AFTER_SESSION_FIELDS = [
+  ["fuel_pumped_out_liters", "Fuel Pumped Out"],
+  ...POST_SESSION_FIELDS,
 ];
 
 const SHOCK_SETUP_GROUPS = [
@@ -455,6 +503,12 @@ const countMeaningfulValues = (value) => {
     return total + (normalizeText(item).length > 0 ? 1 : 0);
   }, 0);
 };
+
+const pickFieldSubset = (source, fields) =>
+  fields.reduce((accumulator, [field]) => {
+    accumulator[field] = source?.[field] ?? "";
+    return accumulator;
+  }, {});
 
 const formatCapturedSummary = (count, populatedLabel, emptyLabel = "Available for manual entry") =>
   count > 0 ? `${count} ${populatedLabel}${count === 1 ? "" : "s"} captured` : emptyLabel;
@@ -1323,6 +1377,7 @@ export default function OCRNotesPage() {
       : "Pending extract";
   const runtimeRetryLabel =
     workflowState === "rerunning_ocr" ? "Rerunning..." : hasExtractedDraft ? "Rerun OCR" : "Retry OCR";
+  const isPrintedFormDoc = reviewDraft.docType === "printed_form_with_values";
 
   const suspensionFieldCount = useMemo(() => countMeaningfulValues(reviewDraft.suspension), [reviewDraft.suspension]);
   const templateFieldCount = useMemo(
@@ -1330,6 +1385,66 @@ export default function OCRNotesPage() {
     [reviewDraft.sheetFields, reviewDraft.postSession],
   );
   const shockSetupFieldCount = useMemo(() => countMeaningfulValues(reviewDraft.shockSetup), [reviewDraft.shockSetup]);
+  const printedFormPrimaryFieldCount = useMemo(
+    () =>
+      countMeaningfulValues(reviewDraft.alignment) +
+      countMeaningfulValues(reviewDraft.pressures) +
+      countMeaningfulValues(pickFieldSubset(reviewDraft.sheetFields, PRINTED_FORM_PRIMARY_FIELDS)),
+    [reviewDraft.alignment, reviewDraft.pressures, reviewDraft.sheetFields],
+  );
+  const printedFormAfterSessionFieldCount = useMemo(
+    () =>
+      countMeaningfulValues(reviewDraft.postSession) +
+      (normalizeText(reviewDraft.sheetFields?.fuel_pumped_out_liters) ? 1 : 0),
+    [reviewDraft.postSession, reviewDraft.sheetFields],
+  );
+  const printedFormHeaderFieldCount = useMemo(
+    () => countMeaningfulValues(reviewDraft.normalizedSections?.session_context || reviewDraft.metadata),
+    [reviewDraft.metadata, reviewDraft.normalizedSections],
+  );
+  const printedFormNotesCount = useMemo(
+    () =>
+      splitNotes(reviewDraft.notes).length +
+      (normalizeText(reviewDraft.sheetFields?.notes_block) ? 1 : 0) +
+      (normalizeText(reviewDraft.rawText || reviewDraft.extractedText) ? 1 : 0),
+    [reviewDraft.notes, reviewDraft.sheetFields, reviewDraft.rawText, reviewDraft.extractedText],
+  );
+  const printedFormEvidenceStats = useMemo(() => {
+    const mainCategories = new Set([
+      "session_context",
+      "alignment",
+      "tire_pressure",
+      "corner_weight",
+      "springs",
+      "anti_roll_bar",
+      "wing",
+      "wheel_base",
+      "bump_stops",
+      "notes",
+      "post_session",
+    ]);
+    const evidence = Array.isArray(reviewDraft.fieldEvidence) ? reviewDraft.fieldEvidence : [];
+    return evidence.reduce(
+      (totals, entry) => {
+        if (!mainCategories.has(entry?.category)) {
+          return totals;
+        }
+
+        if (entry?.inferred_from_layout) {
+          totals.inferred += 1;
+        } else {
+          totals.direct += 1;
+        }
+
+        if (entry?.needs_review) {
+          totals.review += 1;
+        }
+
+        return totals;
+      },
+      { direct: 0, inferred: 0, review: 0 },
+    );
+  }, [reviewDraft.fieldEvidence]);
   const noteSignalCount = useMemo(
     () =>
       splitNotes(reviewDraft.notes).length +
@@ -1350,20 +1465,22 @@ export default function OCRNotesPage() {
   const defaultAdvancedAccordionSections = useMemo(() => {
     const sections = ["notes"];
 
-    if (suspensionFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet") {
+    if ((suspensionFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet") && !isPrintedFormDoc) {
       sections.push("suspension");
     }
 
-    if (templateFieldCount > 0) {
+    if (!isPrintedFormDoc && templateFieldCount > 0) {
       sections.push("template");
     }
 
-    if (shockSetupFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet") {
+    if (reviewDraft.docType === "shock_setup_sheet") {
       sections.push("shock-sheet");
     }
 
     return sections;
-  }, [reviewDraft.docType, shockSetupFieldCount, suspensionFieldCount, templateFieldCount]);
+  }, [isPrintedFormDoc, reviewDraft.docType, suspensionFieldCount, templateFieldCount]);
+  const showSuspensionAccordion = !isPrintedFormDoc || suspensionFieldCount > 0 || reviewDraft.docType === "shock_setup_sheet";
+  const showShockSetupAccordion = reviewDraft.docType === "shock_setup_sheet" || shockSetupFieldCount > 0;
 
   const workflowPresentation = getWorkflowPresentation(effectiveWorkflowState);
   const submissionWindowNote = !submissionState.isOpen
@@ -2208,6 +2325,43 @@ export default function OCRNotesPage() {
                     : "The OCR draft stays editable, but the screen now keeps the high-value setup fields front and center. Advanced template fields stay tucked away until you actually need them."}
                 </p>
 
+                {isPrintedFormDoc ? (
+                  <div className="ocr-notes-metadata-list ocr-notes-printed-summary">
+                    <div>
+                      <span>Header / Session</span>
+                      <strong>{formatCapturedSummary(printedFormHeaderFieldCount, "header signal")}</strong>
+                    </div>
+                    <div>
+                      <span>Main Setup</span>
+                      <strong>{formatCapturedSummary(printedFormPrimaryFieldCount, "main setup value")}</strong>
+                    </div>
+                    <div>
+                      <span>After Session</span>
+                      <strong>{formatCapturedSummary(printedFormAfterSessionFieldCount, "after-session value")}</strong>
+                    </div>
+                    <div>
+                      <span>Notes</span>
+                      <strong>{formatCapturedSummary(printedFormNotesCount, "note item")}</strong>
+                    </div>
+                    <div>
+                      <span>Direct Evidence</span>
+                      <strong>{formatCapturedSummary(printedFormEvidenceStats.direct, "direct field")}</strong>
+                    </div>
+                    <div>
+                      <span>Layout-Inferred</span>
+                      <strong>{formatCapturedSummary(printedFormEvidenceStats.inferred, "layout field")}</strong>
+                    </div>
+                    <div>
+                      <span>Needs Review</span>
+                      <strong>{formatCapturedSummary(printedFormEvidenceStats.review, "review flag")}</strong>
+                    </div>
+                    <div>
+                      <span>Template</span>
+                      <strong>{reviewDraft.templateName || "Printed form"}</strong>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="ocr-notes-review-grid ocr-notes-review-grid-core">
                   <div className="ocr-notes-review-section">
                     <div className="ocr-notes-review-section-head">
@@ -2386,12 +2540,49 @@ export default function OCRNotesPage() {
                       ))}
                     </div>
                   </div>
+
+                  {isPrintedFormDoc
+                    ? PRINTED_FORM_MAIN_FIELD_GROUPS.map((group) => (
+                        <div key={group.title} className="ocr-notes-review-section">
+                          <div className="ocr-notes-review-section-head">
+                            <h3>{group.title}</h3>
+                            <span>{group.subtitle}</span>
+                          </div>
+                          <div className="ocr-notes-form-grid">
+                            {group.fields.map(([field, label]) => (
+                              <div key={field} className="ocr-notes-field">
+                                <label htmlFor={`ocr-printed-field-${field}`}>{label}</label>
+                                <input
+                                  id={`ocr-printed-field-${field}`}
+                                  className="ocr-notes-input"
+                                  type="text"
+                                  value={reviewDraft.sheetFields[field]}
+                                  onChange={(eventLike) =>
+                                    handleReviewEdit((prev) => ({
+                                      ...prev,
+                                      sheetFields: {
+                                        ...prev.sheetFields,
+                                        [field]: eventLike.target.value,
+                                      },
+                                    }))
+                                  }
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    : null}
                 </div>
 
                 <div className="ocr-notes-review-advanced-shell">
                   <div className="ocr-notes-review-advanced-head">
-                    <h3>Advanced and reference fields</h3>
-                    <span>Open only the sections you need for review or manual correction.</span>
+                    <h3>{isPrintedFormDoc ? "Printed form reference sections" : "Advanced and reference fields"}</h3>
+                    <span>
+                      {isPrintedFormDoc
+                        ? "The upper/main setup block stays focused above. After-session, notes, and any optional reference sections stay collapsed until you need them."
+                        : "Open only the sections you need for review or manual correction."}
+                    </span>
                   </div>
 
                   <Accordion
@@ -2549,7 +2740,8 @@ export default function OCRNotesPage() {
                       </AccordionContent>
                     </AccordionItem>
 
-                    <AccordionItem value="suspension" className="ocr-notes-review-accordion-item">
+                    {showSuspensionAccordion ? (
+                      <AccordionItem value="suspension" className="ocr-notes-review-accordion-item">
                       <AccordionTrigger className="ocr-notes-review-accordion-trigger">
                         <div className="ocr-notes-review-accordion-copy">
                           <strong>Suspension / Shocks</strong>
@@ -2615,9 +2807,104 @@ export default function OCRNotesPage() {
                           </div>
                         </div>
                       </AccordionContent>
-                    </AccordionItem>
+                      </AccordionItem>
+                    ) : null}
 
-                    <AccordionItem value="template" className="ocr-notes-review-accordion-item">
+                    {isPrintedFormDoc ? (
+                      <AccordionItem value="after-session" className="ocr-notes-review-accordion-item">
+                        <AccordionTrigger className="ocr-notes-review-accordion-trigger">
+                          <div className="ocr-notes-review-accordion-copy">
+                            <strong>After Session Set-Down & Notes</strong>
+                            <span>
+                              {printedFormAfterSessionFieldCount > 0
+                                ? `${printedFormAfterSessionFieldCount} after-session value${
+                                    printedFormAfterSessionFieldCount === 1 ? "" : "s"
+                                  } captured`
+                                : "Collapsed by default so the upper setup block stays primary."}
+                            </span>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="ocr-notes-review-accordion-content">
+                          <div className="ocr-notes-review-grid ocr-notes-review-grid-advanced">
+                            <div className="ocr-notes-review-section">
+                              <div className="ocr-notes-review-section-head">
+                                <h3>After Session Set-Down</h3>
+                                <span>Keep the lower block separate from the main setup values</span>
+                              </div>
+                              <div className="ocr-notes-form-grid">
+                                {PRINTED_FORM_AFTER_SESSION_FIELDS.map(([field, label]) => {
+                                  const isSheetField = field === "fuel_pumped_out_liters";
+                                  return (
+                                    <div key={field} className="ocr-notes-field">
+                                      <label htmlFor={`ocr-after-session-field-${field}`}>{label}</label>
+                                      <input
+                                        id={`ocr-after-session-field-${field}`}
+                                        className="ocr-notes-input"
+                                        type="text"
+                                        value={isSheetField ? reviewDraft.sheetFields[field] : reviewDraft.postSession[field]}
+                                        onChange={(eventLike) =>
+                                          handleReviewEdit((prev) => ({
+                                            ...prev,
+                                            ...(isSheetField
+                                              ? {
+                                                  sheetFields: {
+                                                    ...prev.sheetFields,
+                                                    [field]: eventLike.target.value,
+                                                  },
+                                                }
+                                              : {
+                                                  postSession: {
+                                                    ...prev.postSession,
+                                                    [field]: eventLike.target.value,
+                                                  },
+                                                }),
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="ocr-notes-review-section">
+                              <div className="ocr-notes-review-section-head">
+                                <h3>Template Notes Block</h3>
+                                <span>Preserve the printed-form notes area without cluttering the main review grid</span>
+                              </div>
+                              <div className="ocr-notes-field ocr-notes-field-wide">
+                                <label>Template Notes Block</label>
+                                <textarea
+                                  className="ocr-notes-textarea"
+                                  rows={7}
+                                  value={reviewDraft.sheetFields.notes_block}
+                                  onChange={(eventLike) =>
+                                    handleReviewEdit((prev) => ({
+                                      ...prev,
+                                      sheetFields: {
+                                        ...prev.sheetFields,
+                                        notes_block: eventLike.target.value,
+                                      },
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="ocr-notes-metadata-list">
+                                <div>
+                                  <span>Main Setup Preserved</span>
+                                  <strong>{formatCapturedSummary(printedFormPrimaryFieldCount, "main field")}</strong>
+                                </div>
+                                <div>
+                                  <span>After Session Preserved</span>
+                                  <strong>{formatCapturedSummary(printedFormAfterSessionFieldCount, "after-session field")}</strong>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ) : (
+                      <AccordionItem value="template" className="ocr-notes-review-accordion-item">
                       <AccordionTrigger className="ocr-notes-review-accordion-trigger">
                         <div className="ocr-notes-review-accordion-copy">
                           <strong>Template-specific fields</strong>
@@ -2700,9 +2987,11 @@ export default function OCRNotesPage() {
                           </div>
                         </div>
                       </AccordionContent>
-                    </AccordionItem>
+                      </AccordionItem>
+                    )}
 
-                    <AccordionItem value="shock-sheet" className="ocr-notes-review-accordion-item">
+                    {showShockSetupAccordion ? (
+                      <AccordionItem value="shock-sheet" className="ocr-notes-review-accordion-item">
                       <AccordionTrigger className="ocr-notes-review-accordion-trigger">
                         <div className="ocr-notes-review-accordion-copy">
                           <strong>Shock setup sheet</strong>
@@ -2750,7 +3039,8 @@ export default function OCRNotesPage() {
                           </div>
                         </div>
                       </AccordionContent>
-                    </AccordionItem>
+                      </AccordionItem>
+                    ) : null}
                   </Accordion>
                 </div>
               </div>

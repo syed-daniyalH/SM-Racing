@@ -2533,6 +2533,163 @@ def test_low_quality_image_keeps_raw_evidence_for_review():
     assert "22.5 psi" in normalized["raw_evidence"]["unmapped_values"]
 
 
+def test_normalize_image_analysis_keeps_clean_printed_form_primary_and_after_session_separate():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "printed_form_with_values",
+            "template_name": "farnbacher_loles_setup_sheet",
+            "has_values": True,
+            "confidence": 0.74,
+            "summary": "Printed setup form with upper and lower sections",
+            "extracted_text": "Alex G Sebring 42 liters 3.8 4.0",
+            "classifier": {
+                "document_type": "printed_form_with_values",
+                "template_name": "farnbacher_loles_setup_sheet",
+                "confidence": 0.92,
+                "has_values": True,
+                "blocked_by_hand": False,
+                "quality_flags": [],
+                "warnings": [],
+                "visible_text_hint": "CAMBER",
+            },
+            "metadata": {
+                "driver_text": "Alex G",
+                "track_text": "Sebring",
+                "session_text": "04/18/26 10:15 AM",
+            },
+            "setup": {
+                "alignment": {
+                    "camber_fl": "3.8",
+                    "camber_fr": "4.0",
+                    "camber_rl": "3.3",
+                    "camber_rr": "3.7",
+                    "toe_fl": "0.10 out",
+                    "toe_fr": "0.12 out",
+                    "toe_rl": "0.05 in",
+                    "toe_rr": "0.06 in",
+                    "rh_fl": "80.0",
+                    "rh_fr": "81.1",
+                    "rh_rl": "121.0",
+                    "rh_rr": "120.8",
+                },
+                "pressures": {
+                    "cold_fl": "22.8",
+                    "cold_fr": "23.1",
+                    "cold_rl": "21.9",
+                    "cold_rr": "22.2",
+                },
+                "sheet_fields": {
+                    "fuel_liters": "42",
+                    "driver_weight_lbs": "178",
+                    "scale_weight_lbs": "1278",
+                    "cross_weight_percent": "50.2%",
+                    "roll_bar_text": "3 front / 2 rear",
+                    "spacer_text": "8",
+                    "bump_text": "6",
+                    "rebound_text": "9",
+                    "springs_front": "900",
+                    "springs_rear": "1050",
+                    "bump_stops_front": "6",
+                    "bump_stops_rear": "8",
+                    "wheelbase_left_mm": "109.8",
+                    "wheelbase_right_mm": "109.9",
+                    "wing_rake_deg": "2.5",
+                    "wing_angle_deg": "7",
+                    "wing_gurney_mm": "12",
+                    "notes_block": "Good overall balance; slight push on entry.",
+                    "fuel_pumped_out_liters": "",
+                },
+                "post_session": {
+                    "camber_text": "3.6 / 3.8 / 3.1 / 3.5",
+                    "toe_text": "0.08 out / 0.10 out / 0.04 in / 0.05 in",
+                    "weight_text": "528 / 533 / 842 / 846",
+                    "height_text": "80.2 / 81.3 / 121.1 / 120.9",
+                    "shocks_text": "6 / 9 / 6 / 9",
+                },
+                "notes": ["Entry stability improved with more front bar."],
+            },
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["document_type"] == "printed_form_with_values"
+    assert normalized["status"] in {"success", "partial_extracted"}
+    assert normalized["status"] != "low_quality_review_required"
+    assert normalized["setup"]["alignment"]["camber_fl"] == "3.8"
+    assert normalized["setup"]["alignment"]["rh_fl"] == "80.0"
+    assert normalized["setup"]["post_session"]["camber_text"] == "3.6 / 3.8 / 3.1 / 3.5"
+    assert normalized["normalized_sections"]["post_session"]["height_text"] == "80.2 / 81.3 / 121.1 / 120.9"
+    assert normalized["normalized_sections"]["post_session"]["fuel_pumped_out_liters"] == ""
+    assert any(
+        entry["category"] == "post_session" and entry["key"] == "camber_text"
+        for entry in normalized["field_evidence"]
+    )
+
+
+def test_normalize_image_analysis_preserves_printed_form_layout_when_confidence_is_soft():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "printed_form_with_values",
+            "template_name": "farnbacher_loles_setup_sheet",
+            "has_values": True,
+            "confidence": 0.41,
+            "summary": "Printed setup form with sparse lower section",
+            "extracted_text": "Alex G Sebring camber 3.8 4.0 toe 0.10 out",
+            "classifier": {
+                "document_type": "printed_form_with_values",
+                "template_name": "farnbacher_loles_setup_sheet",
+                "confidence": 0.9,
+                "has_values": True,
+                "blocked_by_hand": False,
+                "quality_flags": [],
+                "warnings": [],
+                "visible_text_hint": "CAMBER",
+            },
+            "setup": {
+                "alignment": {
+                    "camber_fl": "3.8",
+                    "camber_fr": "4.0",
+                    "camber_rl": "3.3",
+                    "camber_rr": "3.7",
+                    "toe_fl": "0.10 out",
+                    "toe_fr": "0.12 out",
+                    "toe_rl": "0.05 in",
+                    "toe_rr": "0.06 in",
+                    "rh_fl": "80.0",
+                    "rh_fr": "81.1",
+                },
+                "pressures": {
+                    "cold_fl": "22.8",
+                    "cold_fr": "23.1",
+                },
+                "sheet_fields": {
+                    "fuel_liters": "42",
+                    "driver_weight_lbs": "178",
+                    "roll_bar_text": "3 front / 2 rear",
+                    "spacer_text": "8",
+                    "bump_text": "6",
+                    "rebound_text": "9",
+                },
+                "post_session": {
+                    "camber_text": "",
+                    "toe_text": "",
+                    "weight_text": "",
+                    "height_text": "",
+                    "shocks_text": "",
+                },
+            },
+            "warnings": ["lower block not fully populated"],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["document_type"] == "printed_form_with_values"
+    assert normalized["status"] == "partial_extracted"
+    assert normalized["status"] != "low_quality_review_required"
+    assert normalized["_printed_form_primary_field_count"] >= 8
+
+
 def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):
     current_user = SimpleNamespace(
         id=uuid4(),
