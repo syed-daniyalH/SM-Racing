@@ -492,6 +492,40 @@ def _sanitize_filename_component(value: str) -> str:
     return safe or "ocr_preview"
 
 
+def _expected_make_ocr_base64_prefix(mime_type: str) -> str | None:
+    return {
+        "image/png": "iVBOR",
+        "image/jpeg": "/9j/",
+        "image/webp": "UklGR",
+    }.get(mime_type)
+
+
+def _validate_make_ocr_base64_string(encoded_image: str, mime_type: str) -> bool:
+    if not encoded_image:
+        logger.warning("Make OCR image payload produced an empty base64 string")
+        return False
+
+    if encoded_image.startswith("IMTString"):
+        logger.warning("Make OCR image payload included an IMT wrapper instead of clean base64")
+        return False
+
+    if encoded_image.startswith("data:") or "data:image/" in encoded_image:
+        logger.warning("Make OCR image payload included an unexpected data URL prefix")
+        return False
+
+    expected_prefix = _expected_make_ocr_base64_prefix(mime_type)
+    if expected_prefix and not encoded_image.startswith(expected_prefix):
+        logger.warning(
+            "Make OCR image payload did not start with the expected base64 prefix: mime_type=%s expected_prefix=%s actual_prefix=%s",
+            mime_type,
+            expected_prefix,
+            encoded_image[:20],
+        )
+        return False
+
+    return True
+
+
 def _build_make_ocr_image_payload(preprocessing_info: dict[str, Any]) -> dict[str, Any] | None:
     selected_image_url = _normalize_text(preprocessing_info.get("selected_image_url"))
     if not selected_image_url:
@@ -523,9 +557,8 @@ def _build_make_ocr_image_payload(preprocessing_info: dict[str, Any]) -> dict[st
         logger.warning("Make OCR image payload could not derive a filename")
         return None
 
-    encoded_image = base64.b64encode(image_bytes).decode("ascii")
-    if not encoded_image:
-        logger.warning("Make OCR image payload produced an empty base64 string")
+    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+    if not _validate_make_ocr_base64_string(encoded_image, normalized_mime):
         return None
 
     logger.info(

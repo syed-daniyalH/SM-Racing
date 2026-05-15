@@ -21,6 +21,9 @@ from app.services import submission_ingest_service as ingest_service
 from app.services import submission_payload_service as payload_service
 from app.schemas.submission import OcrPreviewCreate, SubmissionUpdate
 
+PNG_SIGNATURE_BASE64 = "iVBORw0KGgo="
+JPEG_SIGNATURE_BASE64 = "/9j/AA=="
+
 
 def _dt(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
     return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
@@ -979,10 +982,10 @@ def test_build_make_ocr_request_uses_json_base64_payload():
         _submission_payload(),
     )
     preprocessing_info = {
-        "selected_image_url": "data:image/png;base64,AAAA",
+        "selected_image_url": f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
         "selected_variant": "high_contrast_grayscale",
         "mime_type": "image/png",
-        "size_bytes": 3,
+        "size_bytes": len(base64.b64decode(PNG_SIGNATURE_BASE64)),
         "width": 1,
         "height": 1,
     }
@@ -1012,7 +1015,9 @@ def test_build_make_ocr_request_uses_json_base64_payload():
     assert parsed_payload["image"]["transport"] == "base64_json"
     assert parsed_payload["image"]["filename"] == "high_contrast_grayscale.png"
     assert parsed_payload["image"]["mime_type"] == "image/png"
-    assert parsed_payload["image"]["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
+    assert parsed_payload["image"]["base64"] == PNG_SIGNATURE_BASE64
+    assert parsed_payload["image"]["base64"].startswith("iVBOR")
+    assert not parsed_payload["image"]["base64"].startswith("IMTString")
     assert not parsed_payload["image"]["base64"].startswith("data:")
     assert "field_name" not in parsed_payload["image"]
 
@@ -1020,7 +1025,7 @@ def test_build_make_ocr_request_uses_json_base64_payload():
 def test_build_make_ocr_image_payload_uses_selected_variant_bytes():
     image_payload = ocr_service._build_make_ocr_image_payload(
         {
-            "selected_image_url": "data:image/png;base64,AAAA",
+            "selected_image_url": f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
             "selected_variant": "cropped paper",
         }
     )
@@ -1029,9 +1034,12 @@ def test_build_make_ocr_image_payload_uses_selected_variant_bytes():
     assert image_payload["transport"] == "base64_json"
     assert image_payload["filename"] == "cropped_paper.png"
     assert image_payload["mime_type"] == "image/png"
-    assert image_payload["size_bytes"] == 3
+    assert image_payload["size_bytes"] == len(base64.b64decode(PNG_SIGNATURE_BASE64))
     assert image_payload["selected_variant"] == "cropped paper"
-    assert image_payload["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
+    assert image_payload["base64"] == PNG_SIGNATURE_BASE64
+    assert image_payload["base64"].startswith("iVBOR")
+    assert not image_payload["base64"].startswith("IMTString")
+    assert "data:image/png;base64," not in image_payload["base64"]
 
 
 def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants():
@@ -1046,7 +1054,7 @@ def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants(
         driver=driver,
         vehicle=vehicle,
         preprocessing_info={
-            "selected_image_url": "data:image/jpeg;base64,AAAA",
+            "selected_image_url": f"data:image/jpeg;base64,{JPEG_SIGNATURE_BASE64}",
             "selected_variant": "deskewed",
             "mime_type": "image/jpeg",
             "size_bytes": 123,
@@ -1059,7 +1067,20 @@ def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants(
     assert payload["image"]["transport"] == "base64_json"
     assert payload["image"]["filename"] == "deskewed.jpg"
     assert payload["image"]["mime_type"] == "image/jpeg"
-    assert payload["image"]["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
+    assert payload["image"]["base64"] == JPEG_SIGNATURE_BASE64
+    assert payload["image"]["base64"].startswith("/9j/")
+
+
+def test_validate_make_ocr_base64_string_rejects_imt_wrappers_and_data_urls():
+    assert not ocr_service._validate_make_ocr_base64_string(
+        "IMTString(1182064): iVBORw0KGgoAAAANSUhEUg",
+        "image/png",
+    )
+    assert not ocr_service._validate_make_ocr_base64_string(
+        f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
+        "image/png",
+    )
+    assert ocr_service._validate_make_ocr_base64_string(PNG_SIGNATURE_BASE64, "image/png")
 
 
 def test_extract_analysis_candidate_accepts_wrapped_make_setup_schema():
