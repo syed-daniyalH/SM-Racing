@@ -935,6 +935,209 @@ def test_ocr_service_prefers_make_webhook_provider(monkeypatch):
     assert openai_calls == []
 
 
+def test_build_make_ocr_request_uses_multipart_file_and_compact_payload():
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-MAKE-MULTIPART",
+        _submission_payload(),
+    )
+    preprocessing_info = {
+        "selected_image_url": "data:image/png;base64,AAAA",
+        "selected_variant": "high_contrast_grayscale",
+        "mime_type": "image/png",
+        "size_bytes": 3,
+        "width": 1,
+        "height": 1,
+    }
+    payload = ocr_service._build_make_ocr_payload(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        preprocessing_info=preprocessing_info,
+    )
+
+    req = ocr_service._build_make_ocr_request(
+        webhook_url="https://hook.make.com/example",
+        payload=payload,
+        preprocessing_info=preprocessing_info,
+        submission=submission,
+    )
+
+    assert req is not None
+    assert req.headers["Content-type"].startswith("multipart/form-data; boundary=")
+    assert b'name="payload_json"' in req.data
+    assert b'name="image_file"; filename="high_contrast_grayscale.png"' in req.data
+    assert b'"transport": "multipart_file"' in req.data
+    assert b'"data_url"' not in req.data
+    assert b'"image_url"' not in req.data
+
+
+def test_prepare_make_ocr_file_uses_selected_variant_bytes():
+    file_part = ocr_service._prepare_make_ocr_file(
+        {
+            "selected_image_url": "data:image/png;base64,AAAA",
+            "selected_variant": "cropped paper",
+        }
+    )
+
+    assert file_part is not None
+    assert file_part["field_name"] == "image_file"
+    assert file_part["filename"] == "cropped_paper.png"
+    assert file_part["mime_type"] == "image/png"
+    assert file_part["bytes"] == b"\x00\x00\x00"
+
+
+def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants():
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-MAKE-JPEG",
+        _submission_payload(),
+    )
+    payload = ocr_service._build_make_ocr_payload(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        preprocessing_info={
+            "selected_variant": "deskewed",
+            "mime_type": "image/jpeg",
+            "size_bytes": 123,
+            "width": 1600,
+            "height": 900,
+        },
+    )
+
+    assert payload["image"]["field_name"] == "image_file"
+    assert payload["image"]["filename"] == "deskewed.jpg"
+    assert payload["image"]["mime_type"] == "image/jpeg"
+
+
+def test_extract_analysis_candidate_accepts_wrapped_make_setup_schema():
+    candidate = ocr_service._extract_analysis_candidate(
+        {
+            "data": {
+                "schema_version": "smr_ocr_setup_v1.2",
+                "document_type": "race_setup_packet",
+                "session": {},
+                "setup": {},
+                "shocks": {},
+                "post_session": {},
+                "quality_control": {},
+            }
+        }
+    )
+
+    assert candidate is not None
+    assert candidate["schema_version"] == "smr_ocr_setup_v1.2"
+
+
+def test_adapt_make_setup_payload_maps_make_schema_into_review_draft():
+    adapted = ocr_service._adapt_make_setup_payload(
+        {
+            "schema_version": "smr_ocr_setup_v1.2",
+            "document_type": "race_setup_packet",
+            "session": {
+                "team": "SM Racing",
+                "series": "GT4",
+                "car_number": "27",
+                "date_raw": "05/15/2026",
+                "time_raw": "2:30 PM",
+                "driver": "Alex Driver",
+                "track": "Sebring",
+            },
+            "source_documents": [{"index": 0}, {"index": 1}],
+            "reference_setup": {
+                "toe_slots": {
+                    "slot_1": "A1",
+                    "slot_2": "A2",
+                    "meaning_confirmed": False,
+                },
+                "camber": {"LF": "-3.1", "RF": "-3.0", "LR": "-2.2", "RR": "-2.1"},
+            },
+            "setup": {
+                "fuel_liters": 42,
+                "driver_weight_lbs": 178,
+                "camber": {"LF": "-3.2", "RF": "-3.1", "LR": "-2.3", "RR": "-2.2"},
+                "toe": {
+                    "front_left": {"value": "0.10", "direction": "OUT"},
+                    "front_right": {"value": "0.09", "direction": "OUT"},
+                    "rear_left": {"value": "0.03", "direction": "IN"},
+                    "rear_right": {"value": "0.04", "direction": "IN"},
+                },
+                "tire_pressure": {"LF": 22.5, "RF": 22.8, "LR": 21.7, "RR": 22.0},
+                "ride_height": {"unit": "mm", "LF": 80, "RF": 81, "LR": 120, "RR": 121},
+                "static_ride_height": {"unit": "mm", "left": 80.5, "right": 81.0},
+                "corner_weight": {"LF": 520, "RF": 525, "LR": 840, "RR": 845},
+                "cross_weight_percent": 50.4,
+                "total_weight_lbs": 2730,
+                "springs": {"front": 900, "rear": 1050},
+                "roll_bar": {"front": "3", "rear": "2"},
+                "anti_roll_bar": {"front": "soft", "rear": "medium"},
+                "wheel_base": {"unit": "mm", "left": 2790, "right": 2792},
+                "aero": {"rake_deg": 2.5, "wing_deg": 7, "gurney_mm": 12, "wicker_mm": 4},
+                "bump_stops": {"front": 6, "rear": 8},
+                "bump_stop_height": {"unit": "mm", "left": 4.5, "right": 4.7},
+                "spacer_mm": 8,
+                "main_bump_rebound": {"bump": 6, "rebound": 9},
+            },
+            "shocks": {
+                "LF": {"compression": 6, "rebound": 9, "HSR": 4, "LSR": 3, "HBS": 2, "LSB": 1, "setup_total": 10},
+                "RF": {"compression": 6, "rebound": 9, "HSR": 4, "LSR": 3, "HBS": 2, "LSB": 1, "setup_total": 10},
+                "LR": {"compression": 5, "rebound": 8, "HSR": 3, "LSR": 2, "HBS": 2, "LSB": 1, "setup_total": 8},
+                "RR": {"compression": 5, "rebound": 8, "HSR": 3, "LSR": 2, "HBS": 2, "LSB": 1, "setup_total": 8},
+            },
+            "baseline_shocks": {
+                "package_name": "Road Course A",
+                "LF": {"HSR": 3, "LSR": 2, "HBS": 1, "LSB": 1, "setup_total": 7},
+            },
+            "post_session": {
+                "fuel_pumped_out_liters": 8,
+                "camber": {"LF": "-3.1", "RF": "-3.0", "LR": "-2.2", "RR": "-2.1"},
+                "toe": {
+                    "front_left": {"value": "0.08", "direction": "OUT"},
+                    "front_right": {"value": "0.09", "direction": "OUT"},
+                    "rear_left": {"value": "0.03", "direction": "IN"},
+                    "rear_right": {"value": "0.04", "direction": "IN"},
+                },
+                "ride_height": {"unit": "mm", "LF": 80.2, "RF": 81.1, "LR": 120.8, "RR": 121.0},
+                "corner_weight": {"LF": 521, "RF": 526, "LR": 839, "RR": 844},
+                "shocks": {
+                    "front": {"bump": 6, "rebound": 9},
+                    "rear": {"bump": 5, "rebound": 8},
+                },
+            },
+            "notes": ["Entry push mid-corner."],
+            "quality_control": {
+                "confidence": 0.86,
+                "needs_review": True,
+                "mapping_inferred": True,
+                "warnings": ["verify toe direction"],
+                "unresolved_fields": ["team"],
+            },
+        }
+    )
+    normalized = image_analysis_service.normalize_image_analysis_result(adapted)
+
+    assert normalized["document_type"] == "printed_form_with_values"
+    assert normalized["template_name"] == "race_setup_packet"
+    assert normalized["status"] == "review_required"
+    assert normalized["parser_version"] == "smr_ocr_setup_v1.2"
+    assert normalized["setup"]["alignment"]["camber_fl"] == "-3.2"
+    assert normalized["setup"]["alignment"]["toe_fl"] == "0.10 out"
+    assert normalized["setup"]["pressures"]["cold_fl"] == "22.5"
+    assert normalized["setup"]["sheet_fields"]["fuel_liters"] == "42"
+    assert normalized["setup"]["sheet_fields"]["fuel_pumped_out_liters"] == "8"
+    assert normalized["setup"]["sheet_fields"]["corner_weight_text"] == "520 / 525 / 840 / 845"
+    assert normalized["setup"]["post_session"]["toe_text"] == "0.08 out / 0.09 out / 0.03 in / 0.04 in"
+    assert normalized["setup"]["post_session"]["shocks_text"] == "front 6 / 9 | rear 5 / 8"
+    assert normalized["setup"]["suspension"]["hsr_fl"] == "4"
+    assert normalized["setup"]["shock_setup"]["lf"]["total_setup"] == "10"
+    assert "Reference setup preserved in notes for manual review" in normalized["warnings"]
+    assert "Baseline shocks preserved in notes for manual review" in normalized["warnings"]
+    assert any(note.startswith("Baseline shocks package: Road Course A") for note in normalized["setup"]["notes"])
+
+
 def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypatch):
     event = SimpleNamespace(
         id=uuid4(),
