@@ -68,6 +68,25 @@ function LoginInputIcon({ type }) {
   );
 }
 
+function PasswordVisibilityIcon({ visible }) {
+  return (
+    <svg
+      className="login-password-toggle__icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="3" />
+      {!visible ? <path d="M4 4l16 16" /> : null}
+    </svg>
+  );
+}
+
 function BrandFlag() {
   return (
     <div className="login-brand__flag" aria-hidden="true">
@@ -146,6 +165,7 @@ function ArrowIcon() {
 export default function LoginContent({ mode = "standard" } = {}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [successTitle, setSuccessTitle] = useState("");
@@ -423,21 +443,32 @@ export default function LoginContent({ mode = "standard" } = {}) {
                     </label>
                     <span className="login-field__hint">Forgot?</span>
                   </div>
-                  <div className="login-field__control">
+                  <div className="login-field__control login-field__control--password">
                     <LoginInputIcon type="lock" />
                     <input
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       id="password"
                       name="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter your password"
-                      className="login-input"
+                      className="login-input login-input--password"
                       autoComplete="current-password"
                       disabled={isLoading}
                       aria-invalid={Boolean(passwordError)}
                       aria-describedby={passwordError ? "password-error" : undefined}
                     />
+                    <button
+                      type="button"
+                      className="login-password-toggle"
+                      onClick={() => setShowPassword((current) => !current)}
+                      disabled={isLoading}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-pressed={showPassword}
+                      aria-controls="password"
+                    >
+                      <PasswordVisibilityIcon visible={showPassword} />
+                    </button>
                   </div>
                   {passwordError && (
                     <p id="password-error" className="login-field__error">

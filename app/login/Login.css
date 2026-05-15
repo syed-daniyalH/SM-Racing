@@ -454,6 +454,10 @@
   position: relative;
 }
 
+.login-field__control--password:focus-within .login-password-toggle {
+  color: var(--login-orange);
+}
+
 .login-input__icon {
   position: absolute;
   left: 0.95rem;
@@ -487,6 +491,54 @@
     box-shadow 180ms ease,
     background-color 180ms ease,
     transform 180ms ease;
+}
+
+.login-input--password {
+  padding-right: 3.4rem;
+}
+
+.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #8f98a7;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.login-password-toggle:hover:not(:disabled) {
+  color: var(--login-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.login-password-toggle:focus-visible {
+  outline: none;
+  color: var(--login-orange);
+  background: rgba(255, 107, 53, 0.08);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.16);
+}
+
+.login-password-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.login-password-toggle__icon {
+  width: 1.05rem;
+  height: 1.05rem;
 }
 
 .login-input::placeholder {
