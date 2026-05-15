@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import { loginOwnerUser, loginUser } from "../utils/authApi";
@@ -174,6 +174,8 @@ export default function LoginContent({ mode = "standard" } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
+  const emailInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
   const isOwnerPortal = mode === "admin";
   const portalTargetPath = isOwnerPortal ? "/login" : "/admin/login";
 
@@ -257,14 +259,42 @@ export default function LoginContent({ mode = "standard" } = {}) {
     return "";
   }, [error]);
 
+  const syncCredentialInputs = useCallback(() => {
+    const nextEmail = emailInputRef.current?.value ?? "";
+    const nextPassword = passwordInputRef.current?.value ?? "";
+
+    setEmail((current) => (current === nextEmail ? current : nextEmail));
+    setPassword((current) => (current === nextPassword ? current : nextPassword));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    syncCredentialInputs();
+
+    const frameId = window.requestAnimationFrame(syncCredentialInputs);
+    const timeoutId = window.setTimeout(syncCredentialInputs, 250);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [syncCredentialInputs]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    syncCredentialInputs();
     setError("");
     setSuccess("");
     setSuccessTitle("");
     setIsLoading(true);
 
-    if (!email || !password) {
+    const nextEmail = emailInputRef.current?.value ?? email;
+    const nextPassword = passwordInputRef.current?.value ?? password;
+
+    if (!nextEmail || !nextPassword) {
       setError("Please enter both email and password.");
       setIsLoading(false);
       return;
@@ -272,7 +302,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
 
     try {
       const loginAction = isOwnerPortal ? loginOwnerUser : loginUser;
-      const response = await loginAction({ email, password });
+      const response = await loginAction({ email: nextEmail, password: nextPassword });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
 
@@ -413,6 +443,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                   <div className="login-field__control">
                     <LoginInputIcon type="mail" />
                     <input
+                      ref={emailInputRef}
                       type="email"
                       id="email"
                       name="email"
@@ -446,6 +477,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                   <div className="login-field__control login-field__control--password">
                     <LoginInputIcon type="lock" />
                     <input
+                      ref={passwordInputRef}
                       type={showPassword ? "text" : "password"}
                       id="password"
                       name="password"
@@ -461,7 +493,11 @@ export default function LoginContent({ mode = "standard" } = {}) {
                     <button
                       type="button"
                       className="login-password-toggle"
-                      onClick={() => setShowPassword((current) => !current)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        syncCredentialInputs();
+                        setShowPassword((current) => !current);
+                      }}
                       disabled={isLoading}
                       aria-label={showPassword ? "Hide password" : "Show password"}
                       aria-pressed={showPassword}

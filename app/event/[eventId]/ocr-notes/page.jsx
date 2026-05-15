@@ -194,6 +194,14 @@ const SHOCK_SETUP_FIELDS = [
   ["total_setup", "Total Setup"],
 ];
 
+const OCR_REVIEW_SAFE_STATUSES = new Set([
+  "partial_extracted",
+  "review_required",
+  "blank_template_detected",
+  "low_quality_review_required",
+  "parser_failed_but_raw_text_available",
+]);
+
 const createEmptyReviewDraft = () => ({
   status: "idle",
   message: "",
@@ -214,7 +222,12 @@ const createEmptyReviewDraft = () => ({
     detected_grids: [],
     detected_labels: [],
     unmapped_values: [],
+    quality_flags: [],
+    template_labels: [],
   },
+  fieldEvidence: [],
+  normalizedSections: {},
+  preprocessing: {},
   reviewFlags: [],
   parsedSession: {
     date: "",
@@ -491,6 +504,13 @@ const mergePreviewIntoReviewDraft = (preview) => {
     model: preview?.modelUsed || preview?.model || null,
     metadata: preview?.metadata || {},
     rawEvidence: preview?.rawEvidence || baseDraft.rawEvidence,
+    fieldEvidence: Array.isArray(preview?.fieldEvidence) ? preview.fieldEvidence : [],
+    normalizedSections:
+      preview?.normalizedSections && typeof preview.normalizedSections === "object"
+        ? preview.normalizedSections
+        : {},
+    preprocessing:
+      preview?.preprocessing && typeof preview.preprocessing === "object" ? preview.preprocessing : {},
     reviewFlags: Array.isArray(preview?.reviewFlags) ? preview.reviewFlags : [],
     parsedSession: {
       ...baseDraft.parsedSession,
@@ -841,11 +861,39 @@ const getExtractionFailureMessage = (errorLike) => {
   }
 
   if (code === "OCR_EXTRACTION_FAILED") {
-    return "OCR extraction could not read a usable draft from this image. Retry with a clearer image or better lighting.";
+    return "OCR service failed. Please retry or enter manually.";
   }
 
   return message || "OCR extraction failed. Please try again.";
 };
+
+const getOcrStatusMessage = (status, fallbackMessage = "") => {
+  const normalizedStatus = normalizeText(status);
+  if (normalizedStatus === "blank_template_detected") {
+    return "Blank setup template detected. No handwritten values found.";
+  }
+  if (normalizedStatus === "partial_extracted") {
+    return "Partial OCR extracted. Please review highlighted fields.";
+  }
+  if (normalizedStatus === "low_quality_review_required") {
+    return "Low-quality image. Manual review is required.";
+  }
+  if (normalizedStatus === "parser_failed_but_raw_text_available") {
+    return "Parser failed, but raw OCR text is available.";
+  }
+  if (normalizedStatus === "review_required") {
+    return "OCR draft needs review. Some values may be incomplete or uncertain.";
+  }
+  if (normalizedStatus === "extraction_failed") {
+    return "OCR service failed. Please retry or enter manually.";
+  }
+  if (normalizedStatus === "success") {
+    return "OCR draft ready. Review and correct the extracted setup values before submitting.";
+  }
+  return fallbackMessage || "OCR draft needs review. Some values may be incomplete or uncertain.";
+};
+
+const isReviewSafeOcrStatus = (status) => OCR_REVIEW_SAFE_STATUSES.has(normalizeText(status));
 
 const getSubmissionSuccessState = (submission) => {
   const structuredStatus = String(submission?.structuredIngestStatus || "").trim().toLowerCase();
@@ -1239,6 +1287,9 @@ export default function OCRNotesPage() {
 
     return "extract_success";
   }, [hasExtractedDraft, hasImage, reviewDirty, workflowState]);
+  const hasReviewSafeStatus = isReviewSafeOcrStatus(reviewDraft.status);
+  const shouldShowManualCorrection =
+    hasExtractedDraft || (hasImage && (effectiveWorkflowState === "extract_failed" || hasReviewSafeStatus));
   const isHardExtractFailure = effectiveWorkflowState === "extract_failed" && !hasExtractedDraft;
   const confidenceDisplay =
     typeof reviewDraft.confidence === "number"
@@ -1332,7 +1383,7 @@ export default function OCRNotesPage() {
   const handleReviewEdit = (updater) => {
     setReviewDraft((prev) => {
       const nextDraft = updater(prev);
-      if (prev.status === "extraction_failed") {
+      if (prev.status !== "success") {
         return {
           ...nextDraft,
           status: "review_required",
@@ -1475,19 +1526,14 @@ export default function OCRNotesPage() {
         setWorkflowState("extract_failed");
         setWorkflowMessage("");
         setPageError(
-          preview.message ||
-            "OCR extraction could not build a safe draft from this image. Retry or enter values manually beside the image.",
+          getOcrStatusMessage(preview.status, preview.message),
         );
         return;
       }
 
       setPageError("");
-      setWorkflowState(preview.status === "review_required" ? "editing_review" : "extract_success");
-      setWorkflowMessage(
-        preview.status === "review_required"
-          ? "OCR draft needs review. Some values may be incomplete or uncertain."
-          : "OCR draft ready. Review and correct the extracted setup values before submitting.",
-      );
+      setWorkflowState(isReviewSafeOcrStatus(preview.status) ? "editing_review" : "extract_success");
+      setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
     } catch (error) {
       console.error("Failed to extract OCR draft:", error);
       setWorkflowState("extract_failed");
@@ -1763,12 +1809,22 @@ export default function OCRNotesPage() {
             </div>
           ) : null}
 
-          {reviewDraft.status === "review_required" && hasImage ? (
+          {hasImage && hasReviewSafeStatus ? (
             <div className="ocr-notes-banner warning" data-testid="ocr-review-required-banner">
               <WarningAmberRoundedIcon fontSize="inherit" />
               <div>
-                <strong>OCR draft needs review</strong>
-                <span>Some values may be incomplete or uncertain. You can correct the fields below and still submit for review.</span>
+                <strong>
+                  {reviewDraft.status === "blank_template_detected"
+                    ? "Blank template detected"
+                    : reviewDraft.status === "partial_extracted"
+                      ? "Partial OCR extracted"
+                      : reviewDraft.status === "low_quality_review_required"
+                        ? "Low-quality image"
+                        : reviewDraft.status === "parser_failed_but_raw_text_available"
+                          ? "Parser fallback available"
+                          : "OCR draft needs review"}
+                </strong>
+                <span>{getOcrStatusMessage(reviewDraft.status)}</span>
               </div>
             </div>
           ) : null}
@@ -2079,7 +2135,7 @@ export default function OCRNotesPage() {
               <div className="ocr-notes-status-card">
                 <div className="ocr-notes-status-card-head">
                   <strong>OCR runtime state</strong>
-                  {hasImage && (hasExtractedDraft || isHardExtractFailure) ? (
+                  {hasImage && shouldShowManualCorrection ? (
                     <button
                       type="button"
                       className="ocr-notes-inline-button"
@@ -2122,7 +2178,7 @@ export default function OCRNotesPage() {
             </div>
           </section>
 
-          {hasExtractedDraft || (hasImage && effectiveWorkflowState === "extract_failed") ? (
+          {shouldShowManualCorrection ? (
             <section className="ocr-notes-review-workspace" data-testid="ocr-review-sections">
               <div className="ocr-notes-panel">
                 <div className="ocr-notes-panel-head">

@@ -482,6 +482,7 @@
   border: 1px solid var(--login-border-soft);
   background: rgba(10, 14, 21, 0.94);
   color: var(--login-text);
+  -webkit-text-fill-color: var(--login-text);
   caret-color: var(--login-orange-soft);
   font-size: 0.97rem;
   line-height: 1;
@@ -495,6 +496,8 @@
 
 .login-input--password {
   padding-right: 3.4rem;
+  color: var(--login-text);
+  -webkit-text-fill-color: var(--login-text);
 }
 
 .login-password-toggle {
@@ -571,10 +574,16 @@
 .login-input:-webkit-autofill:hover,
 .login-input:-webkit-autofill:focus,
 .login-input:-webkit-autofill:active {
-  -webkit-text-fill-color: var(--login-text);
+  color: var(--login-text) !important;
+  -webkit-text-fill-color: var(--login-text) !important;
   caret-color: var(--login-orange-soft);
   box-shadow: 0 0 0 1000px rgba(10, 14, 21, 0.96) inset;
   transition: background-color 9999s ease-in-out 0s;
+}
+
+.login-input::-ms-reveal,
+.login-input::-ms-clear {
+  display: none;
 }
 
 .login-field__error {

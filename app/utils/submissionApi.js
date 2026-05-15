@@ -229,6 +229,17 @@ const normalizeOcrPreviewResponse = (data) => {
         : preview?.rawEvidence && isPlainObject(preview.rawEvidence)
           ? preview.rawEvidence
           : {},
+    fieldEvidence: Array.isArray(preview?.field_evidence || preview?.fieldEvidence)
+      ? (preview.field_evidence || preview.fieldEvidence)
+      : [],
+    normalizedSections:
+      preview?.normalized_sections && isPlainObject(preview.normalized_sections)
+        ? preview.normalized_sections
+        : preview?.normalizedSections && isPlainObject(preview.normalizedSections)
+          ? preview.normalizedSections
+          : {},
+    preprocessing:
+      preview?.preprocessing && isPlainObject(preview.preprocessing) ? preview.preprocessing : {},
     structuredData,
     rawText: preview?.raw_text || preview?.rawText || preview?.extracted_text || preview?.extractedText || "",
     reviewFlags: Array.isArray(preview?.review_flags || preview?.reviewFlags)

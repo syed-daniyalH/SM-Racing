@@ -48,6 +48,9 @@ class OcrPreviewRead(ORMModel):
     fallback_used: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
     raw_evidence: dict[str, Any] = Field(default_factory=dict)
+    field_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    normalized_sections: dict[str, Any] = Field(default_factory=dict)
+    preprocessing: dict[str, Any] = Field(default_factory=dict)
     structured_data: dict[str, Any] = Field(default_factory=dict)
     raw_text: str | None = None
     review_flags: list[str] = Field(default_factory=list)
