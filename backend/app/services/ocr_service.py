@@ -505,11 +505,15 @@ def _validate_make_ocr_base64_string(encoded_image: str, mime_type: str) -> bool
         logger.warning("Make OCR image payload produced an empty base64 string")
         return False
 
-    if encoded_image.startswith("IMTString"):
+    if encoded_image.startswith("IMTString") or "IMTString" in encoded_image:
         logger.warning("Make OCR image payload included an IMT wrapper instead of clean base64")
         return False
 
-    if encoded_image.startswith("data:") or "data:image/" in encoded_image:
+    if ": " in encoded_image:
+        logger.warning("Make OCR image payload included an unexpected label separator")
+        return False
+
+    if encoded_image.startswith("data:") or "data:image" in encoded_image:
         logger.warning("Make OCR image payload included an unexpected data URL prefix")
         return False
 

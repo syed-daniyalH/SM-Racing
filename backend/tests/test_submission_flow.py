@@ -1077,7 +1077,15 @@ def test_validate_make_ocr_base64_string_rejects_imt_wrappers_and_data_urls():
         "image/png",
     )
     assert not ocr_service._validate_make_ocr_base64_string(
+        "label: iVBORw0KGgoAAAANSUhEUg",
+        "image/png",
+    )
+    assert not ocr_service._validate_make_ocr_base64_string(
         f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
+        "image/png",
+    )
+    assert not ocr_service._validate_make_ocr_base64_string(
+        f"prefix data:image/png;base64,{PNG_SIGNATURE_BASE64}",
         "image/png",
     )
     assert ocr_service._validate_make_ocr_base64_string(PNG_SIGNATURE_BASE64, "image/png")
