@@ -1035,7 +1035,7 @@ const getWorkflowPresentation = (workflowState) => {
     case "extracting":
       return {
         label: "Extracting",
-        note: "OpenAI OCR is analyzing the uploaded sheet and building a reviewable draft.",
+        note: "The OCR service is analyzing the uploaded sheet and building a reviewable draft.",
       };
     case "extract_success":
       return {

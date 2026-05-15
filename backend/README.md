@@ -83,11 +83,12 @@ app/
 1. Copy `.env.example` to `.env`
 2. Set `DATABASE_URL` to your Neon connection string and `JWT_SECRET_KEY`
 3. Optionally set `MAKE_WEBHOOK_URL` to forward each saved submission to Make.com
-4. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
-5. Optionally enable photo/schedule review extraction with `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`
-6. Install dependencies with `pip install -r requirements.txt`
-7. Apply the PostgreSQL schema with `alembic upgrade head`
-8. Start the API with `uvicorn app.main:app --reload`
+4. Optionally set `MAKE_OCR_WEBHOOK_URL` to route OCR preview extraction through a Make.com webhook
+5. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
+6. Optionally enable backend OpenAI OCR with `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`
+7. Install dependencies with `pip install -r requirements.txt`
+8. Apply the PostgreSQL schema with `alembic upgrade head`
+9. Start the API with `uvicorn app.main:app --reload`
 
 The API will be available at `http://127.0.0.1:8000`.
 
@@ -108,10 +109,12 @@ attempts to write an audit-log entry for each chat note or setup patch.
 
 When a submission includes `image_url`, the backend stages the photo in the
 structured intake tables so it can be reviewed later. If
-`CHATBOT_IMAGE_ANALYSIS_ENABLED=true`, the backend also asks OpenAI Vision for a
-structured draft covering schedule, setup-sheet, session-note, and unknown image
-types. The extracted draft is stored with `PENDING` review status and is not
-blindly applied to events, sessions, or setup values.
+`MAKE_OCR_WEBHOOK_URL` is configured, the backend sends OCR preview requests to
+Make.com and expects a structured JSON draft back for normalization and review.
+If `MAKE_OCR_WEBHOOK_URL` is not set and
+`CHATBOT_IMAGE_ANALYSIS_ENABLED=true`, the backend falls back to direct OpenAI
+Vision extraction. In both cases, the extracted draft is stored with `PENDING`
+review status and is not blindly applied to events, sessions, or setup values.
 
 ## Render Deployment
 
@@ -129,8 +132,9 @@ Set these environment variables on Render:
 - `ENVIRONMENT` - `production`
 - `CORS_ORIGIN_REGEX` - `^https://.*\.vercel\.app$`
 - `MAKE_WEBHOOK_URL` - optional Make.com custom webhook endpoint for structured submission forwarding
+- `MAKE_OCR_WEBHOOK_URL` - optional Make.com webhook endpoint for OCR preview extraction
 - `CHATBOT_NLP_ENABLED` - optional; set to `true` to let OpenAI classify chatbot intent before deterministic fallback
-- `CHATBOT_IMAGE_ANALYSIS_ENABLED` - optional; set to `true` to stage image/schedule/setup photo extraction drafts for review
+- `CHATBOT_IMAGE_ANALYSIS_ENABLED` - optional; set to `true` only when you want the backend to call OpenAI directly for OCR fallback
 - `OPENAI_API_KEY` - optional; required only when `CHATBOT_NLP_ENABLED=true`
 - `OPENAI_MODEL` - optional; defaults to `gpt-4o-mini`
 - `OPENAI_VISION_MODEL` - optional; defaults to `OPENAI_MODEL` when omitted

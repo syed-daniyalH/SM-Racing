@@ -29,7 +29,7 @@ from app.schemas.submission import (
     SubmissionRead,
     SubmissionUpdate,
 )
-from app.services.image_analysis_service import analyze_submission_image, normalize_image_analysis_result
+from app.services.ocr_service import analyze_submission_image, normalize_image_analysis_result
 from app.services.raw_note_llm_service import extract_raw_note_via_openai
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,

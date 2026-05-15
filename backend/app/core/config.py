@@ -18,7 +18,9 @@ DEFAULT_OCR_PRIMARY_MODEL = "gpt-5.4"
 
 class OCRConfigStatus(TypedDict):
     enabled: bool
+    provider: str | None
     has_api_key: bool
+    has_make_webhook: bool
     primary_model: str
     fallback_model: str | None
     missing_requirements: list[str]
@@ -50,6 +52,8 @@ class Settings(BaseSettings):
     )
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
+    make_ocr_webhook_url: str | None = None
+    make_ocr_timeout_seconds: float = 20.0
     chatbot_nlp_enabled: bool = False
     chatbot_image_analysis_enabled: bool = False
     openai_api_key: str | None = None
@@ -100,7 +104,7 @@ class Settings(BaseSettings):
 
         return value
 
-    @field_validator("openai_api_key", "openai_fallback_model", mode="before")
+    @field_validator("openai_api_key", "openai_fallback_model", "make_ocr_webhook_url", mode="before")
     @classmethod
     def normalize_optional_openai_fields(cls, value: Any) -> str | None:
         return _normalize_optional_text(value)
@@ -144,37 +148,53 @@ def get_settings() -> Settings:
 
 def get_ocr_config_status(settings: Any | None = None) -> OCRConfigStatus:
     resolved_settings = settings or get_settings()
-    enabled = bool(getattr(resolved_settings, "chatbot_image_analysis_enabled", False))
+    openai_enabled = bool(getattr(resolved_settings, "chatbot_image_analysis_enabled", False))
     api_key = _normalize_optional_text(getattr(resolved_settings, "openai_api_key", None))
+    make_ocr_webhook_url = _normalize_optional_text(getattr(resolved_settings, "make_ocr_webhook_url", None))
     primary_model = (
         _normalize_optional_text(getattr(resolved_settings, "openai_vision_model", None))
         or DEFAULT_OCR_PRIMARY_MODEL
     )
     fallback_model = _normalize_optional_text(getattr(resolved_settings, "openai_fallback_model", None))
 
+    provider: str | None = None
     missing_requirements: list[str] = []
-    if not enabled:
-        missing_requirements.append("CHATBOT_IMAGE_ANALYSIS_ENABLED")
-    if not api_key:
-        missing_requirements.append("OPENAI_API_KEY")
+    if make_ocr_webhook_url:
+        provider = "make_webhook"
+    elif openai_enabled and api_key:
+        provider = "openai"
+    else:
+        if not openai_enabled:
+            missing_requirements.append("CHATBOT_IMAGE_ANALYSIS_ENABLED")
+        if not api_key:
+            missing_requirements.append("OPENAI_API_KEY")
 
     if missing_requirements:
-        user_safe_message = "OCR extraction is disabled because backend image analysis is not configured."
+        user_safe_message = "OCR extraction is disabled because neither a Make OCR webhook nor backend image analysis is configured."
         developer_message = (
             "OCR image analysis unavailable; missing "
             f"{', '.join(missing_requirements)}. "
+            f"make_ocr_webhook={'configured' if make_ocr_webhook_url else 'missing'}, "
             f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
         )
     else:
         user_safe_message = "OCR extraction is configured and ready."
-        developer_message = (
-            "OCR image analysis configured. "
-            f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
-        )
+        if provider == "make_webhook":
+            developer_message = (
+                "OCR image analysis configured via Make webhook. "
+                f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
+            )
+        else:
+            developer_message = (
+                "OCR image analysis configured via backend OpenAI provider. "
+                f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
+            )
 
     return {
-        "enabled": enabled,
+        "enabled": provider is not None,
+        "provider": provider,
         "has_api_key": api_key is not None,
+        "has_make_webhook": make_ocr_webhook_url is not None,
         "primary_model": primary_model,
         "fallback_model": fallback_model,
         "missing_requirements": missing_requirements,

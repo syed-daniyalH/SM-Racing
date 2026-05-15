@@ -13,6 +13,7 @@ from app.core import config as config_module
 from app.core.enums import SubmissionStatus, TireInventoryStatus
 from app.models.structured_notes import TireInventory
 from app.services import image_analysis_service
+from app.services import ocr_service
 from app.services import submission_delivery_service as delivery_service
 from app.services import make_webhook_service as make_service
 from app.services import submission_ingest_service as ingest_service
@@ -824,7 +825,7 @@ def test_preview_ocr_submission_reports_disabled_config(monkeypatch):
     payload = json.loads(response.body.decode("utf-8"))
     assert response.status_code == 503
     assert payload["error"] == "OCR_EXTRACTION_DISABLED"
-    assert payload["message"] == "OCR extraction is disabled because backend image analysis is not configured."
+    assert payload["message"] == "OCR extraction is disabled because neither a Make OCR webhook nor backend image analysis is configured."
     assert payload["missing_requirements"] == ["CHATBOT_IMAGE_ANALYSIS_ENABLED", "OPENAI_API_KEY"]
 
 
@@ -871,6 +872,126 @@ def test_ocr_config_status_uses_gpt_54_primary_model():
     assert status["primary_model"] == "gpt-5.4"
     assert status["fallback_model"] == "gpt-5.5"
     assert status["missing_requirements"] == []
+
+
+def test_ocr_config_status_accepts_make_webhook_without_openai_key():
+    status = config_module.get_ocr_config_status(
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+        )
+    )
+
+    assert status["enabled"] is True
+    assert status["provider"] == "make_webhook"
+    assert status["has_make_webhook"] is True
+    assert status["has_api_key"] is False
+    assert status["missing_requirements"] == []
+
+
+def test_ocr_service_prefers_make_webhook_provider(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-MAKE-PROVIDER",
+        _submission_payload(),
+    )
+    make_calls: list[dict] = []
+    openai_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        ocr_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        ocr_service,
+        "_analyze_submission_image_via_make",
+        lambda **kwargs: make_calls.append(kwargs) or {"document_type": "printed_form_with_values"},
+    )
+    monkeypatch.setattr(
+        ocr_service.image_analysis_service,
+        "analyze_submission_image",
+        lambda **kwargs: openai_calls.append(kwargs) or {"document_type": "unknown"},
+    )
+
+    result = ocr_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert result["document_type"] == "printed_form_with_values"
+    assert len(make_calls) == 1
+    assert openai_calls == []
+
+
+def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: {
+            "document_type": "printed_form_with_values",
+            "template_name": "generic_setup",
+            "confidence": 0.77,
+            "summary": "Structured review draft",
+            "extracted_text": "toe 0.10",
+            "setup": {},
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+            "model": "make.com",
+        },
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "partial_extracted"
+    assert result.model_used == "make.com"
 
 
 def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
