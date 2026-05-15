@@ -1595,7 +1595,11 @@ def _derive_ocr_status(
     if requested_status == OCR_STATUS_EXTRACTION_FAILED or doc_type == OCR_STATUS_EXTRACTION_FAILED:
         return OCR_STATUS_EXTRACTION_FAILED
 
-    if doc_type == "blank_setup_sheet" and not has_values and field_count == 0 and not raw_text:
+    if (
+        doc_type == "blank_setup_sheet"
+        and field_count == 0
+        and (not has_values or raw_evidence.get("template_labels"))
+    ):
         return OCR_STATUS_BLANK_TEMPLATE
 
     if requested_status == OCR_STATUS_PARSER_FAILED_RAW:
@@ -1668,11 +1672,6 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         "notes": _normalize_notes(raw_setup.get("notes") or analysis.get("notes")),
     }
 
-    extracted_text = _normalize_text(analysis.get("raw_text")) or _normalize_text(analysis.get("extracted_text"))
-    if not extracted_text and raw_evidence["visible_text"]:
-        extracted_text = "\n".join(raw_evidence["visible_text"])
-    warnings = _normalize_flags(analysis.get("warnings"))
-    confidence = _normalize_float(analysis.get("confidence"))
     doc_type = _normalize_doc_type(analysis.get("document_type") or classifier.get("document_type"))
     template_name = _normalize_text(analysis.get("template_name") or classifier.get("template_name"))
     blocked_by_hand = _normalize_bool(classifier.get("blocked_by_hand"))
@@ -1680,6 +1679,15 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         analysis.get("has_values"),
         default=_normalize_bool(classifier.get("has_values"), default=False),
     )
+    extracted_text = _normalize_text(analysis.get("raw_text")) or _normalize_text(analysis.get("extracted_text"))
+    if (
+        not extracted_text
+        and raw_evidence["visible_text"]
+        and not (doc_type in {"blank_setup_sheet", "shock_setup_sheet"} and not has_values)
+    ):
+        extracted_text = "\n".join(raw_evidence["visible_text"])
+    warnings = _normalize_flags(analysis.get("warnings"))
+    confidence = _normalize_float(analysis.get("confidence"))
 
     for quality_flag in _normalize_quality_flags(classifier.get("quality_flags")) + quality_flags:
         if quality_flag not in raw_evidence["quality_flags"]:
@@ -1719,13 +1727,19 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         if note not in raw_evidence["unmapped_values"]:
             raw_evidence["unmapped_values"].append(note)
 
-    if not extracted_text and raw_evidence["visible_text"]:
+    if (
+        not extracted_text
+        and raw_evidence["visible_text"]
+        and not (doc_type in {"blank_setup_sheet", "shock_setup_sheet"} and not has_values)
+    ):
         extracted_text = "\n".join(raw_evidence["visible_text"])
     if not extracted_text and normalized_setup["notes"]:
         extracted_text = "\n".join(normalized_setup["notes"])
 
     field_count = _count_meaningful_fields(normalized_setup, normalized_setup["notes"], extracted_text)
-    has_values = has_values or field_count > 0 or bool(extracted_text)
+    has_values = has_values or field_count > 0 or (
+        bool(extracted_text) and doc_type not in {"blank_setup_sheet", "shock_setup_sheet"}
+    )
 
     if requested_status != OCR_STATUS_EXTRACTION_FAILED and (not doc_type or doc_type == "unknown"):
         if _is_blankish_document(

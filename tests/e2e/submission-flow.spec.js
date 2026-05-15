@@ -837,15 +837,15 @@ test.describe("submission flow", () => {
     expect(requests.ocrPreviewRequests[0].context.track).toBe(TRACK_NAME);
   });
 
-  test("ocr notes show a review-required warning and partial raw OCR text instead of hard failure", async ({
+  test("ocr notes show a partial-extracted warning and raw OCR text instead of hard failure", async ({
     page,
   }) => {
     await mockSubmissionApp(page, {
       buildOcrPreviewResponse: () => ({
-        status: "review_required",
-        message: "OCR draft needs review. Some values may be incomplete or uncertain.",
-        doc_type: "low_quality_review_required",
-        confidence: 0.25,
+        status: "partial_extracted",
+        message: "Partial OCR extracted. Please review highlighted fields.",
+        doc_type: "handwritten_setup_grid",
+        confidence: 0.46,
         model_used: "gpt-5.4",
         fallback_used: false,
         metadata: {
@@ -896,6 +896,9 @@ test.describe("submission flow", () => {
         summary: "Partial OCR draft",
         recommended_review_status: "PENDING",
         parser_version: "ocr-v1",
+        field_evidence: [],
+        normalized_sections: {},
+        preprocessing: { selected_variant: "high_contrast_grayscale" },
       }),
     });
 
@@ -907,16 +910,136 @@ test.describe("submission flow", () => {
     });
 
     await page.getByTestId("ocr-extract-button").click();
-    await expect(page.getByTestId("ocr-review-required-banner")).toBeVisible({ timeout: 5000 });
-    await expect(
-      page.getByText("OCR draft needs review. Some values may be incomplete or uncertain."),
-    ).toBeVisible();
-    await expect(
-      page.locator(".ocr-notes-field", { hasText: "Raw OCR Text" }).locator("textarea"),
-    ).toHaveValue("RH 102 101 Sebring Daniel");
+    const reviewBanner = page.getByTestId("ocr-review-required-banner");
+    await expect(reviewBanner).toBeVisible({ timeout: 5000 });
+    await expect(reviewBanner.getByText("Partial OCR extracted. Please review highlighted fields.")).toBeVisible();
+    const rawOcrField = page
+      .locator(".ocr-notes-field")
+      .filter({ has: page.locator("label", { hasText: "Raw OCR Text" }) });
+    await expect(rawOcrField.locator("textarea")).toHaveValue("RH 102 101 Sebring Daniel");
     await expect(page.getByAltText("OCR note preview")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Ride Height" })).toBeVisible();
     await expect(page.getByText("Low confidence extraction").first()).toBeVisible();
+  });
+
+  test("ocr notes show a blank-template warning while keeping manual correction available", async ({
+    page,
+  }) => {
+    await mockSubmissionApp(page, {
+      buildOcrPreviewResponse: () => ({
+        status: "blank_template_detected",
+        message: "Blank setup template detected. No handwritten values found.",
+        doc_type: "blank_setup_sheet",
+        confidence: 0.11,
+        model_used: "gpt-5.4",
+        fallback_used: false,
+        metadata: {
+          driver_text: "",
+          track_text: TRACK_NAME,
+          session_text: "",
+        },
+        structured_data: {
+          alignment: {},
+          pressures: { cold: {}, hot: {} },
+          suspension: {},
+          shock_setup: { rr: {}, lr: {}, lf: {}, rf: {} },
+          notes: [],
+        },
+        raw_evidence: {
+          visible_text: ["DATE", "DRIVER", "TRACK", "CAMBER"],
+          detected_grids: [],
+          detected_labels: [{ label: "CAMBER" }],
+          unmapped_values: [],
+          template_labels: ["CAMBER"],
+          quality_flags: [],
+        },
+        review_flags: ["No handwritten values found"],
+        raw_text: "DATE DRIVER TRACK CAMBER",
+        extracted_text: "",
+        summary: "Blank setup template",
+        recommended_review_status: "PENDING",
+        parser_version: "ocr-v1",
+        field_evidence: [],
+        normalized_sections: {},
+        preprocessing: { selected_variant: "cropped_paper" },
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "blank-template.jpg",
+      mimeType: "image/jpeg",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    const reviewBanner = page.getByTestId("ocr-review-required-banner");
+    await expect(reviewBanner).toBeVisible({ timeout: 5000 });
+    await expect(reviewBanner.getByText("Blank setup template detected. No handwritten values found.")).toBeVisible();
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Editable OCR review" })).toBeVisible();
+    await expect(page.getByLabel("RH FL")).toBeVisible();
+    await expect(page.getByAltText("OCR note preview")).toBeVisible();
+  });
+
+  test("ocr notes keep raw OCR text visible when parser fallback is used", async ({ page }) => {
+    await mockSubmissionApp(page, {
+      buildOcrPreviewResponse: () => ({
+        status: "parser_failed_but_raw_text_available",
+        message: "Parser failed, but raw OCR text is available.",
+        doc_type: "unknown",
+        confidence: 0.22,
+        model_used: "gpt-5.5",
+        fallback_used: true,
+        metadata: {
+          driver_text: "",
+          track_text: TRACK_NAME,
+          session_text: "Practice S1",
+        },
+        structured_data: {
+          alignment: {},
+          pressures: { cold: {}, hot: {} },
+          suspension: {},
+          shock_setup: { rr: {}, lr: {}, lf: {}, rf: {} },
+          notes: ["Unmapped text preserved"],
+        },
+        raw_evidence: {
+          visible_text: ["RH 102 101 100 99", "toe 1 out 2.5 in"],
+          detected_grids: [],
+          detected_labels: [],
+          unmapped_values: ["toe 1 out 2.5 in"],
+          quality_flags: ["parser_fallback"],
+        },
+        review_flags: ["Parser failed, raw OCR text preserved"],
+        raw_text: "RH 102 101 100 99\ntoe 1 out 2.5 in",
+        extracted_text: "RH 102 101 100 99",
+        summary: "Parser fallback returned raw OCR text only",
+        recommended_review_status: "PENDING",
+        parser_version: "ocr-v1",
+        field_evidence: [],
+        normalized_sections: {},
+        preprocessing: { selected_variant: "sharpened" },
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles({
+      name: "parser-fallback.jpg",
+      mimeType: "image/jpeg",
+      buffer: QUICK_PHOTO,
+    });
+
+    await page.getByTestId("ocr-extract-button").click();
+    const reviewBanner = page.getByTestId("ocr-review-required-banner");
+    await expect(reviewBanner.getByText("Parser failed, but raw OCR text is available.")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText("gpt-5.5").first()).toBeVisible();
+    const rawOcrField = page
+      .locator(".ocr-notes-field")
+      .filter({ has: page.locator("label", { hasText: "Raw OCR Text" }) });
+    await expect(rawOcrField.locator("textarea")).toHaveValue("RH 102 101 100 99\ntoe 1 out 2.5 in");
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
   });
 
   test("ocr notes preserve the uploaded image and manual correction fields after extraction_failed", async ({
@@ -965,11 +1088,9 @@ test.describe("submission flow", () => {
     });
 
     await page.getByTestId("ocr-extract-button").click();
-    await expect(
-      page.getByText(
-        "OCR extraction did not return a safe draft.",
-      ),
-    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("OCR service failed. Please retry or enter manually.")).toBeVisible({
+      timeout: 5000,
+    });
     await expect(page.getByAltText("OCR note preview")).toBeVisible();
     await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
     await expect(page.getByLabel("RH FL")).toBeVisible();

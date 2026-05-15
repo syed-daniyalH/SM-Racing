@@ -628,9 +628,11 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
     document_type: reviewDraft.docType || "unknown",
     template_name: reviewDraft.templateName || reviewDraft.metadata?.template_name || "",
     confidence: typeof reviewDraft.confidence === "number" ? reviewDraft.confidence : 0,
+    has_values: hasExtractedDraftData(reviewDraft),
     summary: reviewDraft.summary || "",
     raw_text: reviewDraft.rawText || reviewDraft.extractedText || "",
     extracted_text: reviewDraft.extractedText || "",
+    quality_flags: Array.isArray(reviewDraft.rawEvidence?.quality_flags) ? reviewDraft.rawEvidence.quality_flags : [],
     metadata: {
       driver_text: reviewDraft.metadata?.driver_text || "",
       track_text:
@@ -642,6 +644,13 @@ const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
         `${normalizeText(intakeState.session_type)} ${normalizeText(intakeState.session_number)}`.trim(),
     },
     raw_evidence: reviewDraft.rawEvidence || {},
+    field_evidence: Array.isArray(reviewDraft.fieldEvidence) ? reviewDraft.fieldEvidence : [],
+    normalized_sections:
+      reviewDraft.normalizedSections && typeof reviewDraft.normalizedSections === "object"
+        ? reviewDraft.normalizedSections
+        : {},
+    preprocessing:
+      reviewDraft.preprocessing && typeof reviewDraft.preprocessing === "object" ? reviewDraft.preprocessing : {},
     setup: {
       pressures: {
         cold_fl: normalizeText(reviewDraft.pressures.cold.fl),
@@ -1273,6 +1282,10 @@ export default function OCRNotesPage() {
       return workflowState;
     }
 
+    if (workflowState === "editing_review" && (hasExtractedDraft || isReviewSafeOcrStatus(reviewDraft.status))) {
+      return "editing_review";
+    }
+
     if (!hasImage) {
       return "waiting_for_image";
     }
@@ -1286,7 +1299,7 @@ export default function OCRNotesPage() {
     }
 
     return "extract_success";
-  }, [hasExtractedDraft, hasImage, reviewDirty, workflowState]);
+  }, [hasExtractedDraft, hasImage, reviewDirty, reviewDraft.status, workflowState]);
   const hasReviewSafeStatus = isReviewSafeOcrStatus(reviewDraft.status);
   const shouldShowManualCorrection =
     hasExtractedDraft || (hasImage && (effectiveWorkflowState === "extract_failed" || hasReviewSafeStatus));

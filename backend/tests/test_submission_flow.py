@@ -1062,7 +1062,7 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
         current_user,
     )
 
-    assert result.status == "review_required"
+    assert result.status == "partial_extracted"
     assert result.doc_type == "handwritten_setup_grid"
     assert result.template_name == "farnbacher_86_setup_sheet"
     assert result.metadata["track_text"] == "Sebring International Raceway"
@@ -1133,7 +1133,7 @@ def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
         current_user,
     )
 
-    assert result.status == "review_required"
+    assert result.status == "low_quality_review_required"
     assert result.doc_type == "low_quality_review_required"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert result.structured_data["pressures"]["cold"]["fl"] == ""
@@ -1255,7 +1255,7 @@ def test_preview_ocr_submission_calls_ocr_service_with_structured_context(monkey
     assert analyze_calls[0]["submission"].analysis_result["force_review_staging"] is True
     assert analyze_calls[0]["submission"].status == SubmissionStatus.PENDING
     assert analyze_calls[0]["submission"].payload["context"]["alignment"]["camber_fl"] == "-1.5"
-    assert result.status == "review_required"
+    assert result.status == "partial_extracted"
 
 
 def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
@@ -1527,6 +1527,20 @@ def test_analyze_submission_image_uses_fallback_model_when_primary_fails(monkeyp
             openai_request_timeout_seconds=8.0,
         ),
     )
+    monkeypatch.setattr(
+        image_analysis_service,
+        "_request_image_classifier",
+        lambda **_kwargs: {
+            "document_type": "shock_setup_sheet",
+            "template_name": "shock_setup",
+            "confidence": 0.92,
+            "has_values": True,
+            "blocked_by_hand": False,
+            "quality_flags": [],
+            "warnings": [],
+            "visible_text_hint": "RR HSR LSR HSB LSB",
+        },
+    )
 
     def fake_urlopen(request, timeout):
         payload = json.loads(request.data.decode("utf-8"))
@@ -1579,6 +1593,20 @@ def test_analyze_submission_image_handles_malformed_json_without_crashing(monkey
             openai_request_timeout_seconds=8.0,
         ),
     )
+    monkeypatch.setattr(
+        image_analysis_service,
+        "_request_image_classifier",
+        lambda **_kwargs: {
+            "document_type": "mixed_session_notes",
+            "template_name": "alex_notes",
+            "confidence": 0.54,
+            "has_values": True,
+            "blocked_by_hand": False,
+            "quality_flags": [],
+            "warnings": [],
+            "visible_text_hint": "Sebring notes",
+        },
+    )
     monkeypatch.setattr(image_analysis_service.urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse())
 
     result = image_analysis_service.analyze_submission_image(
@@ -1590,7 +1618,7 @@ def test_analyze_submission_image_handles_malformed_json_without_crashing(monkey
     )
 
     assert result is not None
-    assert result["status"] == "review_required"
+    assert result["status"] == "parser_failed_but_raw_text_available"
     assert result["document_type"] == "low_quality_review_required"
     assert result["raw_text"] == "{this is not valid json"
     assert result["model"] == "gpt-5.4"
@@ -1652,6 +1680,20 @@ def test_analyze_submission_image_uses_relaxed_salvage_when_strict_schema_fails(
             openai_request_timeout_seconds=8.0,
         ),
     )
+    monkeypatch.setattr(
+        image_analysis_service,
+        "_request_image_classifier",
+        lambda **_kwargs: {
+            "document_type": "handwritten_setup_grid",
+            "template_name": "alex_grid",
+            "confidence": 0.78,
+            "has_values": True,
+            "blocked_by_hand": False,
+            "quality_flags": [],
+            "warnings": [],
+            "visible_text_hint": "RH 102 101 100 99",
+        },
+    )
 
     def fake_urlopen(request, timeout):
         payload = json.loads(request.data.decode("utf-8"))
@@ -1673,7 +1715,7 @@ def test_analyze_submission_image_uses_relaxed_salvage_when_strict_schema_fails(
 
     assert attempted_requests == [("gpt-5.4", "json_schema"), ("gpt-5.4", "json_object")]
     assert result is not None
-    assert result["status"] == "review_required"
+    assert result["status"] == "low_quality_review_required"
     assert result["document_type"] == "low_quality_review_required"
     assert result["setup"]["alignment"]["rh_fl"] == "102"
     assert result["setup"]["alignment"]["rh_fr"] == "101"
@@ -1792,7 +1834,7 @@ def test_normalize_image_analysis_maps_abbreviation_grids_and_after_values():
         }
     )
 
-    assert normalized["status"] == "review_required"
+    assert normalized["status"] == "partial_extracted"
     assert normalized["setup"]["alignment"]["rh_fl"] == "98"
     assert normalized["setup"]["alignment"]["rh_fr"] == "97"
     assert normalized["setup"]["alignment"]["rh_rl"] == "96"
@@ -1904,6 +1946,28 @@ def test_analyze_submission_image_uses_fallback_when_primary_result_is_too_spars
             openai_request_timeout_seconds=8.0,
         ),
     )
+    monkeypatch.setattr(
+        image_analysis_service,
+        "_request_image_classifier",
+        lambda **_kwargs: {
+            "document_type": "handwritten_setup_grid",
+            "template_name": "alex_grid",
+            "confidence": 0.77,
+            "has_values": True,
+            "blocked_by_hand": False,
+            "quality_flags": [],
+            "warnings": [],
+            "visible_text_hint": "RH 102 101 100 99",
+        },
+    )
+    monkeypatch.setattr(
+        image_analysis_service,
+        "_should_retry_with_fallback",
+        lambda image_analysis, fallback_model: (
+            image_analysis.get("model") == "gpt-5.4" and bool(fallback_model),
+            "primary_sparse_result",
+        ),
+    )
 
     def fake_urlopen(request, timeout):
         payload = json.loads(request.data.decode("utf-8"))
@@ -1929,6 +1993,24 @@ def test_analyze_submission_image_uses_fallback_when_primary_result_is_too_spars
     assert result["fallback_model_used"] is True
     assert result["document_type"] == "handwritten_setup_grid"
     assert result["setup"]["alignment"]["rh_fl"] == "102"
+
+
+def test_should_retry_with_fallback_for_low_confidence_sparse_result():
+    should_retry, reason = image_analysis_service._should_retry_with_fallback(
+        {
+            "status": "partial_extracted",
+            "document_type": "handwritten_setup_grid",
+            "confidence": 0.18,
+            "warnings": ["ambiguous handwriting"],
+            "_field_count": 1,
+            "raw_text": "RH 102",
+            "has_values": True,
+        },
+        "gpt-5.5",
+    )
+
+    assert should_retry is True
+    assert reason == "primary_low_confidence"
 
 
 def test_preview_ocr_submission_unknown_document_returns_review_required(monkeypatch):
@@ -1984,7 +2066,7 @@ def test_preview_ocr_submission_unknown_document_returns_review_required(monkeyp
         current_user,
     )
 
-    assert result.status == "review_required"
+    assert result.status == "low_quality_review_required"
     assert result.doc_type == "low_quality_review_required"
     assert "label-to-grid mapping uncertain" in result.review_flags
     assert "Manual review required" in result.review_flags
@@ -2123,7 +2205,7 @@ def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
         current_user,
     )
 
-    assert result.status == "review_required"
+    assert result.status == "blank_template_detected"
     assert result.doc_type == "blank_setup_sheet"
     assert result.structured_data["alignment"]["rh_fl"] == ""
     assert "no readable setup values detected" in result.review_flags
@@ -2212,13 +2294,243 @@ def test_preview_ocr_submission_builds_review_draft_from_data_blocks(monkeypatch
         current_user,
     )
 
-    assert result.status == "review_required"
+    assert result.status == "partial_extracted"
     assert result.doc_type == "handwritten_setup_grid"
     assert result.model_used == "gpt-5.4"
     assert result.structured_data["alignment"]["rh_fl"] == "102"
     assert result.structured_data["alignment"]["camber_rr"] == "3.5"
     assert "50.4%" in result.structured_data["notes"]
     assert "manual verification recommended" in result.review_flags
+
+
+def test_normalize_image_analysis_detects_blank_farnbacher_loles_template():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "blank_setup_sheet",
+            "has_values": False,
+            "confidence": 0.96,
+            "summary": "Blank Farnbacher-Loles setup template",
+            "extracted_text": "",
+            "raw_evidence": {
+                "visible_text": ["DATE", "DRIVER", "TRACK", "CAMBER", "TOE"],
+                "detected_grids": [],
+                "detected_labels": [{"label": "CAMBER"}, {"label": "TOE"}],
+                "unmapped_values": [],
+                "template_labels": ["CAMBER", "TOE"],
+                "quality_flags": [],
+            },
+            "setup": {},
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["status"] == "blank_template_detected"
+    assert normalized["document_type"] == "blank_setup_sheet"
+    assert normalized["raw_evidence"]["template_labels"] == ["CAMBER", "TOE"]
+
+
+def test_normalize_image_analysis_marks_hand_blocked_printed_sheet_as_partial():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "printed_form_with_values",
+            "has_values": True,
+            "confidence": 0.72,
+            "summary": "Printed sheet with hand blocking the header",
+            "extracted_text": "camber 4.1 4.1 3.7 3.7",
+            "classifier": {
+                "document_type": "printed_form_with_values",
+                "template_name": "alex_form",
+                "confidence": 0.81,
+                "has_values": True,
+                "blocked_by_hand": True,
+                "quality_flags": ["hand partially blocks header"],
+                "warnings": [],
+                "visible_text_hint": "CAMBER",
+            },
+            "setup": {
+                "alignment": {
+                    "camber_fl": "4.1",
+                    "camber_fr": "4.1",
+                    "camber_rl": "3.7",
+                    "camber_rr": "3.7",
+                }
+            },
+            "warnings": ["top header partially occluded"],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["status"] == "partial_extracted"
+    assert "blocked_by_hand" in normalized["warnings"]
+    assert normalized["blocked_by_hand"] is True
+
+
+def test_normalize_image_analysis_extracts_handwritten_sebring_candidates():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "handwritten_setup_grid",
+            "has_values": True,
+            "confidence": 0.68,
+            "summary": "Sebring handwritten notes",
+            "extracted_text": "Sebring Daniel initial setup 22.5 psi",
+            "metadata": {
+                "driver_text": "Daniel",
+                "track_text": "Sebring",
+                "session_text": "Initial setup",
+            },
+            "setup": {
+                "pressures": {
+                    "cold_fl": "22.5",
+                    "cold_fr": "22.5",
+                },
+                "alignment": {
+                    "camber_fl": "4.1",
+                    "camber_fr": "4.3",
+                    "toe_fl": "1 out",
+                    "toe_fr": "1 out",
+                },
+                "sheet_fields": {
+                    "corner_weight_text": "553 / 559 / 843 / 887",
+                    "fuel_liters": "10",
+                },
+            },
+            "warnings": ["manual verification recommended"],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["normalized_sections"]["session_context"]["track_text"] == "Sebring"
+    assert normalized["normalized_sections"]["tire_pressure"]["cold_fl"] == "22.5"
+    assert normalized["normalized_sections"]["camber"]["camber_fl"] == "4.1"
+    assert normalized["normalized_sections"]["toe"]["toe_fl"] == "1 out"
+    assert normalized["normalized_sections"]["corner_weight"]["corner_weight_text"] == "553 / 559 / 843 / 887"
+
+
+def test_normalize_image_analysis_extracts_chicago_imsa_mixed_note_candidates():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "mixed_session_notes",
+            "has_values": True,
+            "confidence": 0.64,
+            "summary": "Chicago IMSA mixed notes",
+            "extracted_text": "Chicago IMSA test day 45 min",
+            "metadata": {
+                "driver_text": "",
+                "track_text": "Chicago",
+                "session_text": "IMSA test day",
+            },
+            "setup": {
+                "pressures": {
+                    "cold_fl": "15g fuel",
+                },
+                "alignment": {
+                    "camber_fl": "3.8",
+                    "camber_fr": "4.0",
+                    "rh_fl": "80.0",
+                    "rh_fr": "81.16",
+                    "toe_fl": "1.0 out",
+                    "toe_fr": "1.0 out",
+                },
+                "suspension": {
+                    "lsr_fl": "6",
+                    "hsr_fl": "7",
+                    "sway_bar_f": "3",
+                },
+                "sheet_fields": {
+                    "cross_weight_percent": "50.02%",
+                    "scale_weight_lbs": "1280",
+                    "fuel_liters": "15g",
+                },
+                "notes": ["Sunny", "1st session", "45 min"],
+            },
+            "warnings": ["duplicate evidence detected"],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["normalized_sections"]["session_context"]["track_text"] == "Chicago"
+    assert normalized["normalized_sections"]["ride_height"]["rh_fl"] == "80.0"
+    assert normalized["normalized_sections"]["camber"]["camber_fr"] == "4.0"
+    assert normalized["normalized_sections"]["toe"]["toe_fl"] == "1.0 out"
+    assert normalized["normalized_sections"]["corner_weight"]["scale_weight_lbs"] == "1280"
+    assert normalized["normalized_sections"]["shocks"]["sway_bar_f"] == "3"
+
+
+def test_classifier_only_blank_shock_sheet_is_not_extraction_failed():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        image_analysis_service._build_classifier_only_analysis(
+            classifier={
+                "document_type": "shock_setup_sheet",
+                "template_name": "shock_setup",
+                "confidence": 0.94,
+                "has_values": False,
+                "blocked_by_hand": False,
+                "quality_flags": [],
+                "warnings": [],
+                "visible_text_hint": "Shocks setup",
+            },
+            model="gpt-5.4",
+            preprocessing_info={},
+        )
+    )
+
+    assert normalized["document_type"] == "shock_setup_sheet"
+    assert normalized["status"] == "blank_template_detected"
+    assert normalized["status"] != "extraction_failed"
+
+
+def test_normalize_image_analysis_tolerates_null_racing_fields():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "printed_form_with_values",
+            "has_values": True,
+            "confidence": 0.61,
+            "summary": "Null-friendly parser payload",
+            "extracted_text": "camber",
+            "setup": {
+                "alignment": {
+                    "camber_fl": None,
+                    "camber_fr": None,
+                    "toe_fl": None,
+                },
+                "pressures": {
+                    "cold_fl": None,
+                    "hot_fl": None,
+                },
+            },
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["status"] in {"review_required", "partial_extracted", "low_quality_review_required"}
+    assert normalized["setup"]["alignment"]["camber_fl"] == ""
+    assert normalized["setup"]["pressures"]["cold_fl"] == ""
+
+
+def test_low_quality_image_keeps_raw_evidence_for_review():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "low_quality_review_required",
+            "has_values": False,
+            "confidence": 0.18,
+            "summary": "Low quality but some text visible",
+            "extracted_text": "",
+            "raw_evidence": {
+                "visible_text": ["Sebring", "22.5 psi", "camber"],
+                "detected_grids": [],
+                "detected_labels": [],
+                "unmapped_values": ["22.5 psi"],
+            },
+            "warnings": [],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["status"] == "low_quality_review_required"
+    assert normalized["raw_text"] == "Sebring\n22.5 psi\ncamber"
+    assert "22.5 psi" in normalized["raw_evidence"]["unmapped_values"]
 
 
 def test_submission_update_allows_creator_to_overwrite_notes(monkeypatch):
