@@ -1037,6 +1037,11 @@ const getWorkflowPresentation = (workflowState) => {
         label: "Submitting to Make.com",
         note: "The image and intake context were submitted to Make.com. Waiting for the OCR draft response.",
       };
+    case "submitted_to_make":
+      return {
+        label: "Submitted to Make.com",
+        note: "The image reached Make.com. Waiting for the OCR draft response.",
+      };
     case "extract_success":
       return {
         label: "OCR Draft Ready",
@@ -1326,6 +1331,10 @@ export default function OCRNotesPage() {
 
     if (workflowState === "draft_saved") {
       return "draft_saved";
+    }
+
+    if (workflowState === "submitted_to_make") {
+      return "submitted_to_make";
     }
 
     if (workflowState === "extract_failed" && !hasExtractedDraft) {
@@ -1657,11 +1666,11 @@ export default function OCRNotesPage() {
       setReviewDirty(false);
 
       if (preview.status === "extraction_failed") {
-        setWorkflowState("extract_failed");
-        setWorkflowMessage("");
-        setPageError(
-          getOcrStatusMessage(preview.status, preview.message),
+        setWorkflowState("submitted_to_make");
+        setWorkflowMessage(
+          "Submitted to Make.com. The image reached the Make.com queue and is waiting for the OCR draft response.",
         );
+        setPageError("");
         return;
       }
 
