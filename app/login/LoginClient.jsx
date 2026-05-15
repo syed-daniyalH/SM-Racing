@@ -203,7 +203,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
     }
 
     if (isOwnerPortal && accessStatus === "denied") {
-      setPortalNotice("This portal requires an OWNER account.");
+      setPortalNotice("This portal requires an admin account.");
       router.replace("/admin/login", { scroll: false });
       const timer = window.setTimeout(() => {
         setPortalNotice("");
@@ -342,7 +342,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
           <p className="login-hero__subtitle">
-                {isOwnerPortal ? "Owner Portal Access" : "Race Operations Platform"}
+                {isOwnerPortal ? "Admin Portal Access" : "Race Operations Platform"}
           </p>
           <div className="login-portal-switch" role="group" aria-label="Switch login portal">
             <button
@@ -361,7 +361,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
               disabled={isOwnerPortal}
               aria-current={isOwnerPortal ? "page" : undefined}
             >
-              Owner Login
+              Admin Login
             </button>
           </div>
         </section>
@@ -374,13 +374,13 @@ export default function LoginContent({ mode = "standard" } = {}) {
                 <h2 className="login-state__title">
                   {successTitle ||
                     (isOwnerPortal
-                      ? "Owner authentication successful"
+                      ? "Admin authentication successful"
                       : "Authentication successful")}
                 </h2>
                 <p className="login-state__text">
                   {success ||
                     (isOwnerPortal
-                      ? "Redirecting to the owner dashboard..."
+                      ? "Redirecting to the admin dashboard..."
                       : "Redirecting to dashboard...")}
                 </p>
               </div>
@@ -418,7 +418,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                       name="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder={isOwnerPortal ? "owner@smracing.com" : "driver@smracing.com"}
+                      placeholder={isOwnerPortal ? "admin@smracing.com" : "driver@smracing.com"}
                       className="login-input"
                       autoComplete="email"
                       autoCapitalize="none"
@@ -515,7 +515,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                   </button>
                   </>
                 ) : (
-                  "Owners can sign in here to reach the owner portal."
+                  "Admins can sign in here to reach the admin portal."
                 )}
               </p>
             ) : (
