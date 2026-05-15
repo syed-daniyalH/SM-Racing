@@ -1750,7 +1750,7 @@ def normalize_image_analysis_result(image_analysis: dict[str, Any] | None) -> di
         _append_warning(warnings, "Some values could not be mapped")
 
     flag_text = " ".join(warnings).lower()
-    if requested_status != OCR_STATUS_EXTRACTION_FAILED and doc_type not in {"blank_setup_sheet", "unknown"} and (
+    if requested_status not in {OCR_STATUS_EXTRACTION_FAILED, OCR_STATUS_BLANK_TEMPLATE} and doc_type not in {"blank_setup_sheet", "unknown"} and (
         confidence < OCR_PRIMARY_CONFIDENCE_THRESHOLD
         or any(keyword in flag_text for keyword in OCR_SEVERE_QUALITY_FLAG_KEYWORDS)
     ):
