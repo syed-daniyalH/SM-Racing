@@ -110,7 +110,9 @@ attempts to write an audit-log entry for each chat note or setup patch.
 When a submission includes `image_url`, the backend stages the photo in the
 structured intake tables so it can be reviewed later. If
 `MAKE_OCR_WEBHOOK_URL` is configured, the backend sends OCR preview requests to
-Make.com and expects a structured JSON draft back for normalization and review.
+Make.com as `application/json` with a `payload_json` string plus top-level
+preview metadata, and embeds the selected OCR image variant as clean base64 in
+`payload_json.image` for normalization and review.
 If `MAKE_OCR_WEBHOOK_URL` is not set and
 `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`, the backend falls back to direct OpenAI
 Vision extraction. In both cases, the extracted draft is stored with `PENDING`

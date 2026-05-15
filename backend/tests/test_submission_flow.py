@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import base64
 import json
 from datetime import date, datetime, time, timezone
 from types import SimpleNamespace
@@ -972,9 +973,9 @@ def test_ocr_service_returns_none_without_make_webhook(monkeypatch):
     assert openai_calls == []
 
 
-def test_build_make_ocr_request_uses_multipart_file_and_compact_payload():
+def test_build_make_ocr_request_uses_json_base64_payload():
     submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
-        "OCR-MAKE-MULTIPART",
+        "OCR-MAKE-JSON",
         _submission_payload(),
     )
     preprocessing_info = {
@@ -997,32 +998,40 @@ def test_build_make_ocr_request_uses_multipart_file_and_compact_payload():
     req = ocr_service._build_make_ocr_request(
         webhook_url="https://hook.make.com/example",
         payload=payload,
-        preprocessing_info=preprocessing_info,
         submission=submission,
     )
 
-    assert req is not None
-    assert req.headers["Content-type"].startswith("multipart/form-data; boundary=")
-    assert b'name="payload_json"' in req.data
-    assert b'name="image_file"; filename="high_contrast_grayscale.png"' in req.data
-    assert b'"transport": "multipart_file"' in req.data
-    assert b'"data_url"' not in req.data
-    assert b'"image_url"' not in req.data
+    request_body = json.loads(req.data.decode("utf-8"))
+    parsed_payload = json.loads(request_body["payload_json"])
+
+    assert req.headers["Content-type"] == "application/json"
+    assert request_body["correlation_id"] == submission.correlation_id
+    assert request_body["submission_ref"] == submission.submission_ref
+    assert request_body["ocr_preview"] is True
+    assert "image_file" not in request_body
+    assert parsed_payload["image"]["transport"] == "base64_json"
+    assert parsed_payload["image"]["filename"] == "high_contrast_grayscale.png"
+    assert parsed_payload["image"]["mime_type"] == "image/png"
+    assert parsed_payload["image"]["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
+    assert not parsed_payload["image"]["base64"].startswith("data:")
+    assert "field_name" not in parsed_payload["image"]
 
 
-def test_prepare_make_ocr_file_uses_selected_variant_bytes():
-    file_part = ocr_service._prepare_make_ocr_file(
+def test_build_make_ocr_image_payload_uses_selected_variant_bytes():
+    image_payload = ocr_service._build_make_ocr_image_payload(
         {
             "selected_image_url": "data:image/png;base64,AAAA",
             "selected_variant": "cropped paper",
         }
     )
 
-    assert file_part is not None
-    assert file_part["field_name"] == "image_file"
-    assert file_part["filename"] == "cropped_paper.png"
-    assert file_part["mime_type"] == "image/png"
-    assert file_part["bytes"] == b"\x00\x00\x00"
+    assert image_payload is not None
+    assert image_payload["transport"] == "base64_json"
+    assert image_payload["filename"] == "cropped_paper.png"
+    assert image_payload["mime_type"] == "image/png"
+    assert image_payload["size_bytes"] == 3
+    assert image_payload["selected_variant"] == "cropped paper"
+    assert image_payload["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
 
 
 def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants():
@@ -1037,6 +1046,7 @@ def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants(
         driver=driver,
         vehicle=vehicle,
         preprocessing_info={
+            "selected_image_url": "data:image/jpeg;base64,AAAA",
             "selected_variant": "deskewed",
             "mime_type": "image/jpeg",
             "size_bytes": 123,
@@ -1045,9 +1055,11 @@ def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants(
         },
     )
 
-    assert payload["image"]["field_name"] == "image_file"
+    assert payload is not None
+    assert payload["image"]["transport"] == "base64_json"
     assert payload["image"]["filename"] == "deskewed.jpg"
     assert payload["image"]["mime_type"] == "image/jpeg"
+    assert payload["image"]["base64"] == base64.b64encode(b"\x00\x00\x00").decode("ascii")
 
 
 def test_extract_analysis_candidate_accepts_wrapped_make_setup_schema():

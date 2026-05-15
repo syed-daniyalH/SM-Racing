@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from typing import Any
 from urllib import error, request
-from uuid import uuid4
 
 from app.core.config import get_ocr_config_status, get_settings
 from app.models.driver import Driver
@@ -442,32 +442,24 @@ def _build_make_ocr_payload(
     driver: Driver | None,
     vehicle: Vehicle | None,
     preprocessing_info: dict[str, Any],
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     context = _dict_or_empty(submission.payload).get("context")
     context_map = _dict_or_empty(context)
     run_group_value = getattr(run_group, "normalized", None) or getattr(run_group, "raw_text", None)
     if hasattr(run_group_value, "value"):
         run_group_value = run_group_value.value
 
-    selected_variant = _normalize_text(preprocessing_info.get("selected_variant")) or "ocr_preview"
-    mime_type = preprocessing_info.get("mime_type")
-    extension = _extension_for_mime_type(mime_type)
+    image_payload = _build_make_ocr_image_payload(preprocessing_info)
+    if image_payload is None:
+        return None
+
     return {
         "correlation_id": getattr(submission, "correlation_id", None),
         "submission_ref": submission.submission_ref,
         "ocr_preview": True,
         "force_review_staging": True,
         "raw_text": _normalize_text(submission.raw_text),
-        "image": {
-            "transport": "multipart_file",
-            "field_name": "image_file",
-            "filename": f"{selected_variant}.{extension}",
-            "mime_type": mime_type,
-            "size_bytes": preprocessing_info.get("size_bytes"),
-            "width": preprocessing_info.get("width"),
-            "height": preprocessing_info.get("height"),
-            "selected_variant": selected_variant,
-        },
+        "image": image_payload,
         "context": context_map,
         "event": {
             "id": str(event.id),
@@ -500,85 +492,93 @@ def _sanitize_filename_component(value: str) -> str:
     return safe or "ocr_preview"
 
 
-def _prepare_make_ocr_file(preprocessing_info: dict[str, Any]) -> dict[str, Any] | None:
+def _build_make_ocr_image_payload(preprocessing_info: dict[str, Any]) -> dict[str, Any] | None:
     selected_image_url = _normalize_text(preprocessing_info.get("selected_image_url"))
     if not selected_image_url:
+        logger.warning("Make OCR image payload missing selected image URL")
         return None
 
     parsed = image_analysis_service._parse_data_url(selected_image_url)
     if not parsed:
+        logger.warning("Make OCR image payload contained an invalid data URL")
         return None
 
     mime_type, image_bytes = parsed
-    normalized_mime = "image/jpeg" if mime_type == "image/jpg" else mime_type
+    normalized_mime = _normalize_text("image/jpeg" if mime_type == "image/jpg" else mime_type)
+    if not image_bytes:
+        logger.warning("Make OCR image payload missing image bytes")
+        return None
+    if not normalized_mime:
+        logger.warning("Make OCR image payload missing mime type")
+        return None
+
+    selected_variant = _normalize_text(preprocessing_info.get("selected_variant"))
+    if not selected_variant:
+        logger.warning("Make OCR image payload missing selected variant")
+        return None
+
     extension = _extension_for_mime_type(normalized_mime)
-    variant_name = _sanitize_filename_component(
-        _normalize_text(preprocessing_info.get("selected_variant")) or "ocr_preview"
+    filename = _normalize_text(f"{_sanitize_filename_component(selected_variant)}.{extension}")
+    if not filename:
+        logger.warning("Make OCR image payload could not derive a filename")
+        return None
+
+    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+    if not encoded_image:
+        logger.warning("Make OCR image payload produced an empty base64 string")
+        return None
+
+    logger.info(
+        "Make OCR base64 payload prepared: filename=%s mime_type=%s size_bytes=%s selected_variant=%s base64_length=%s base64_prefix=%s",
+        filename,
+        normalized_mime,
+        len(image_bytes),
+        selected_variant,
+        len(encoded_image),
+        encoded_image[:20],
     )
 
     return {
-        "field_name": "image_file",
-        "filename": f"{variant_name}.{extension}",
+        "transport": "base64_json",
+        "filename": filename,
         "mime_type": normalized_mime,
-        "bytes": image_bytes,
+        "size_bytes": len(image_bytes),
+        "width": preprocessing_info.get("width"),
+        "height": preprocessing_info.get("height"),
+        "selected_variant": selected_variant,
+        "base64": encoded_image,
     }
-
-
-def _encode_multipart_form_data(
-    *,
-    fields: dict[str, str],
-    file_part: dict[str, Any],
-) -> tuple[bytes, str]:
-    boundary = f"----SM2OCRWebhook{uuid4().hex}"
-    chunks: list[bytes] = []
-
-    for name, value in fields.items():
-        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
-        chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
-        chunks.append(str(value).encode("utf-8"))
-        chunks.append(b"\r\n")
-
-    chunks.append(f"--{boundary}\r\n".encode("utf-8"))
-    chunks.append(
-        (
-            f'Content-Disposition: form-data; name="{file_part["field_name"]}"; '
-            f'filename="{file_part["filename"]}"\r\n'
-        ).encode("utf-8")
-    )
-    chunks.append(f'Content-Type: {file_part["mime_type"]}\r\n\r\n'.encode("utf-8"))
-    chunks.append(file_part["bytes"])
-    chunks.append(b"\r\n")
-    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
-
-    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
 def _build_make_ocr_request(
     *,
     webhook_url: str,
     payload: dict[str, Any],
-    preprocessing_info: dict[str, Any],
     submission: Submission,
-) -> request.Request | None:
-    file_part = _prepare_make_ocr_file(preprocessing_info)
-    if file_part is None:
-        return None
-
-    body, content_type = _encode_multipart_form_data(
-        fields={
-            "payload_json": json.dumps(payload),
+) -> request.Request:
+    body = json.dumps(
+        {
+            "payload_json": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             "correlation_id": str(payload.get("correlation_id") or ""),
             "submission_ref": str(payload.get("submission_ref") or ""),
-            "ocr_preview": "true",
+            "ocr_preview": True,
         },
-        file_part=file_part,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    logger.info(
+        "Make OCR webhook JSON request prepared: correlation_id=%s submission_ref=%s transport=%s",
+        payload.get("correlation_id"),
+        payload.get("submission_ref"),
+        _dict_or_empty(payload.get("image")).get("transport"),
     )
 
     return request.Request(
         webhook_url,
         data=body,
         headers={
-            "Content-Type": content_type,
+            "Content-Type": "application/json",
             "X-SM2-OCR-Preview": "true",
             **(
                 {"X-SM2-Correlation-Id": str(submission.correlation_id)}
@@ -709,14 +709,8 @@ def _analyze_submission_image_via_make(
         vehicle=vehicle,
         preprocessing_info=preprocessing_info,
     )
-    req = _build_make_ocr_request(
-        webhook_url=webhook_url,
-        payload=payload,
-        preprocessing_info=preprocessing_info,
-        submission=submission,
-    )
-    if req is None:
-        logger.warning("Make OCR file payload could not be prepared from the selected image variant")
+    if payload is None:
+        logger.warning("Make OCR JSON payload could not be prepared from the selected image variant")
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="Image could not be prepared for OCR.",
@@ -724,6 +718,12 @@ def _analyze_submission_image_via_make(
                 model="make.com",
             )
         )
+
+    req = _build_make_ocr_request(
+        webhook_url=webhook_url,
+        payload=payload,
+        submission=submission,
+    )
 
     try:
         with request.urlopen(req, timeout=getattr(settings, "make_ocr_timeout_seconds", 20.0)) as response:
