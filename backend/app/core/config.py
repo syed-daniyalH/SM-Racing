@@ -148,7 +148,6 @@ def get_settings() -> Settings:
 
 def get_ocr_config_status(settings: Any | None = None) -> OCRConfigStatus:
     resolved_settings = settings or get_settings()
-    openai_enabled = bool(getattr(resolved_settings, "chatbot_image_analysis_enabled", False))
     api_key = _normalize_optional_text(getattr(resolved_settings, "openai_api_key", None))
     make_ocr_webhook_url = _normalize_optional_text(getattr(resolved_settings, "make_ocr_webhook_url", None))
     primary_model = (
@@ -161,34 +160,24 @@ def get_ocr_config_status(settings: Any | None = None) -> OCRConfigStatus:
     missing_requirements: list[str] = []
     if make_ocr_webhook_url:
         provider = "make_webhook"
-    elif openai_enabled and api_key:
-        provider = "openai"
     else:
-        if not openai_enabled:
-            missing_requirements.append("CHATBOT_IMAGE_ANALYSIS_ENABLED")
-        if not api_key:
-            missing_requirements.append("OPENAI_API_KEY")
+        missing_requirements.append("MAKE_OCR_WEBHOOK_URL")
 
     if missing_requirements:
-        user_safe_message = "OCR extraction is disabled because neither a Make OCR webhook nor backend image analysis is configured."
+        user_safe_message = "OCR extraction is disabled because the Make OCR webhook is not configured."
         developer_message = (
-            "OCR image analysis unavailable; missing "
+            "OCR image analysis unavailable; OCR now requires Make.com. Missing "
             f"{', '.join(missing_requirements)}. "
             f"make_ocr_webhook={'configured' if make_ocr_webhook_url else 'missing'}, "
+            f"openai_api_key={'configured' if api_key else 'missing'}, "
             f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
         )
     else:
         user_safe_message = "OCR extraction is configured and ready."
-        if provider == "make_webhook":
-            developer_message = (
-                "OCR image analysis configured via Make webhook. "
-                f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
-            )
-        else:
-            developer_message = (
-                "OCR image analysis configured via backend OpenAI provider. "
-                f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
-            )
+        developer_message = (
+            "OCR image analysis configured via Make webhook. "
+            f"primary_model={primary_model}, fallback_model={fallback_model or 'none'}."
+        )
 
     return {
         "enabled": provider is not None,

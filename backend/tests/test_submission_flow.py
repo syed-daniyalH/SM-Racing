@@ -825,11 +825,11 @@ def test_preview_ocr_submission_reports_disabled_config(monkeypatch):
     payload = json.loads(response.body.decode("utf-8"))
     assert response.status_code == 503
     assert payload["error"] == "OCR_EXTRACTION_DISABLED"
-    assert payload["message"] == "OCR extraction is disabled because neither a Make OCR webhook nor backend image analysis is configured."
-    assert payload["missing_requirements"] == ["CHATBOT_IMAGE_ANALYSIS_ENABLED", "OPENAI_API_KEY"]
+    assert payload["message"] == "OCR extraction is disabled because the Make OCR webhook is not configured."
+    assert payload["missing_requirements"] == ["MAKE_OCR_WEBHOOK_URL"]
 
 
-def test_preview_ocr_submission_reports_missing_api_key(monkeypatch):
+def test_preview_ocr_submission_reports_missing_make_webhook_even_with_openai_settings(monkeypatch):
     monkeypatch.setattr(
         submissions_endpoints,
         "settings",
@@ -854,10 +854,10 @@ def test_preview_ocr_submission_reports_missing_api_key(monkeypatch):
     payload = json.loads(response.body.decode("utf-8"))
     assert response.status_code == 503
     assert payload["error"] == "OCR_EXTRACTION_DISABLED"
-    assert payload["missing_requirements"] == ["OPENAI_API_KEY"]
+    assert payload["missing_requirements"] == ["MAKE_OCR_WEBHOOK_URL"]
 
 
-def test_ocr_config_status_uses_gpt_54_primary_model():
+def test_ocr_config_status_reports_missing_make_webhook_even_with_openai_settings():
     status = config_module.get_ocr_config_status(
         SimpleNamespace(
             chatbot_image_analysis_enabled=True,
@@ -867,11 +867,12 @@ def test_ocr_config_status_uses_gpt_54_primary_model():
         )
     )
 
-    assert status["enabled"] is True
+    assert status["enabled"] is False
+    assert status["provider"] is None
     assert status["has_api_key"] is True
     assert status["primary_model"] == "gpt-5.4"
     assert status["fallback_model"] == "gpt-5.5"
-    assert status["missing_requirements"] == []
+    assert status["missing_requirements"] == ["MAKE_OCR_WEBHOOK_URL"]
 
 
 def test_ocr_config_status_accepts_make_webhook_without_openai_key():
@@ -932,6 +933,42 @@ def test_ocr_service_prefers_make_webhook_provider(monkeypatch):
 
     assert result["document_type"] == "printed_form_with_values"
     assert len(make_calls) == 1
+    assert openai_calls == []
+
+
+def test_ocr_service_returns_none_without_make_webhook(monkeypatch):
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-NO-MAKE-WEBHOOK",
+        _submission_payload(),
+    )
+    openai_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        ocr_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            make_ocr_webhook_url=None,
+            chatbot_image_analysis_enabled=True,
+            openai_api_key="test-key",
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        ocr_service.image_analysis_service,
+        "analyze_submission_image",
+        lambda **kwargs: openai_calls.append(kwargs) or {"document_type": "unknown"},
+    )
+
+    result = ocr_service.analyze_submission_image(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+    )
+
+    assert result is None
     assert openai_calls == []
 
 

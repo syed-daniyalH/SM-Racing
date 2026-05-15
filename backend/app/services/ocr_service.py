@@ -824,16 +824,14 @@ def analyze_submission_image(
     settings = get_settings()
     ocr_config = get_ocr_config_status(settings)
 
-    if ocr_config["provider"] == "make_webhook":
-        return _analyze_submission_image_via_make(
-            submission=submission,
-            event=event,
-            run_group=run_group,
-            driver=driver,
-            vehicle=vehicle,
+    if ocr_config["provider"] != "make_webhook":
+        logger.warning(
+            "OCR analyze request skipped because Make OCR webhook is not configured: missing_requirements=%s",
+            ocr_config["missing_requirements"],
         )
+        return None
 
-    return image_analysis_service.analyze_submission_image(
+    return _analyze_submission_image_via_make(
         submission=submission,
         event=event,
         run_group=run_group,

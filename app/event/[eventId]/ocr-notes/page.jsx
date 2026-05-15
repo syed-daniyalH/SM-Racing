@@ -1029,13 +1029,13 @@ const getWorkflowPresentation = (workflowState) => {
       };
     case "ready_to_extract":
       return {
-        label: "Ready to Extract",
-        note: "Minimal intake context is set. Run OCR extraction to build the first editable draft.",
+        label: "Ready to Submit",
+        note: "Minimal intake context is set. Submit to Make.com to build the first editable draft.",
       };
     case "extracting":
       return {
-        label: "Extracting",
-        note: "The OCR service is analyzing the uploaded sheet and building a reviewable draft.",
+        label: "Submitting to Make.com",
+        note: "The image and intake context were submitted to Make.com. Waiting for the OCR draft response.",
       };
     case "extract_success":
       return {
@@ -1044,8 +1044,8 @@ const getWorkflowPresentation = (workflowState) => {
       };
     case "extract_failed":
       return {
-        label: "Extraction Failed",
-        note: "Keep the image, adjust the intake context if needed, and retry OCR extraction.",
+        label: "Make.com Submission Failed",
+        note: "Keep the image, adjust the intake context if needed, and resubmit to Make.com.",
       };
     case "editing_review":
       return {
@@ -1054,8 +1054,8 @@ const getWorkflowPresentation = (workflowState) => {
       };
     case "rerunning_ocr":
       return {
-        label: "Rerunning OCR",
-        note: "Refreshing the OCR draft from the current image and intake context.",
+        label: "Resubmitting to Make.com",
+        note: "Refreshing the OCR draft by resubmitting the current image and intake context to Make.com.",
       };
     case "saving_draft":
       return {
@@ -1626,7 +1626,11 @@ export default function OCRNotesPage() {
     setPageError("");
     setSubmissionWarnings([]);
     setWorkflowState(rerun ? "rerunning_ocr" : "extracting");
-    setWorkflowMessage("");
+    setWorkflowMessage(
+      rerun
+        ? "Submitted to Make.com again. Waiting for the OCR draft response."
+        : "Submitted to Make.com. Waiting for the OCR draft response.",
+    );
 
     try {
       const preview = await (rerun ? rerunOcrDraft : extractOcrDraft)({
@@ -1889,10 +1893,10 @@ export default function OCRNotesPage() {
           <div className="ocr-notes-banner neutral">
             <DocumentScannerRoundedIcon fontSize="inherit" />
             <div>
-              <strong>Extract first, then review</strong>
+              <strong>Submit to Make.com, then review</strong>
               <span>
-                This OCR flow keeps the initial intake light. The editable setup sections appear only after the OCR
-                draft is returned.
+                This OCR flow keeps the initial intake light. The editable setup sections appear only after Make.com
+                returns the OCR draft.
               </span>
             </div>
           </div>
@@ -3051,8 +3055,8 @@ export default function OCRNotesPage() {
             <div className="ocr-notes-footer-copy">
               <h3>Stage, save, or submit the OCR draft</h3>
               <p>
-                The OCR flow now extracts first, then keeps the draft editable. Save it locally if you need to pause,
-                or submit the reviewed result for validation when it is ready.
+                The OCR flow now submits the image to Make.com first, then keeps the draft editable. Save it locally
+                if you need to pause, or submit the reviewed result for validation when it is ready.
               </p>
             </div>
 
@@ -3080,12 +3084,12 @@ export default function OCRNotesPage() {
                 disabled={activeAsyncState || !hasImage || !canSubmitOcr}
               >
                 {workflowState === "extracting"
-                  ? "Extracting..."
+                  ? "Submitting..."
                   : workflowState === "rerunning_ocr"
-                    ? "Rerunning..."
+                    ? "Resubmitting..."
                     : hasExtractedDraft
-                      ? "Rerun OCR"
-                      : "Extract Notes"}
+                      ? "Resubmit to Make.com"
+                      : "Submit to Make.com"}
               </button>
               <button
                 type="button"
