@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DocumentScannerRoundedIcon from "@mui/icons-material/DocumentScannerRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
@@ -1111,10 +1111,13 @@ const getWorkflowPresentation = (workflowState) => {
 export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const routeEventId = params?.eventId;
   const isReviewView = initialView === "review";
   const intakeRoute = routeEventId ? `/event/${routeEventId}/ocr-notes` : "/events";
   const reviewRoute = routeEventId ? `/event/${routeEventId}/ocr-review` : "/events";
+  const manualIntakeRoute = routeEventId ? `/event/${routeEventId}/ocr-notes?view=intake` : "/events";
+  const forceIntakeView = searchParams?.get("view") === "intake";
 
   const [event, setEvent] = useState(null);
   const [runGroup, setRunGroup] = useState(null);
@@ -1429,6 +1432,18 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     };
   }, [eventTrack, isWaitingForMakeDraft, reviewDraft.correlationId]);
 
+  useEffect(() => {
+    if (isReviewView || forceIntakeView || !hasLoadedDraft) {
+      return;
+    }
+
+    if (!(isWaitingForMakeDraft || hasExtractedDraft)) {
+      return;
+    }
+
+    router.replace(reviewRoute);
+  }, [forceIntakeView, hasExtractedDraft, hasLoadedDraft, isReviewView, isWaitingForMakeDraft, reviewRoute, router]);
+
   const effectiveWorkflowState = useMemo(() => {
     if (workflowState === "submit_success" || workflowState === "submit_failed") {
       return workflowState;
@@ -1442,7 +1457,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       return "submitted_to_make";
     }
 
-    if (workflowState === "extract_failed" && !hasExtractedDraft) {
+    if (workflowState === "extract_failed") {
       return "extract_failed";
     }
 
@@ -2047,7 +2062,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
           <header className="ocr-notes-topbar">
             <div className="ocr-notes-topbar-copy">
               <ScreenBackButton
-                fallbackHref={isReviewView ? intakeRoute : `/event/${routeEventId}`}
+                fallbackHref={isReviewView ? manualIntakeRoute : `/event/${routeEventId}`}
                 label={isReviewView ? "Back to OCR Intake" : "Back to Event"}
               />
               <p className="ocr-notes-eyebrow">
@@ -3284,7 +3299,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
 
             <div className="ocr-notes-footer-actions">
               {isReviewView ? (
-                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(intakeRoute)}>
+                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(manualIntakeRoute)}>
                   Back to OCR Intake
                 </button>
               ) : (
