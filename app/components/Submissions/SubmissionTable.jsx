@@ -73,13 +73,16 @@ const getSubmissionNote = (submission) =>
 
 const getTrackLabel = (submission) =>
   firstText(
-    submission?.event?.track,
-    submission?.event?.trackName,
-    submission?.event?.track_name,
     submission?.payload?.track,
     submission?.payload?.track_name,
     submission?.data?.track,
     submission?.data?.track_name,
+    submission?.analysis_result?.image_analysis?.metadata?.track_text,
+    submission?.analysisResult?.image_analysis?.metadata?.track_text,
+    submission?.payload?.ocr_review?.metadata?.track_text,
+    submission?.event?.track,
+    submission?.event?.trackName,
+    submission?.event?.track_name,
     "-",
   );
 

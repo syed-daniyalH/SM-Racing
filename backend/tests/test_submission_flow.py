@@ -468,6 +468,13 @@ def test_submission_stage_records_raw_media_and_audit_log():
     assert raw_snapshot["correlation_id"] == f"{submission_ref}-CORR"
     assert raw_snapshot["submission_type"] == "detail"
     assert raw_snapshot["analysis_result"]["voice_input_used"] is True
+    assert raw_snapshot["metadata"]["event_id"] == str(event.id)
+    assert raw_snapshot["metadata"]["track"] == "Sebring International Raceway"
+    assert raw_snapshot["metadata"]["driver_id"] == "NG"
+    assert raw_snapshot["metadata"]["driver_name"] == "Nicolas GuigÃ¨re"
+    assert raw_snapshot["metadata"]["vehicle_id"] == "NG-GT4-2025"
+    assert raw_snapshot["data"]["driver_id"] == "NG"
+    assert raw_snapshot["data"]["vehicle_id"] == "NG-GT4-2025"
     assert insert_submission["confidence"] == pytest.approx(0.87)
 
     insert_media = next(
@@ -2102,6 +2109,192 @@ def test_preview_ocr_submission_returns_tracking_fields_for_make_polling(monkeyp
     assert result.submission_ref.startswith("OCR-PREVIEW-")
     assert result.correlation_id
     assert result.source == "make.com"
+
+
+def test_preview_ocr_submission_stages_waiting_make_draft_with_selected_context(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+    driver = SimpleNamespace(id=uuid4(), driver_id="NG", driver_name="Nicolas Guigere")
+    vehicle = SimpleNamespace(id=uuid4(), vehicle_id="NG-GT4-2025", driver_id="NG")
+    staged: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: submissions_endpoints._build_ocr_waiting_analysis(),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "_validate_ocr_preview_relations",
+        lambda _db, _preview_in: (driver, vehicle),
+    )
+
+    def capture_stage_submission_input(
+        _db,
+        *,
+        submission,
+        event,
+        run_group,
+        driver,
+        vehicle,
+        current_user,
+        source="pwa",
+    ):
+        staged["submission"] = submission
+        staged["event"] = event
+        staged["run_group"] = run_group
+        staged["driver"] = driver
+        staged["vehicle"] = vehicle
+        staged["current_user"] = current_user
+        staged["source"] = source
+        return 101
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "stage_submission_input",
+        capture_stage_submission_input,
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            driver_id="NG",
+            vehicle_id="NG-GT4-2025",
+            image_url="data:image/png;base64,AAAA",
+            context={
+                "date": "04/18/26",
+                "time": "2:40 AM",
+                "track": "N. Green",
+                "session_type": "Practice",
+                "session_number": "1",
+            },
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "submitted_to_make"
+    assert staged["source"] == "pwa"
+    assert staged["driver"] is driver
+    assert staged["vehicle"] is vehicle
+    assert staged["submission"].payload["context"]["track"] == "N. Green"
+    assert staged["submission"].analysis_result["has_image_analysis"] is True
+    assert staged["submission"].analysis_result["image_analysis"]["status"] == "submitted_to_make"
+
+
+def test_get_latest_ocr_preview_for_event_returns_waiting_staged_context_before_callback():
+    db = FakeSession()
+    current_user = SimpleNamespace(id=uuid4())
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    driver = SimpleNamespace(
+        id=uuid4(),
+        driver_id="NG",
+        driver_name="Nicolas Guigere",
+    )
+    vehicle = SimpleNamespace(
+        id=uuid4(),
+        vehicle_id="NG-GT4-2025",
+        driver_id="NG",
+        make="Porsche",
+        model="GT4 RS Clubsport",
+    )
+    submitter = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+    submission = _make_submission(
+        submission_ref="OCR-PREVIEW-STAGED-1",
+        correlation_id="corr-staged-1",
+        raw_text="Brake marker note",
+        image_url="data:image/png;base64,AAAA",
+        payload={
+            "context": {
+                "date": "04/18/26",
+                "time": "2:40 AM",
+                "track": "N. Green",
+                "session_type": "Practice",
+                "session_number": "1",
+                "duration_min": "30",
+                "notes": "Brake marker note",
+            },
+            "image_urls": ["data:image/png;base64,AAAA"],
+        },
+        analysis_result={
+            "ocr_preview": True,
+            "force_review_staging": True,
+            "has_image_analysis": True,
+            "image_analysis_review_status": "PENDING",
+            "image_analysis": submissions_endpoints._build_ocr_waiting_analysis(),
+        },
+    )
+
+    ingest_service.stage_submission_input(
+        db,
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        current_user=submitter,
+        source="pwa",
+    )
+
+    result = submissions_endpoints.get_latest_ocr_preview_for_event(
+        str(event.id),
+        db=db,
+        current_user=current_user,
+    )
+
+    assert result.status == "submitted_to_make"
+    assert result.source == "make.com"
+    assert result.correlation_id == "corr-staged-1"
+    assert result.structured_data["session"]["date"] == "04/18/26"
+    assert result.structured_data["session"]["time"] == "2:40 AM"
+    assert result.structured_data["session"]["track"] == "N. Green"
+    assert result.structured_data["session"]["session_type"] == "Practice"
+    assert result.structured_data["session"]["session_number"] == "1"
+    assert result.structured_data["session"]["duration_min"] == "30"
+    assert result.structured_data["session"]["driver_id"] == "NG"
+    assert result.structured_data["session"]["vehicle_id"] == "NG-GT4-2025"
+    assert result.metadata["driver_text"] == "Nicolas Guigere"
+    assert result.metadata["vehicle_text"] == "NG-GT4-2025"
+    assert result.structured_data["notes"] == ["Brake marker note"]
 
 
 def test_preview_ocr_submission_preserves_multiple_source_images(monkeypatch):
@@ -3807,6 +4000,57 @@ def test_normalize_image_analysis_tolerates_null_racing_fields():
     assert normalized["status"] in {"review_required", "partial_extracted", "low_quality_review_required"}
     assert normalized["setup"]["alignment"]["camber_fl"] == ""
     assert normalized["setup"]["pressures"]["cold_fl"] == ""
+
+
+def test_normalize_image_analysis_keeps_sparse_corner_values_blank_on_the_missing_side():
+    normalized = image_analysis_service.normalize_image_analysis_result(
+        {
+            "document_type": "printed_form_with_values",
+            "has_values": True,
+            "confidence": 0.72,
+            "summary": "Sparse left-side toe capture",
+            "extracted_text": "toe 0.08 out 0.09 out",
+            "setup": {
+                "alignment": {
+                    "rh_fl": "79.7",
+                    "rh_fr": "80.8",
+                    "rh_rl": "120.6",
+                    "rh_rr": "120.3",
+                    "ride_height_f": "",
+                    "ride_height_r": "",
+                    "camber_fl": "3.6",
+                    "camber_fr": "",
+                    "camber_rl": "",
+                    "camber_rr": "",
+                    "toe_fl": "0.08 OUT",
+                    "toe_fr": "",
+                    "toe_rl": "0.09 OUT",
+                    "toe_rr": "",
+                    "toe_front": "",
+                    "toe_rear": "",
+                },
+                "pressures": {
+                    "cold_fl": "23",
+                    "cold_fr": "23.4",
+                    "cold_rl": "22",
+                    "cold_rr": "22.3",
+                },
+            },
+            "warnings": ["Manual review required"],
+            "recommended_review_status": "PENDING",
+        }
+    )
+
+    assert normalized["setup"]["alignment"]["toe_fl"] == "0.08 OUT"
+    assert normalized["setup"]["alignment"]["toe_fr"] == ""
+    assert normalized["setup"]["alignment"]["toe_rl"] == "0.09 OUT"
+    assert normalized["setup"]["alignment"]["toe_rr"] == ""
+    assert normalized["setup"]["alignment"]["toe_front"] == ""
+    assert normalized["setup"]["alignment"]["toe_rear"] == ""
+    assert normalized["setup"]["alignment"]["rh_fl"] == "79.7"
+    assert normalized["setup"]["alignment"]["rh_fr"] == "80.8"
+    assert normalized["setup"]["alignment"]["ride_height_f"] == ""
+    assert normalized["setup"]["alignment"]["ride_height_r"] == ""
 
 
 def test_low_quality_image_keeps_raw_evidence_for_review():

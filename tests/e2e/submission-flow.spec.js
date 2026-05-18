@@ -100,6 +100,8 @@ async function mockSubmissionApp(page, options = {}) {
   const submissionRequests = [];
   const rawSubmissionRequests = [];
   const ocrPreviewRequests = [];
+  const ocrDraftStatusRequests = [];
+  const latestOcrDraftRequests = [];
   const buildSubmissionResponse =
     options.buildSubmissionResponse ||
     ((body) => ({
@@ -223,6 +225,12 @@ async function mockSubmissionApp(page, options = {}) {
       parser_version: "ocr-v1",
       model: "gpt-5.4",
     }));
+  const buildOcrDraftStatusResponse =
+    options.buildOcrDraftStatusResponse ||
+    ((context = {}) => buildOcrPreviewResponse(context.body || {}));
+  const buildLatestOcrDraftResponse =
+    options.buildLatestOcrDraftResponse ||
+    ((context = {}) => buildOcrDraftStatusResponse(context));
 
   await page.addInitScript(
     ({ transcript, token }) => {
@@ -436,6 +444,26 @@ async function mockSubmissionApp(page, options = {}) {
       });
     }
 
+    if (pathname.startsWith("/api/v1/submissions/ocr-preview/latest/event/") && method === "GET") {
+      const eventId = decodeURIComponent(pathname.split("/").pop() || "");
+      latestOcrDraftRequests.push(eventId);
+
+      return route.fulfill({
+        status: 200,
+        json: buildLatestOcrDraftResponse({ eventId, pathname }),
+      });
+    }
+
+    if (pathname.startsWith("/api/v1/submissions/ocr-preview/") && method === "GET") {
+      const correlationId = decodeURIComponent(pathname.split("/").pop() || "");
+      ocrDraftStatusRequests.push(correlationId);
+
+      return route.fulfill({
+        status: 200,
+        json: buildOcrDraftStatusResponse({ correlationId, pathname }),
+      });
+    }
+
     if (pathname === "/api/v1/submissions/raw" && method === "POST") {
       const body = request.postDataJSON();
       rawSubmissionRequests.push(body);
@@ -457,6 +485,8 @@ async function mockSubmissionApp(page, options = {}) {
 
   submissionRequests.rawSubmissionRequests = rawSubmissionRequests;
   submissionRequests.ocrPreviewRequests = ocrPreviewRequests;
+  submissionRequests.ocrDraftStatusRequests = ocrDraftStatusRequests;
+  submissionRequests.latestOcrDraftRequests = latestOcrDraftRequests;
   return submissionRequests;
 }
 
@@ -1371,6 +1401,159 @@ test.describe("submission flow", () => {
     expect(requests.ocrPreviewRequests[0].image_urls[0]).toContain("data:image/png;base64,");
   });
 
+  test("ocr review keeps sparse make payload values blank and submits missing fields as null", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page, {
+      buildOcrDraftStatusResponse: ({ correlationId }) => ({
+        status: "review_required",
+        message: "OCR draft needs review. Some values may be incomplete or uncertain.",
+        submission_ref: "OCR-PREVIEW-SPARSE-1",
+        correlation_id: correlationId || "corr-sparse-1",
+        source: "make.com",
+        doc_type: "printed_form_with_values",
+        confidence: 0.9,
+        model_used: "make.com",
+        fallback_used: false,
+        metadata: {
+          driver_text: "N. Green",
+          track_text: "N. Green",
+          session_text: "04/18/26 | 2:40 AM | Grand-Am Rolex Series | Farnbacher-Loles Racing",
+        },
+        structured_data: {
+          session: {
+            date: "04/18/26",
+            time: "2:40 AM",
+            track: "N. Green",
+            session_type: "",
+            session_number: "",
+            duration_min: "",
+            driver_id: "",
+            vehicle_id: "",
+          },
+          alignment: {
+            rh_fl: "79.7",
+            rh_fr: "80.8",
+            rh_rl: "120.6",
+            rh_rr: "120.3",
+            ride_height_f: "",
+            ride_height_r: "",
+            camber_fl: "3.6",
+            camber_fr: "",
+            camber_rl: "",
+            camber_rr: "",
+            toe_fl: "0.08 OUT",
+            toe_fr: "",
+            toe_rl: "0.09 OUT",
+            toe_rr: "",
+            toe_front: "",
+            toe_rear: "",
+            caster_l: "",
+            caster_r: "",
+            rake_mm: "",
+            wheelbase_mm: "",
+          },
+          pressures: {
+            cold: { fl: "23", fr: "23.4", rl: "22", rr: "22.3" },
+            hot: { fl: "", fr: "", rl: "", rr: "" },
+          },
+          suspension: {},
+          sheet_fields: {
+            fuel_liters: "36",
+            driver_weight_lbs: "182",
+            scale_weight_lbs: "",
+            percentage_box_weight_lbs: "1274",
+            cross_weight_percent: "49.8",
+            roll_bar_text: "875 / 1025",
+            spacer_text: "10",
+            bump_text: "5",
+            rebound_text: "8",
+            springs_front: "875",
+            springs_rear: "1025",
+            bump_stops_front: "5",
+            bump_stops_rear: "7",
+            wheelbase_left_mm: "109.7",
+            wheelbase_right_mm: "109.8",
+            wing_rake_deg: "2",
+            wing_angle_deg: "6",
+            wing_gurney_mm: "10",
+            wicker_text: "",
+            specs_toe_text: "",
+            corner_weight_text: "528 / 533 / 846 / 850",
+            static_ride_height_text: "",
+            bump_stop_height_text: "",
+            arb_front_text: "",
+            arb_rear_text: "",
+            fuel_pumped_out_liters: "4",
+            notes_block: "",
+          },
+          post_session: {
+            camber_text: "",
+            toe_text: "",
+            weight_text: "",
+            height_text: "",
+            shocks_text: "",
+          },
+          shock_setup: { rr: {}, lr: {}, lf: {}, rf: {} },
+          notes: ["Manual review required"],
+        },
+        raw_evidence: {
+          visible_text: [
+            "04/18/26 2:40 AM",
+            "Grand-Am Rolex Series",
+            "Farnbacher-Loles Racing",
+            "N. Green",
+          ],
+          detected_grids: [],
+          detected_labels: [],
+          unmapped_values: [],
+          quality_flags: [],
+        },
+        review_flags: ["Manual review required"],
+        raw_text: "04/18/26 2:40 AM Grand-Am Rolex Series Farnbacher-Loles Racing N. Green",
+        extracted_text: "04/18/26 2:40 AM Grand-Am Rolex Series Farnbacher-Loles Racing N. Green",
+        summary: "Printed setup sheet parsed with sparse toe and camber capture",
+        recommended_review_status: "PENDING",
+        parser_version: "ocr-v1",
+        model: "make.com",
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-review?correlation_id=corr-sparse-1&submission_ref=OCR-PREVIEW-SPARSE-1`);
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
+    await expect.poll(() => requests.ocrDraftStatusRequests.length).toBeGreaterThan(0);
+
+    const reviewSnapshot = page.locator(".ocr-notes-review-list");
+    await expect(reviewSnapshot.locator("li").nth(2)).toContainText("Optional");
+    await expect(page.getByLabel("Toe FL")).toHaveValue("0.08 OUT");
+    await expect(page.getByLabel("Toe FR")).toHaveValue("");
+    await expect(page.getByLabel("Toe RL")).toHaveValue("0.09 OUT");
+    await expect(page.getByLabel("Toe RR")).toHaveValue("");
+    await expect(page.getByLabel("Camber FL")).toHaveValue("3.6");
+    await expect(page.getByLabel("Camber FR")).toHaveValue("");
+    await expect(page.getByLabel("Camber RL")).toHaveValue("");
+    await expect(page.getByLabel("Camber RR")).toHaveValue("");
+    await expect(page.getByLabel("RH FL")).toHaveValue("79.7");
+    await expect(page.getByLabel("RH FR")).toHaveValue("80.8");
+
+    await page.getByTestId("ocr-submit-review-button").click();
+    await expect.poll(() => requests.length).toBe(1);
+
+    expect(requests[0].payload.data.date).toBe("04/18/26");
+    expect(requests[0].payload.data.time).toBe("2:40 AM");
+    expect(requests[0].payload.data.track).toBe("N. Green");
+    expect(requests[0].payload.data.session_type).toBeNull();
+    expect(requests[0].payload.data.session_number).toBeNull();
+    expect(requests[0].payload.data.alignment.toe_front).toBeNull();
+    expect(requests[0].payload.data.alignment.toe_rear).toBeNull();
+    expect(requests[0].payload.data.alignment.ride_height_f).toBeNull();
+    expect(requests[0].payload.data.alignment.ride_height_r).toBeNull();
+    expect(requests[0].analysis_result.image_analysis.setup.alignment.toe_fl).toBe("0.08 OUT");
+    expect(requests[0].analysis_result.image_analysis.setup.alignment.toe_fr).toBeNull();
+    expect(requests[0].analysis_result.image_analysis.setup.alignment.toe_rl).toBe("0.09 OUT");
+    expect(requests[0].analysis_result.image_analysis.setup.alignment.toe_rr).toBeNull();
+  });
+
   test("ocr review can submit an extracted draft even when the source image is no longer attached", async ({
     page,
   }) => {
@@ -1557,6 +1740,147 @@ test.describe("submission flow", () => {
     expect(requests[0].payload.data.track).toBe(TRACK_NAME);
   });
 
+  test("submission drawer keeps sparse OCR submissions aligned without null placeholders", async ({
+    page,
+  }) => {
+    await mockSubmissionApp(page);
+
+    const sparseSubmission = {
+      id: "submission-preview-1",
+      submission_ref: "OCR-SUB-1",
+      correlation_id: "corr-preview-1",
+      event_id: EVENT_ID,
+      run_group_id: "run-group-1",
+      created_by_id: "user-1",
+      created_at: "2026-05-18T17:28:00.000Z",
+      raw_text: "Flexible OCR setup payload adapted for review.",
+      image_url: null,
+      payload: {
+        data: {
+          date: "04/18/26",
+          time: "2:40 AM",
+          track: "N. Green",
+          run_group: "BLUE",
+          driver_id: null,
+          vehicle_id: null,
+          session_type: null,
+          session_number: null,
+          duration_min: null,
+          pressures: {
+            cold: { fl: 23, fr: 23.4, rl: 22, rr: 22.3 },
+            hot: { fl: null, fr: null, rl: null, rr: null },
+          },
+          suspension: {},
+          alignment: {
+            camber_fl: 3.6,
+            camber_fr: null,
+            camber_rl: null,
+            camber_rr: null,
+            rake_mm: null,
+          },
+          extended_setup: {
+            sheet_fields: {
+              cross_weight_percent: "49.8",
+            },
+          },
+        },
+        ocr_review: {
+          metadata: {
+            driver_text: "N. Green",
+            track_text: "N. Green",
+          },
+        },
+      },
+      analysis_result: {
+        submission_mode: "detail",
+        confidence: 0.9,
+        image_analysis: {
+          metadata: {
+            driver_text: "N. Green",
+            track_text: "N. Green",
+          },
+          setup: {
+            sheet_fields: {
+              cross_weight_percent: "49.8",
+            },
+          },
+          summary: "Flexible OCR setup payload adapted for review.",
+        },
+      },
+      status: "SENT",
+      event: {
+        id: EVENT_ID,
+        name: "Sebring",
+        track: TRACK_NAME,
+        start_date: "2026-05-10T00:00:00.000Z",
+        end_date: "2026-05-20T00:00:00.000Z",
+        is_active: true,
+      },
+      run_group: {
+        id: "run-group-1",
+        event_id: EVENT_ID,
+        normalized: "BLUE",
+        raw_text: "BLUE",
+      },
+      driver: {
+        id: "driver-1",
+        driver_id: "NG",
+        driver_name: "Nicolas Guigere",
+        first_name: "Nicolas",
+        last_name: "Guigere",
+        is_active: true,
+      },
+      vehicle: {
+        id: "vehicle-1",
+        vehicle_id: "NG-GT4-2025",
+        driver_id: "NG",
+        make: "Porsche",
+        model: "GT4 RS Clubsport",
+        year: 2025,
+        is_active: true,
+      },
+    };
+
+    await page.route(`**/api/v1/submissions/event/${EVENT_ID}`, async (route) =>
+      route.fulfill({
+        json: {
+          submissions: [sparseSubmission],
+        },
+      }),
+    );
+    await page.route(`**/api/v1/submissions/ocr-intake/event/${EVENT_ID}`, async (route) =>
+      route.fulfill({
+        json: {
+          drafts: [],
+        },
+      }),
+    );
+    await page.route("**/api/v1/submissions/submission-preview-1", async (route) =>
+      route.fulfill({
+        json: {
+          submission: sparseSubmission,
+        },
+      }),
+    );
+
+    await page.goto(`/event/${EVENT_ID}/submissions`);
+    await expect(page.getByText("TRACK: N. Green")).toBeVisible();
+
+    await page.getByRole("button", { name: "VIEW" }).click();
+    await expect(page.getByRole("heading", { name: "Submission Preview" })).toBeVisible();
+
+    const previewRoot = page.locator("#submission-preview-submission-preview-1");
+    await expect(previewRoot).toContainText("N. Green");
+    await expect(previewRoot).toContainText("Nicolas Guigere (NG)");
+    await expect(previewRoot).toContainText("Porsche GT4 RS Clubsport (NG-GT4-2025)");
+    await expect(previewRoot).toContainText("04/18/26 2:40 AM");
+    await expect(previewRoot).toContainText("49.8%");
+    await expect(previewRoot).not.toContainText("Run #1");
+    await expect(previewRoot).not.toContainText("null min");
+    await expect(previewRoot).not.toContainText("undefined%");
+    await expect(previewRoot).not.toContainText("Pressure (undefined)");
+  });
+
   test("ocr notes can save a local draft and submit the reviewed draft for review", async ({
     page,
   }) => {
@@ -1589,9 +1913,13 @@ test.describe("submission flow", () => {
 
     const body = requests[0];
     expect(body.image_url).toContain("data:image/png;base64,");
+    expect(body.driver_id).toBe("NG");
+    expect(body.vehicle_id).toBe("NG-GT4-2025");
     expect(body.analysis_result.force_review_staging).toBe(true);
     expect(body.analysis_result.image_analysis.document_type).toBe("handwritten_setup_grid");
     expect(body.analysis_result.image_analysis.model).toBe("gpt-5.4");
+    expect(body.payload.data.driver_id).toBe("NG");
+    expect(body.payload.data.vehicle_id).toBe("NG-GT4-2025");
     expect(body.payload.data.track).toBe(TRACK_NAME);
     expect(body.payload.ocr_review.review_flags).toEqual(["ambiguous handwriting"]);
   });

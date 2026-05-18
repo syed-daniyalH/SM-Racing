@@ -526,6 +526,18 @@ def _build_ocr_preview_response(
     shock_setup = _dict_or_empty(setup.get("shock_setup"))
     extracted_metadata = _dict_or_empty(analysis.get("metadata"))
     template_name = _preview_text(analysis.get("template_name"))
+    preview_driver_name = _preview_text(
+        preview_context.get("driver_name") or preview_context.get("driverName")
+    )
+    preview_driver_id = _preview_text(
+        preview_context.get("driver_id") or preview_context.get("driverId")
+    )
+    preview_vehicle_id = _preview_text(
+        preview_context.get("vehicle_id") or preview_context.get("vehicleId")
+    )
+    preview_vehicle_text = _preview_text(
+        preview_context.get("vehicle_text") or preview_context.get("vehicleText")
+    )
 
     notes = [_preview_text(note) for note in _list_or_empty(setup.get("notes")) if _preview_text(note)]
 
@@ -537,9 +549,16 @@ def _build_ocr_preview_response(
         "driver_text": (
             _preview_text(extracted_metadata.get("driver_text"))
             or _preview_text(getattr(driver, "driver_name", None))
+            or preview_driver_name
             or _preview_text(getattr(driver, "driver_id", None))
+            or preview_driver_id
         ),
-        "vehicle_text": _preview_text(getattr(vehicle, "vehicle_id", None)),
+        "vehicle_text": (
+            _preview_text(extracted_metadata.get("vehicle_text"))
+            or preview_vehicle_text
+            or _preview_text(getattr(vehicle, "vehicle_id", None))
+            or preview_vehicle_id
+        ),
         "track_text": _preview_text(extracted_metadata.get("track_text"))
         or _preview_text(preview_context.get("track"))
         or _preview_text(getattr(event, "track", None)),
@@ -559,8 +578,8 @@ def _build_ocr_preview_response(
             "session_type": _preview_text(preview_context.get("session_type")),
             "session_number": _preview_text(preview_context.get("session_number")),
             "duration_min": _preview_text(preview_context.get("duration_min")),
-            "driver_id": _preview_text(getattr(driver, "driver_id", None)),
-            "vehicle_id": _preview_text(getattr(vehicle, "vehicle_id", None)),
+            "driver_id": _preview_text(getattr(driver, "driver_id", None)) or preview_driver_id,
+            "vehicle_id": _preview_text(getattr(vehicle, "vehicle_id", None)) or preview_vehicle_id,
         },
         "alignment": {
             "rh_fl": _preview_text(alignment.get("rh_fl")),
@@ -724,7 +743,9 @@ def _inbound_webhook_metadata(envelope: dict[str, Any]) -> dict[str, Any]:
         "run_group_id",
         "run_group",
         "driver_id",
+        "driver_name",
         "vehicle_id",
+        "vehicle_text",
         "track",
         "session_type",
         "session_number",
@@ -785,7 +806,43 @@ def _ocr_intake_snapshot_from_submission_row(
 
     submission_input_id = int(submission_row["submission_id"])
     payload_snapshot = _json_dict_or_empty(submission_row.get("raw_payload_json"))
-    metadata = _dict_or_empty(payload_snapshot.get("metadata"))
+    metadata = dict(_dict_or_empty(payload_snapshot.get("metadata")))
+    payload_body = _dict_or_empty(payload_snapshot.get("payload"))
+    payload_context = _dict_or_empty(payload_body.get("context"))
+    payload_data = _dict_or_empty(payload_snapshot.get("data"))
+
+    passthrough_fields = (
+        "event_id",
+        "event_name",
+        "run_group_id",
+        "run_group",
+        "driver_id",
+        "vehicle_id",
+        "track",
+        "session_type",
+        "session_number",
+        "duration_min",
+        "date",
+        "time",
+    )
+    for field_name in passthrough_fields:
+        if normalize_optional_text(metadata.get(field_name)) is not None:
+            continue
+        for source in (payload_snapshot, payload_context, payload_data):
+            value = normalize_optional_text(source.get(field_name))
+            if value is not None:
+                metadata[field_name] = value
+                break
+
+    if normalize_optional_text(metadata.get("notes")) is None:
+        note_value = normalize_optional_text(
+            payload_context.get("notes")
+            or payload_context.get("note")
+            or payload_snapshot.get("notes")
+            or payload_snapshot.get("note")
+        )
+        if note_value is not None:
+            metadata["notes"] = note_value
 
     ocr_row = db.execute(
         text(
@@ -946,6 +1003,14 @@ def _build_ocr_preview_from_snapshot(
     context = _dict_or_empty(snapshot.get("metadata"))
     if event_id_override:
         context = {**context, "event_id": event_id_override}
+    snapshot_source = normalize_optional_text(snapshot.get("source"))
+    preview_source = snapshot_source or source_fallback
+    if (
+        normalize_optional_text(normalized_analysis.get("status")) == "submitted_to_make"
+        and snapshot_source
+        and not snapshot_source.lower().startswith("make")
+    ):
+        preview_source = source_fallback
 
     return _build_ocr_preview_response(
         image_analysis=normalized_analysis,
@@ -962,7 +1027,7 @@ def _build_ocr_preview_from_snapshot(
         vehicle=None,
         submission_ref=normalize_optional_text(snapshot.get("submission_ref")),
         correlation_id=normalize_optional_text(snapshot.get("correlation_id")),
-        source=normalize_optional_text(snapshot.get("source")) or source_fallback,
+        source=preview_source,
     )
 
 
@@ -1678,6 +1743,38 @@ def preview_ocr_submission(
         image_analysis.get("document_type") or "unknown",
         image_analysis.get("confidence"),
     )
+
+    analysis_status = normalize_optional_text(image_analysis.get("status")) or "success"
+    if analysis_status == "submitted_to_make":
+        preview_submission.analysis_result = {
+            **(preview_submission.analysis_result or {}),
+            "has_image_analysis": True,
+            "image_analysis_review_status": image_analysis.get("recommended_review_status") or "PENDING",
+            "image_analysis": image_analysis,
+        }
+        try:
+            stage_submission_input(
+                db,
+                submission=preview_submission,
+                event=event,
+                run_group=run_group,
+                driver=driver,
+                vehicle=vehicle,
+                current_user=current_user,
+                source="pwa",
+            )
+            commit = getattr(db, "commit", None)
+            if callable(commit):
+                commit()
+        except Exception:
+            rollback = getattr(db, "rollback", None)
+            if callable(rollback):
+                rollback()
+            logger.warning(
+                "OCR preview staging failed while waiting for Make callback (correlation_id=%s)",
+                preview_submission.correlation_id,
+                exc_info=True,
+            )
 
     return _build_ocr_preview_response(
         image_analysis=image_analysis,

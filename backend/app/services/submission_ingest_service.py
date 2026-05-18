@@ -886,6 +886,56 @@ def _submission_type_from_payload(payload: dict[str, Any]) -> str:
     return "quick"
 
 
+def _build_submission_input_metadata(
+    *,
+    event: Event,
+    run_group: RunGroup,
+    driver: Driver | None,
+    vehicle: Vehicle | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    session_payload = _dict_or_empty(get_session_payload(payload))
+    raw_payload = _dict_or_empty(payload)
+    context_payload = _dict_or_empty(raw_payload.get("context"))
+
+    def _first_context_value(*field_names: str) -> str | None:
+        for field_name in field_names:
+            session_value = _clean_blank(session_payload.get(field_name))
+            if session_value is not None:
+                return session_value
+
+            context_value = _clean_blank(context_payload.get(field_name))
+            if context_value is not None:
+                return context_value
+
+        return None
+
+    metadata = {
+        "event_id": str(event.id),
+        "event_name": _clean_blank(getattr(event, "name", None)),
+        "run_group_id": str(run_group.id),
+        "run_group": _clean_blank(getattr(run_group, "normalized", None))
+        or _clean_blank(getattr(run_group, "raw_text", None)),
+        "driver_id": _clean_blank(getattr(driver, "driver_id", None)),
+        "driver_name": _clean_blank(getattr(driver, "driver_name", None)),
+        "vehicle_id": _clean_blank(getattr(vehicle, "vehicle_id", None)),
+        "vehicle_text": _clean_blank(getattr(vehicle, "vehicle_id", None)),
+        "track": _first_context_value("track") or _clean_blank(getattr(event, "track", None)),
+        "session_type": _first_context_value("session_type"),
+        "session_number": _first_context_value("session_number"),
+        "duration_min": _first_context_value("duration_min"),
+        "date": _first_context_value("date"),
+        "time": _first_context_value("time"),
+        "notes": _clean_blank(context_payload.get("notes") or context_payload.get("note")),
+    }
+
+    return {
+        key: value
+        for key, value in metadata.items()
+        if value is not None
+    }
+
+
 def _build_submission_input_snapshot(
     *,
     submission: Submission,
@@ -899,6 +949,17 @@ def _build_submission_input_snapshot(
     current_user: User | None,
 ) -> dict[str, Any]:
     analysis_result = _dict_or_empty(submission.analysis_result)
+    session_payload = get_session_payload(payload)
+    metadata = _build_submission_input_metadata(
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        payload=payload,
+    )
+    normalized_analysis = _dict_or_empty(
+        analysis_result.get("image_analysis") or analysis_result.get("imageAnalysis")
+    )
     return {
         "submission_ref": submission.submission_ref,
         "correlation_id": _submission_correlation_id(submission),
@@ -911,8 +972,10 @@ def _build_submission_input_snapshot(
         "raw_text": submission.raw_text,
         "image_url": submission.image_url,
         "analysis_result": analysis_result,
+        "normalized_analysis": normalized_analysis,
+        "metadata": metadata,
         "payload": payload,
-        "data": get_session_payload(payload),
+        "data": session_payload,
         "source": source,
         "submission_type": submission_type,
         "validation_status": "PENDING",

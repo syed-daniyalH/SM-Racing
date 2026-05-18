@@ -133,14 +133,16 @@ const buildVehicleOption = (vehicle) => ({
     "Unknown vehicle",
 });
 
-const createIntakeState = () => ({
-  date: getCurrentLocalDateValue(),
-  time: getCurrentLocalTimeValue(),
+const DEFAULT_SESSION_TYPE = SESSION_TYPE_OPTIONS[0]?.id || "Practice";
+
+const createIntakeState = ({ useSessionDefaults = true, useDateTimeDefaults = true } = {}) => ({
+  date: useDateTimeDefaults ? getCurrentLocalDateValue() : "",
+  time: useDateTimeDefaults ? getCurrentLocalTimeValue() : "",
   track: "",
   driver_id: "",
   vehicle_id: "",
-  session_type: SESSION_TYPE_OPTIONS[0]?.id || "Practice",
-  session_number: "1",
+  session_type: useSessionDefaults ? DEFAULT_SESSION_TYPE : "",
+  session_number: useSessionDefaults ? "1" : "",
   duration_min: "",
   notes: "",
 });
@@ -598,6 +600,36 @@ const formatCapturedSummary = (count, populatedLabel, emptyLabel = "Available fo
 
 const formatNullableMetaValue = (value, fallback = "NULL") => normalizeText(value) || fallback;
 
+const resolveAggregateReviewValue = (aggregateValue, primaryValue, secondaryValue) => {
+  const explicitAggregateValue = toInputValue(aggregateValue);
+  if (explicitAggregateValue) {
+    return explicitAggregateValue;
+  }
+
+  const normalizedPrimaryValue = toInputValue(primaryValue);
+  const normalizedSecondaryValue = toInputValue(secondaryValue);
+  return normalizedPrimaryValue && normalizedPrimaryValue === normalizedSecondaryValue ? normalizedPrimaryValue : "";
+};
+
+const formatReviewSnapshotSessionLabel = (sessionType, sessionNumber) => {
+  const normalizedSessionType = normalizeText(sessionType);
+  const normalizedSessionNumber = normalizeText(sessionNumber);
+
+  if (normalizedSessionType && normalizedSessionNumber) {
+    return `${normalizedSessionType} / S${normalizedSessionNumber}`;
+  }
+
+  if (normalizedSessionType) {
+    return normalizedSessionType;
+  }
+
+  if (normalizedSessionNumber) {
+    return `S${normalizedSessionNumber}`;
+  }
+
+  return "Optional";
+};
+
 const hasExtractedDraftData = (reviewDraft) =>
   Boolean(
     normalizeText(reviewDraft?.summary) ||
@@ -618,12 +650,26 @@ const mergePreviewIntoReviewDraft = (preview) => {
   const structuredData = preview?.structuredData || {};
   const alignmentSource = structuredData?.alignment || {};
   const pressureSource = structuredData?.pressures || {};
-  const frontRideHeight =
-    toInputValue(alignmentSource.ride_height_f || alignmentSource.rh_fl || alignmentSource.rh_fr) || "";
-  const rearRideHeight =
-    toInputValue(alignmentSource.ride_height_r || alignmentSource.rh_rl || alignmentSource.rh_rr) || "";
-  const frontToe = toInputValue(alignmentSource.toe_front || alignmentSource.toe_fl || alignmentSource.toe_fr) || "";
-  const rearToe = toInputValue(alignmentSource.toe_rear || alignmentSource.toe_rl || alignmentSource.toe_rr) || "";
+  const frontRideHeight = resolveAggregateReviewValue(
+    alignmentSource.ride_height_f,
+    alignmentSource.rh_fl,
+    alignmentSource.rh_fr,
+  );
+  const rearRideHeight = resolveAggregateReviewValue(
+    alignmentSource.ride_height_r,
+    alignmentSource.rh_rl,
+    alignmentSource.rh_rr,
+  );
+  const frontToe = resolveAggregateReviewValue(
+    alignmentSource.toe_front,
+    alignmentSource.toe_fl,
+    alignmentSource.toe_fr,
+  );
+  const rearToe = resolveAggregateReviewValue(
+    alignmentSource.toe_rear,
+    alignmentSource.toe_rl,
+    alignmentSource.toe_rr,
+  );
 
   return {
     ...baseDraft,
@@ -661,16 +707,16 @@ const mergePreviewIntoReviewDraft = (preview) => {
     alignment: {
       ...baseDraft.alignment,
       ...sanitizeStringMap(alignmentSource),
-      rh_fl: toInputValue(alignmentSource.rh_fl || frontRideHeight),
-      rh_fr: toInputValue(alignmentSource.rh_fr || frontRideHeight),
-      rh_rl: toInputValue(alignmentSource.rh_rl || rearRideHeight),
-      rh_rr: toInputValue(alignmentSource.rh_rr || rearRideHeight),
+      rh_fl: toInputValue(alignmentSource.rh_fl),
+      rh_fr: toInputValue(alignmentSource.rh_fr),
+      rh_rl: toInputValue(alignmentSource.rh_rl),
+      rh_rr: toInputValue(alignmentSource.rh_rr),
       ride_height_f: frontRideHeight,
       ride_height_r: rearRideHeight,
-      toe_fl: toInputValue(alignmentSource.toe_fl || frontToe),
-      toe_fr: toInputValue(alignmentSource.toe_fr || frontToe),
-      toe_rl: toInputValue(alignmentSource.toe_rl || rearToe),
-      toe_rr: toInputValue(alignmentSource.toe_rr || rearToe),
+      toe_fl: toInputValue(alignmentSource.toe_fl),
+      toe_fr: toInputValue(alignmentSource.toe_fr),
+      toe_rl: toInputValue(alignmentSource.toe_rl),
+      toe_rr: toInputValue(alignmentSource.toe_rr),
       toe_front: frontToe,
       toe_rear: rearToe,
     },
@@ -713,6 +759,8 @@ const mergePreviewIntoIntake = (intakeState, preview, eventTrack) => {
 
   return {
     ...intakeState,
+    date: normalizeText(intakeState.date) || toInputValue(extractedSession.date) || intakeState.date,
+    time: normalizeText(intakeState.time) || toInputValue(extractedSession.time) || intakeState.time,
     track: normalizeText(intakeState.track) || toInputValue(extractedSession.track) || eventTrack || "",
     driver_id: normalizeText(intakeState.driver_id) || toInputValue(extractedSession.driver_id),
     vehicle_id: normalizeText(intakeState.vehicle_id) || toInputValue(extractedSession.vehicle_id),
@@ -747,22 +795,26 @@ const buildReviewedRawText = (intakeState, reviewDraft) => {
 
 const buildReviewedImageAnalysis = (intakeState, reviewDraft, eventTrack) => {
   const sessionNote = joinNotes(reviewDraft.notes);
-  const frontRideHeight =
-    normalizeText(reviewDraft.alignment.ride_height_f) ||
-    normalizeText(reviewDraft.alignment.rh_fl) ||
-    normalizeText(reviewDraft.alignment.rh_fr);
-  const rearRideHeight =
-    normalizeText(reviewDraft.alignment.ride_height_r) ||
-    normalizeText(reviewDraft.alignment.rh_rl) ||
-    normalizeText(reviewDraft.alignment.rh_rr);
-  const frontToe =
-    normalizeText(reviewDraft.alignment.toe_front) ||
-    normalizeText(reviewDraft.alignment.toe_fl) ||
-    normalizeText(reviewDraft.alignment.toe_fr);
-  const rearToe =
-    normalizeText(reviewDraft.alignment.toe_rear) ||
-    normalizeText(reviewDraft.alignment.toe_rl) ||
-    normalizeText(reviewDraft.alignment.toe_rr);
+  const frontRideHeight = resolveAggregateReviewValue(
+    reviewDraft.alignment.ride_height_f,
+    reviewDraft.alignment.rh_fl,
+    reviewDraft.alignment.rh_fr,
+  );
+  const rearRideHeight = resolveAggregateReviewValue(
+    reviewDraft.alignment.ride_height_r,
+    reviewDraft.alignment.rh_rl,
+    reviewDraft.alignment.rh_rr,
+  );
+  const frontToe = resolveAggregateReviewValue(
+    reviewDraft.alignment.toe_front,
+    reviewDraft.alignment.toe_fl,
+    reviewDraft.alignment.toe_fr,
+  );
+  const rearToe = resolveAggregateReviewValue(
+    reviewDraft.alignment.toe_rear,
+    reviewDraft.alignment.toe_rl,
+    reviewDraft.alignment.toe_rr,
+  );
 
   return {
     status: reviewDraft.status || "review_required",
@@ -864,22 +916,26 @@ const buildReviewedSubmissionRequest = ({
     buildGeneratedSessionId(intakeState.date, intakeState.time, intakeState.driver_id, intakeState.session_number) ||
     generateUUID();
   const reviewedImageAnalysis = buildReviewedImageAnalysis(intakeState, reviewDraft, eventTrack);
-  const rideHeightFront =
-    normalizeText(reviewDraft.alignment.ride_height_f) ||
-    normalizeText(reviewDraft.alignment.rh_fl) ||
-    normalizeText(reviewDraft.alignment.rh_fr);
-  const rideHeightRear =
-    normalizeText(reviewDraft.alignment.ride_height_r) ||
-    normalizeText(reviewDraft.alignment.rh_rl) ||
-    normalizeText(reviewDraft.alignment.rh_rr);
-  const toeFront =
-    normalizeText(reviewDraft.alignment.toe_front) ||
-    normalizeText(reviewDraft.alignment.toe_fl) ||
-    normalizeText(reviewDraft.alignment.toe_fr);
-  const toeRear =
-    normalizeText(reviewDraft.alignment.toe_rear) ||
-    normalizeText(reviewDraft.alignment.toe_rl) ||
-    normalizeText(reviewDraft.alignment.toe_rr);
+  const rideHeightFront = resolveAggregateReviewValue(
+    reviewDraft.alignment.ride_height_f,
+    reviewDraft.alignment.rh_fl,
+    reviewDraft.alignment.rh_fr,
+  );
+  const rideHeightRear = resolveAggregateReviewValue(
+    reviewDraft.alignment.ride_height_r,
+    reviewDraft.alignment.rh_rl,
+    reviewDraft.alignment.rh_rr,
+  );
+  const toeFront = resolveAggregateReviewValue(
+    reviewDraft.alignment.toe_front,
+    reviewDraft.alignment.toe_fl,
+    reviewDraft.alignment.toe_fr,
+  );
+  const toeRear = resolveAggregateReviewValue(
+    reviewDraft.alignment.toe_rear,
+    reviewDraft.alignment.toe_rl,
+    reviewDraft.alignment.toe_rr,
+  );
 
   return {
     submissionId: generatedSessionId,
@@ -888,6 +944,8 @@ const buildReviewedSubmissionRequest = ({
     source: "pwa",
     eventId,
     runGroup: runGroupValue || undefined,
+    driver_id: normalizeText(intakeState.driver_id) || null,
+    vehicle_id: normalizeText(intakeState.vehicle_id) || null,
     confidence: reviewDraft.confidence ?? 0.84,
     raw_text: buildReviewedRawText(intakeState, reviewDraft),
     image_url: primaryImageUrl,
@@ -1226,7 +1284,12 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const [runGroup, setRunGroup] = useState(null);
   const [driverOptions, setDriverOptions] = useState(DRIVER_OPTIONS);
   const [vehicleOptions, setVehicleOptions] = useState(VEHICLE_OPTIONS);
-  const [intakeState, setIntakeState] = useState(() => createIntakeState());
+  const [intakeState, setIntakeState] = useState(() =>
+    createIntakeState({
+      useSessionDefaults: !isReviewView,
+      useDateTimeDefaults: !isReviewView,
+    }),
+  );
   const [reviewDraft, setReviewDraft] = useState(() => createEmptyReviewDraft());
   const [imageAttachments, setImageAttachments] = useState([]);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -1466,6 +1529,10 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     vehicleOptionsForDriver.find((vehicle) => vehicle.id === intakeState.vehicle_id)?.label ||
     reviewDraft.metadata?.vehicle_text ||
     "Optional";
+  const selectedSessionLabel = formatReviewSnapshotSessionLabel(
+    intakeState.session_type,
+    intakeState.session_number,
+  );
   const generatedSessionId = useMemo(
     () =>
       buildGeneratedSessionId(
@@ -2044,7 +2111,10 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
 
   const resetForm = useCallback(() => {
     setIntakeState({
-      ...createIntakeState(),
+      ...createIntakeState({
+        useSessionDefaults: !isReviewView,
+        useDateTimeDefaults: !isReviewView,
+      }),
       track: eventTrack,
     });
     setReviewDraft(createEmptyReviewDraft());
@@ -2059,7 +2129,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     if (draftStorageKey) {
       clearOcrDraft(draftStorageKey);
     }
-  }, [draftStorageKey, eventTrack]);
+  }, [draftStorageKey, eventTrack, isReviewView]);
 
   const persistDraftSnapshot = useCallback(
     ({
@@ -2832,10 +2902,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
                   </li>
                   <li>
                     <span>Session</span>
-                    <strong>
-                      {normalizeText(intakeState.session_type) || "Session type"} / S
-                      {normalizeText(intakeState.session_number) || "-"}
-                    </strong>
+                    <strong>{selectedSessionLabel}</strong>
                   </li>
                   <li>
                     <span>Doc Type</span>
