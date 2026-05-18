@@ -1,7 +1,7 @@
 .ocr-notes-page {
   min-height: 100vh;
   position: relative;
-  overflow-x: hidden;
+  overflow-x: clip;
   background:
     radial-gradient(circle at top left, rgba(240, 83, 35, 0.12), transparent 24%),
     radial-gradient(circle at bottom right, rgba(0, 122, 255, 0.12), transparent 26%),
@@ -651,6 +651,31 @@
   display: grid;
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+.ocr-notes-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.ocr-notes-preview-card {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.ocr-notes-preview-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ocr-notes-preview-card-head strong {
+  color: var(--color-text);
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .ocr-notes-preview-image,

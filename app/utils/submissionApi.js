@@ -113,6 +113,43 @@ const normalizeRawNoteText = (value) => String(value || "").replace(/\s+/g, " ")
 
 const safeBrowserStorage = () => (typeof window !== "undefined" ? window.localStorage : null);
 
+const normalizeImageUrlList = (...values) => {
+  const imageUrls = [];
+
+  const append = (value) => {
+    const normalizedValue = typeof value === "string" ? value.trim() : "";
+    if (!normalizedValue || imageUrls.includes(normalizedValue)) {
+      return;
+    }
+    imageUrls.push(normalizedValue);
+  };
+
+  const consume = (value) => {
+    if (!value) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(consume);
+      return;
+    }
+
+    if (typeof value === "string") {
+      append(value);
+      return;
+    }
+
+    if (typeof value !== "object") {
+      return;
+    }
+
+    append(value.image_url || value.imageUrl || value.dataUrl || value.data_url || value.url);
+  };
+
+  values.forEach(consume);
+  return imageUrls;
+};
+
 const getSubmissionMode = (submissionData) =>
   String(
     submissionData?.analysis_result?.submission_mode ||
@@ -138,11 +175,17 @@ const hasVoiceNotes = (submissionData) =>
 
 const hasImageInput = (submissionData) =>
   Boolean(
-    submissionData?.image_url ||
-      submissionData?.image ||
-      submissionData?.imageUrl ||
-      submissionData?.payload?.image_url ||
+    normalizeImageUrlList(
+      submissionData?.image_urls,
+      submissionData?.imageUrls,
+      submissionData?.image_url,
+      submissionData?.image,
+      submissionData?.imageUrl,
+      submissionData?.payload?.image_urls,
+      submissionData?.payload?.imageUrls,
+      submissionData?.payload?.image_url,
       submissionData?.payload?.imageUrl,
+    ).length,
   );
 
 const looksLikeRawRaceNote = (rawText) => {
@@ -220,6 +263,12 @@ const normalizeOcrPreviewResponse = (data) => {
     correlationId: preview?.correlation_id || preview?.correlationId || null,
     source: preview?.source || null,
     imageUrl: preview?.image_url || preview?.imageUrl || null,
+    imageUrls: normalizeImageUrlList(
+      preview?.image_urls,
+      preview?.imageUrls,
+      preview?.image_url,
+      preview?.imageUrl,
+    ),
     docType: preview?.doc_type || preview?.docType || "unknown",
     templateName: preview?.template_name || preview?.templateName || null,
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
@@ -270,6 +319,12 @@ const normalizeOcrStagedDraft = (draft) => {
     correlationId: draft?.correlation_id || draft?.correlationId || null,
     source: draft?.source || null,
     imageUrl: draft?.image_url || draft?.imageUrl || null,
+    imageUrls: normalizeImageUrlList(
+      draft?.image_urls,
+      draft?.imageUrls,
+      draft?.image_url,
+      draft?.imageUrl,
+    ),
     rawText: draft?.raw_text || draft?.rawText || null,
     createdAt: draft?.created_at || draft?.createdAt || null,
     createdBy: draft?.created_by || draft?.createdBy || null,
@@ -324,7 +379,14 @@ export const buildSubmissionPayload = async (submissionData) => {
     submissionData?.run_group_id || submissionData?.runGroupId || null;
   const rawText =
     submissionData?.raw_text ?? submissionData?.rawText ?? null;
-  const imageUrl = submissionData?.image_url || submissionData?.image || null;
+  const imageUrls = normalizeImageUrlList(
+    submissionData?.image_urls,
+    submissionData?.imageUrls,
+    submissionData?.image_url,
+    submissionData?.image,
+    submissionData?.imageUrl,
+  );
+  const imageUrl = imageUrls[0] || null;
 
   if (!runGroupId && legacyEventId) {
     const runGroupResponse = await getRunGroup(legacyEventId);
@@ -395,6 +457,10 @@ export const buildSubmissionPayload = async (submissionData) => {
 
   if (imageUrl) {
     payload.image_url = imageUrl;
+  }
+
+  if (imageUrls.length > 0) {
+    payload.image_urls = imageUrls;
   }
 
   return payload;

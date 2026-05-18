@@ -50,6 +50,7 @@ import "./OCRNotes.css";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+const MAX_OCR_IMAGES = 3;
 
 const getCurrentLocalDateValue = () => {
   const now = new Date();
@@ -144,10 +145,85 @@ const createIntakeState = () => ({
   notes: "",
 });
 
+const buildImageAttachment = (dataUrl, name, index = 0) => {
+  const normalizedDataUrl = normalizeText(dataUrl);
+  if (!normalizedDataUrl) {
+    return null;
+  }
+
+  return {
+    id: generateUUID(),
+    dataUrl: normalizedDataUrl,
+    name: normalizeText(name) || `Source image ${index + 1}`,
+  };
+};
+
+const collectImageAttachments = (...sources) => {
+  const attachments = [];
+
+  const appendAttachment = (dataUrl, name) => {
+    if (attachments.length >= MAX_OCR_IMAGES) {
+      return;
+    }
+
+    const attachment = buildImageAttachment(dataUrl, name, attachments.length);
+    if (!attachment) {
+      return;
+    }
+
+    if (attachments.some((existingAttachment) => existingAttachment.dataUrl === attachment.dataUrl)) {
+      return;
+    }
+
+    attachments.push(attachment);
+  };
+
+  const consume = (value) => {
+    if (!value || attachments.length >= MAX_OCR_IMAGES) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(consume);
+      return;
+    }
+
+    if (typeof value === "string") {
+      appendAttachment(value);
+      return;
+    }
+
+    if (typeof value !== "object") {
+      return;
+    }
+
+    const directDataUrl = value.dataUrl || value.image_url || value.imageUrl || value.url;
+    if (typeof directDataUrl === "string") {
+      appendAttachment(directDataUrl, value.name || value.fileName || value.label);
+      return;
+    }
+
+    consume(value.image_urls || value.imageUrls);
+    consume(value.image_url || value.imageUrl);
+  };
+
+  sources.forEach(consume);
+  return attachments;
+};
+
+const readFileAsDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => reject(new Error(`Failed to read ${file?.name || "image file"}.`));
+    reader.readAsDataURL(file);
+  });
+
 const CLIENT_SHEET_FIELDS = [
   ["fuel_liters", "Fuel (Liters)"],
   ["driver_weight_lbs", "Driver Weight (lbs)"],
   ["scale_weight_lbs", "Scale Weight (lbs)"],
+  ["percentage_box_weight_lbs", "Percentage Box Weight (lbs)"],
   ["cross_weight_percent", "Cross Weight (%)"],
   ["roll_bar_text", "Roll-Bar"],
   ["spacer_text", "Spacer"],
@@ -184,6 +260,7 @@ const PRINTED_FORM_MAIN_FIELD_GROUPS = [
       ["fuel_liters", "Fuel (Liters)"],
       ["driver_weight_lbs", "Driver Weight (lbs)"],
       ["scale_weight_lbs", "Scale Weight (lbs)"],
+      ["percentage_box_weight_lbs", "Percentage Box Weight (lbs)"],
       ["cross_weight_percent", "Cross Weight (%)"],
       ["roll_bar_text", "Roll-Bar"],
       ["spacer_text", "Spacer"],
@@ -365,6 +442,7 @@ const createEmptyReviewDraft = () => ({
     fuel_liters: "",
     driver_weight_lbs: "",
     scale_weight_lbs: "",
+    percentage_box_weight_lbs: "",
     cross_weight_percent: "",
     roll_bar_text: "",
     spacer_text: "",
@@ -517,6 +595,8 @@ const pickFieldSubset = (source, fields) =>
 
 const formatCapturedSummary = (count, populatedLabel, emptyLabel = "Available for manual entry") =>
   count > 0 ? `${count} ${populatedLabel}${count === 1 ? "" : "s"} captured` : emptyLabel;
+
+const formatNullableMetaValue = (value, fallback = "NULL") => normalizeText(value) || fallback;
 
 const hasExtractedDraftData = (reviewDraft) =>
   Boolean(
@@ -775,8 +855,11 @@ const buildReviewedSubmissionRequest = ({
   eventId,
   runGroupValue,
   eventTrack,
-  imageDataUrl,
+  imageAttachments,
 }) => {
+  const normalizedImageAttachments = collectImageAttachments(imageAttachments);
+  const imageUrls = normalizedImageAttachments.map((attachment) => attachment.dataUrl).filter(Boolean);
+  const primaryImageUrl = imageUrls[0] || null;
   const generatedSessionId =
     buildGeneratedSessionId(intakeState.date, intakeState.time, intakeState.driver_id, intakeState.session_number) ||
     generateUUID();
@@ -807,8 +890,10 @@ const buildReviewedSubmissionRequest = ({
     runGroup: runGroupValue || undefined,
     confidence: reviewDraft.confidence ?? 0.84,
     raw_text: buildReviewedRawText(intakeState, reviewDraft),
-    image_url: imageDataUrl,
+    image_url: primaryImageUrl,
+    image_urls: imageUrls,
     payload: {
+      image_urls: imageUrls,
       data: {
         date: normalizeText(intakeState.date) || null,
         time: normalizeText(intakeState.time) || null,
@@ -1143,8 +1228,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const [vehicleOptions, setVehicleOptions] = useState(VEHICLE_OPTIONS);
   const [intakeState, setIntakeState] = useState(() => createIntakeState());
   const [reviewDraft, setReviewDraft] = useState(() => createEmptyReviewDraft());
-  const [imageDataUrl, setImageDataUrl] = useState(null);
-  const [imageName, setImageName] = useState("");
+  const [imageAttachments, setImageAttachments] = useState([]);
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState("");
@@ -1154,12 +1238,23 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const [draftRestored, setDraftRestored] = useState(false);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const [reviewDirty, setReviewDirty] = useState(false);
-  const [currentUserStorageKey, setCurrentUserStorageKey] = useState("anonymous");
+  const [currentUserStorageKey, setCurrentUserStorageKey] = useState(() => resolveCurrentUserStorageKey());
   const [hasLoadedDraft, setHasLoadedDraft] = useState(false);
   const [reviewBootstrapComplete, setReviewBootstrapComplete] = useState(() => !isReviewView);
+  const imageUrls = imageAttachments.map((attachment) => attachment.dataUrl).filter(Boolean);
+  const imageDataUrl = imageUrls[0] || null;
+  const imageName =
+    imageAttachments.length === 1
+      ? imageAttachments[0]?.name || ""
+      : imageAttachments.length > 1
+        ? `${imageAttachments.length} source images selected`
+        : "";
 
   useEffect(() => {
-    setCurrentUserStorageKey(resolveCurrentUserStorageKey());
+    const resolvedStorageKey = resolveCurrentUserStorageKey();
+    setCurrentUserStorageKey((previousStorageKey) =>
+      previousStorageKey === resolvedStorageKey ? previousStorageKey : resolvedStorageKey,
+    );
   }, []);
 
   const loadPageData = useCallback(async () => {
@@ -1285,6 +1380,10 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   }, [currentUserStorageKey, routeEventId]);
 
   useEffect(() => {
+    setHasLoadedDraft(false);
+  }, [draftStorageKey]);
+
+  useEffect(() => {
     if (!draftStorageKey || hasLoadedDraft) {
       return;
     }
@@ -1332,8 +1431,17 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
           reviewFlags: storedDraft?.reviewDraft?.reviewFlags,
         }),
       }));
-      setImageDataUrl(storedDraft?.imageDataUrl || null);
-      setImageName(storedDraft?.imageName || "");
+      setImageAttachments(
+        collectImageAttachments(
+          storedDraft?.imageAttachments,
+          storedDraft?.imageDataUrl
+            ? {
+                dataUrl: storedDraft.imageDataUrl,
+                name: storedDraft?.imageName,
+              }
+            : null,
+        ),
+      );
       setReviewDirty(Boolean(storedDraft?.reviewDirty));
       setWorkflowState(
         storedDraft?.workflowState ||
@@ -1451,9 +1559,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
 
         setReviewDraft(mergedDraft);
         setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
-        if (preview.imageUrl) {
-          setImageDataUrl(preview.imageUrl);
-        }
+        setImageAttachments(collectImageAttachments(preview?.imageUrls, preview?.imageUrl));
         setReviewDirty(false);
         setPageError("");
 
@@ -1550,9 +1656,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
         const mergedDraft = mergePreviewIntoReviewDraft(preview);
         setReviewDraft(mergedDraft);
         setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
-        if (preview.imageUrl) {
-          setImageDataUrl(preview.imageUrl);
-        }
+        setImageAttachments(collectImageAttachments(preview?.imageUrls, preview?.imageUrl));
         setReviewDirty(false);
         setPageError("");
 
@@ -1632,12 +1736,8 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       return "editing_review";
     }
 
-    if (!hasImage) {
-      return "waiting_for_image";
-    }
-
     if (!hasExtractedDraft) {
-      return "ready_to_extract";
+      return hasImage ? "ready_to_extract" : "waiting_for_image";
     }
 
     if (reviewDirty) {
@@ -1791,7 +1891,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     : "The intake stays light here. As soon as Make.com accepts the OCR job, this flow opens the dedicated review screen for editing and final submission.";
   const capturePanelCopy = isReviewView
     ? "Keep the source image and OCR runtime details in view while the draft polls in, then rerun OCR from here if the first pass needs another attempt."
-    : "Upload one setup sheet or handwritten note image, send it to Make.com, and continue on the review screen once the OCR draft is staged.";
+    : `Upload up to ${MAX_OCR_IMAGES} setup sheet or handwritten note images, send them to Make.com, and continue on the review screen once the OCR draft is staged.`;
   const footerTitle = isReviewView ? "Review, save, or submit the OCR draft" : "Stage the OCR draft and move into review";
   const footerCopy = isReviewView
     ? "This review workspace keeps polling Make.com until the draft is ready, then lets you correct the captured values before submitting the note for review."
@@ -1844,60 +1944,102 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     setWorkflowState("editing_review");
   };
 
-  const applyImageFile = (file) => {
-    if (!file) {
+  const resetForSourceImagesChange = (nextCount) => {
+    setReviewDraft(createEmptyReviewDraft());
+    setReviewDirty(false);
+    setSubmissionWarnings([]);
+    setWorkflowState(nextCount > 0 ? "ready_to_extract" : "waiting_for_image");
+    setWorkflowMessage("");
+    setPageError("");
+    clearFieldError("extract");
+  };
+
+  const applyImageFiles = async (files) => {
+    const nextFiles = Array.from(files || []).filter(Boolean);
+    if (nextFiles.length === 0) {
       return;
     }
 
-    if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+    const invalidFile = nextFiles.find((file) => !ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (invalidFile) {
       setFieldErrors((prev) => ({
         ...prev,
-        image: "Upload a JPG, PNG, or WEBP image.",
+        image: "Upload JPG, PNG, or WEBP images only.",
       }));
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setImageDataUrl(typeof reader.result === "string" ? reader.result : null);
-      setImageName(file.name);
-      clearFieldError("image");
-      if (!hasExtractedDraft) {
-        setWorkflowState("ready_to_extract");
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleImageInputChange = (eventLike) => {
-    const file = eventLike.target.files?.[0];
-    if (!file) {
+    if (imageAttachments.length + nextFiles.length > MAX_OCR_IMAGES) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        image: `Upload up to ${MAX_OCR_IMAGES} source images per OCR review.`,
+      }));
       return;
     }
 
-    applyImageFile(file);
+    try {
+      const nextAttachments = (
+        await Promise.all(
+          nextFiles.map(async (file, index) => {
+            const dataUrl = await readFileAsDataUrl(file);
+            return buildImageAttachment(dataUrl, file.name, imageAttachments.length + index);
+          }),
+        )
+      ).filter(Boolean);
+
+      if (nextAttachments.length === 0) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          image: "Upload a readable JPG, PNG, or WEBP image.",
+        }));
+        return;
+      }
+
+      const mergedAttachments = collectImageAttachments(imageAttachments, nextAttachments);
+      setImageAttachments(mergedAttachments);
+      clearFieldError("image");
+      resetForSourceImagesChange(mergedAttachments.length);
+    } catch (error) {
+      console.error("Failed to prepare OCR source images:", error);
+      setFieldErrors((prev) => ({
+        ...prev,
+        image: "The selected image could not be loaded. Try again with another file.",
+      }));
+    }
   };
 
-  const handleDrop = (eventLike) => {
+  const handleImageInputChange = async (eventLike) => {
+    const files = eventLike.target.files;
+    if (!files?.length) {
+      return;
+    }
+
+    await applyImageFiles(files);
+    eventLike.target.value = "";
+  };
+
+  const handleDrop = async (eventLike) => {
     eventLike.preventDefault();
     setDropzoneActive(false);
-    const file = eventLike.dataTransfer?.files?.[0];
-    if (!file) {
+    const files = eventLike.dataTransfer?.files;
+    if (!files?.length) {
       return;
     }
 
-    applyImageFile(file);
+    await applyImageFiles(files);
   };
 
-  const handleRemoveImage = () => {
-    setImageDataUrl(null);
-    setImageName("");
-    setReviewDraft(createEmptyReviewDraft());
-    setReviewDirty(false);
-    setSubmissionWarnings([]);
-    setWorkflowState("waiting_for_image");
-    setWorkflowMessage("");
-    setPageError("");
+  const handleRemoveImage = (attachmentId) => {
+    const nextAttachments = imageAttachments.filter((attachment) => attachment.id !== attachmentId);
+    setImageAttachments(nextAttachments);
+    clearFieldError("image");
+    resetForSourceImagesChange(nextAttachments.length);
+  };
+
+  const handleClearImages = () => {
+    setImageAttachments([]);
+    clearFieldError("image");
+    resetForSourceImagesChange(0);
   };
 
   const resetForm = useCallback(() => {
@@ -1906,8 +2048,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       track: eventTrack,
     });
     setReviewDraft(createEmptyReviewDraft());
-    setImageDataUrl(null);
-    setImageName("");
+    setImageAttachments([]);
     setFieldErrors({});
     setPageError("");
     setSubmissionWarnings([]);
@@ -1926,8 +2067,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       nextReviewDraft = reviewDraft,
       nextWorkflowState = workflowState,
       nextReviewDirty = reviewDirty,
-      nextImageDataUrl = imageDataUrl,
-      nextImageName = imageName,
+      nextImageAttachments = imageAttachments,
     } = {}) => {
       if (!draftStorageKey) {
         return;
@@ -1936,13 +2076,14 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       saveOcrDraft(draftStorageKey, {
         intakeState: nextIntakeState,
         reviewDraft: nextReviewDraft,
-        imageDataUrl: nextImageDataUrl,
-        imageName: nextImageName,
+        imageAttachments: nextImageAttachments,
+        imageDataUrl: nextImageAttachments[0]?.dataUrl || null,
+        imageName: nextImageAttachments.length === 1 ? nextImageAttachments[0]?.name || "" : "",
         reviewDirty: nextReviewDirty,
         workflowState: nextWorkflowState,
       });
     },
-    [draftStorageKey, imageDataUrl, imageName, intakeState, reviewDirty, reviewDraft, workflowState],
+    [draftStorageKey, imageAttachments, intakeState, reviewDirty, reviewDraft, workflowState],
   );
 
   const handleExtract = async ({ rerun = false } = {}) => {
@@ -1959,7 +2100,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     if (!imageDataUrl) {
       setFieldErrors((prev) => ({
         ...prev,
-        image: "Upload a handwritten note or setup sheet image first.",
+        image: "Upload at least one handwritten note or setup sheet image first.",
       }));
       setWorkflowState("waiting_for_image");
       return;
@@ -1982,6 +2123,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
         vehicle_id: normalizeText(intakeState.vehicle_id) || null,
         raw_text: normalizeText(intakeState.notes) || null,
         image_url: imageDataUrl,
+        image_urls: imageUrls,
         context: {
           date: normalizeText(intakeState.date) || null,
           time: normalizeText(intakeState.time) || null,
@@ -1995,8 +2137,14 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
 
       const mergedDraft = mergePreviewIntoReviewDraft(preview);
       const nextIntakeState = mergePreviewIntoIntake(intakeState, preview, eventTrack);
+      const nextImageAttachments = collectImageAttachments(
+        imageAttachments,
+        preview?.imageUrls,
+        preview?.imageUrl,
+      );
       setReviewDraft(mergedDraft);
       setIntakeState(nextIntakeState);
+      setImageAttachments(nextImageAttachments);
       setReviewDirty(false);
 
       if (preview.status === "submitted_to_make") {
@@ -2010,6 +2158,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
               nextReviewDraft: mergedDraft,
               nextWorkflowState: "submitted_to_make",
               nextReviewDirty: false,
+              nextImageAttachments,
             });
           } catch (draftError) {
             console.warn("Failed to stage OCR draft locally before opening review:", draftError);
@@ -2038,6 +2187,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
             nextReviewDraft: mergedDraft,
             nextWorkflowState,
             nextReviewDirty: false,
+            nextImageAttachments,
           });
         } catch (draftError) {
           console.warn("Failed to stage OCR draft locally before opening review:", draftError);
@@ -2063,6 +2213,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       saveOcrDraft(draftStorageKey, {
         intakeState,
         reviewDraft,
+        imageAttachments,
         imageDataUrl,
         imageName,
         reviewDirty,
@@ -2096,10 +2247,6 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
 
     const nextErrors = {};
 
-    if (!imageDataUrl) {
-      nextErrors.image = "Upload a handwritten note or setup sheet image first.";
-    }
-
     if (!hasExtractedDraft) {
       nextErrors.extract = "Run OCR extraction before submitting for review.";
     }
@@ -2115,6 +2262,13 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       return;
     }
 
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.image;
+      delete next.extract;
+      delete next.driver_vehicle;
+      return next;
+    });
     setPageError("");
     setSubmissionWarnings([]);
     setWorkflowState("submitting_review");
@@ -2128,7 +2282,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
           eventId: event?._id || event?.id || routeEventId,
           runGroupValue,
           eventTrack,
-          imageDataUrl,
+          imageAttachments,
         }),
       );
       const successState = getSubmissionSuccessState(response?.submission);
@@ -2603,11 +2757,12 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
                     className="ocr-notes-upload-input"
                     type="file"
                     accept=".jpg,.jpeg,.png,.webp"
+                    multiple
                     onChange={handleImageInputChange}
                   />
                   <UploadFileRoundedIcon fontSize="inherit" />
-                  <strong>{imageName || "Upload setup sheet or handwritten note"}</strong>
-                  <span>Drag and drop or click to upload a JPG, PNG, or WEBP image.</span>
+                  <strong>{imageName || `Upload up to ${MAX_OCR_IMAGES} setup sheet images`}</strong>
+                  <span>Drag and drop or click to add up to {MAX_OCR_IMAGES} JPG, PNG, or WEBP images.</span>
                 </label>
                 {fieldErrors.image ? <p className="ocr-notes-field-error">{fieldErrors.image}</p> : null}
                 {fieldErrors.extract ? <p className="ocr-notes-field-error">{fieldErrors.extract}</p> : null}
@@ -2615,27 +2770,51 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
               </div>
 
               <div className="ocr-notes-preview-shell">
-                {imageDataUrl ? (
+                {imageAttachments.length > 0 ? (
                   <>
-                    <Image
-                      src={imageDataUrl}
-                      alt="OCR note preview"
-                      className="ocr-notes-preview-image"
-                      width={1200}
-                      height={900}
-                      unoptimized
-                    />
+                    <div className="ocr-notes-preview-grid">
+                      {imageAttachments.map((attachment, index) => (
+                        <article key={attachment.id} className="ocr-notes-preview-card">
+                          <div className="ocr-notes-preview-card-head">
+                            <strong>{attachment.name || `Source image ${index + 1}`}</strong>
+                            <button
+                              type="button"
+                              className="ocr-notes-inline-button"
+                              onClick={() => handleRemoveImage(attachment.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <Image
+                            src={attachment.dataUrl}
+                            alt={index === 0 ? "OCR note preview" : `OCR note preview ${index + 1}`}
+                            className="ocr-notes-preview-image"
+                            width={1200}
+                            height={900}
+                            unoptimized
+                          />
+                        </article>
+                      ))}
+                    </div>
                     <div className="ocr-notes-inline-actions">
-                      <p className="ocr-notes-field-hint">The current OCR flow uses a single image at a time for extraction and review.</p>
-                      <button type="button" className="ocr-notes-inline-button" onClick={handleRemoveImage}>
-                        Remove Image
-                      </button>
+                      <p className="ocr-notes-field-hint">
+                        OCR review can combine up to {MAX_OCR_IMAGES} source images. Add extra pages only when the setup sheet spans more than one photo.
+                      </p>
+                      {imageAttachments.length > 1 ? (
+                        <button type="button" className="ocr-notes-inline-button" onClick={handleClearImages}>
+                          Remove All
+                        </button>
+                      ) : null}
                     </div>
                   </>
                 ) : (
                   <div className="ocr-notes-preview-empty">
                     <DocumentScannerRoundedIcon fontSize="inherit" />
-                    <span>No image selected yet.</span>
+                    <span>
+                      {hasExtractedDraft
+                        ? "No source image is attached in this browser session. You can still submit this reviewed draft, and any empty OCR fields will be sent as null."
+                        : "No image selected yet."}
+                    </span>
                   </div>
                 )}
               </div>
@@ -2697,6 +2876,18 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
                   <div>
                     <span>Model Used</span>
                     <strong>{modelDisplay}</strong>
+                  </div>
+                  <div>
+                    <span>Source</span>
+                    <strong>{formatNullableMetaValue(reviewDraft.source)}</strong>
+                  </div>
+                  <div>
+                    <span>Submission Ref</span>
+                    <strong>{formatNullableMetaValue(reviewDraft.submissionRef)}</strong>
+                  </div>
+                  <div>
+                    <span>Correlation ID</span>
+                    <strong>{formatNullableMetaValue(reviewDraft.correlationId)}</strong>
                   </div>
                   <div>
                     <span>Fallback Used</span>

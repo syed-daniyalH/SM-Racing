@@ -24,6 +24,7 @@ class SubmissionCreate(ORMModel):
     voice_session_id: UUID | None = None
     raw_text: str | None = None
     image_url: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
     analysis_result: dict[str, Any] | None = None
 
@@ -34,7 +35,8 @@ class OcrPreviewCreate(ORMModel):
     driver_id: str | None = Field(default=None, max_length=32)
     vehicle_id: str | None = Field(default=None, max_length=64)
     raw_text: str | None = None
-    image_url: str = Field(min_length=1)
+    image_url: str | None = Field(default=None, min_length=1)
+    image_urls: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -45,6 +47,7 @@ class OcrPreviewRead(ORMModel):
     correlation_id: str | None = None
     source: str | None = None
     image_url: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
     doc_type: str = "unknown"
     template_name: str | None = None
     confidence: float | None = None
@@ -86,6 +89,7 @@ class OcrStagedDraftRead(ORMModel):
     correlation_id: str | None = None
     source: str | None = None
     image_url: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
     raw_text: str | None = None
     created_at: datetime | None = None
     created_by: str | None = None
@@ -124,6 +128,7 @@ class SubmissionUpdate(ORMModel):
     vehicle_id: str | None = Field(default=None, max_length=64)
     raw_text: str | None = None
     image_url: str | None = None
+    image_urls: list[str] | None = None
     payload: dict[str, Any] | None = None
     analysis_result: dict[str, Any] | None = None
     status: SubmissionStatus | None = None

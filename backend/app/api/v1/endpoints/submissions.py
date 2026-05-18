@@ -82,6 +82,81 @@ from app.services.voice_note_service import confirm_voice_session, get_voice_ses
 router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
+MAX_OCR_SOURCE_IMAGES = 3
+
+
+def _normalize_image_url_list(*values: object, limit: int | None = MAX_OCR_SOURCE_IMAGES) -> list[str]:
+    image_urls: list[str] = []
+
+    def append_image_url(value: object) -> None:
+        if not isinstance(value, str):
+            return
+        normalized_value = value.strip()
+        if not normalized_value or normalized_value in image_urls:
+            return
+        image_urls.append(normalized_value)
+
+    def consume(value: object) -> None:
+        if value in (None, ""):
+            return
+
+        if limit is not None and len(image_urls) >= limit:
+            return
+
+        if isinstance(value, list):
+            for item in value:
+                consume(item)
+                if limit is not None and len(image_urls) >= limit:
+                    break
+            return
+
+        if isinstance(value, str):
+            append_image_url(value)
+            return
+
+        if isinstance(value, Mapping):
+            append_image_url(
+                value.get("image_url")
+                or value.get("imageUrl")
+                or value.get("image")
+                or value.get("data_url")
+                or value.get("dataUrl")
+                or value.get("url")
+            )
+
+            nested_image = value.get("image")
+            if nested_image is not None:
+                consume(nested_image)
+
+            base64_value = normalize_optional_text(value.get("base64"))
+            mime_type = normalize_optional_text(value.get("mime_type") or value.get("mimeType"))
+            if base64_value and mime_type:
+                append_image_url(f"data:{mime_type};base64,{base64_value}")
+
+            consume(value.get("image_urls") or value.get("imageUrls"))
+            consume(value.get("source_documents") or value.get("sourceDocuments"))
+
+    for value in values:
+        consume(value)
+        if limit is not None and len(image_urls) >= limit:
+            break
+
+    return image_urls
+
+
+def _merge_payload_image_urls(payload: object, image_urls: list[str]) -> dict[str, Any]:
+    payload_map = _dict_or_empty(payload)
+    if not image_urls:
+        if "image_urls" not in payload_map:
+            return payload_map
+        next_payload = dict(payload_map)
+        next_payload.pop("image_urls", None)
+        return next_payload
+
+    return {
+        **payload_map,
+        "image_urls": image_urls,
+    }
 
 
 def _submission_error(
@@ -428,6 +503,7 @@ def _build_ocr_preview_response(
     *,
     image_analysis: dict | None,
     image_url: str | None,
+    image_urls: list[str] | None,
     context: dict | None,
     event: Event | None,
     run_group: RunGroup | None,
@@ -439,6 +515,7 @@ def _build_ocr_preview_response(
 ) -> OcrPreviewRead:
     analysis = normalize_image_analysis_result(image_analysis)
     preview_context = _dict_or_empty(context)
+    normalized_image_urls = _normalize_image_url_list(image_url, image_urls, limit=MAX_OCR_SOURCE_IMAGES)
     setup = _dict_or_empty(analysis.get("setup"))
     alignment = _dict_or_empty(setup.get("alignment"))
     suspension = _dict_or_empty(setup.get("suspension"))
@@ -539,7 +616,8 @@ def _build_ocr_preview_response(
         submission_ref=_preview_text(submission_ref) or None,
         correlation_id=_preview_text(correlation_id) or None,
         source=_preview_text(source) or None,
-        image_url=_preview_text(image_url) or None,
+        image_url=_preview_text(normalized_image_urls[0] if normalized_image_urls else image_url) or None,
+        image_urls=normalized_image_urls,
         doc_type=_preview_text(analysis.get("document_type")) or "unknown",
         template_name=template_name or None,
         confidence=analysis.get("confidence"),
@@ -608,16 +686,34 @@ def _template_hint_from_payload(payload: Any) -> str | None:
 
 
 def _inbound_webhook_image_url(envelope: dict[str, Any], raw_payload: Any) -> str | None:
-    direct_value = normalize_optional_text(envelope.get("image_url") or envelope.get("image"))
-    if direct_value:
-        return direct_value
+    image_urls = _inbound_webhook_image_urls(envelope, raw_payload)
+    return image_urls[0] if image_urls else None
 
+
+def _inbound_webhook_image_urls(envelope: dict[str, Any], raw_payload: Any) -> list[str]:
     if isinstance(raw_payload, dict):
-        return normalize_optional_text(
-            raw_payload.get("image_url") or raw_payload.get("imageUrl") or raw_payload.get("image")
+        return _normalize_image_url_list(
+            envelope.get("image_url"),
+            envelope.get("image"),
+            envelope.get("image_urls"),
+            envelope.get("imageUrls"),
+            raw_payload.get("image_url"),
+            raw_payload.get("imageUrl"),
+            raw_payload.get("image"),
+            raw_payload.get("image_urls"),
+            raw_payload.get("imageUrls"),
+            raw_payload.get("source_documents"),
+            raw_payload.get("sourceDocuments"),
+            limit=MAX_OCR_SOURCE_IMAGES,
         )
 
-    return None
+    return _normalize_image_url_list(
+        envelope.get("image_url"),
+        envelope.get("image"),
+        envelope.get("image_urls"),
+        envelope.get("imageUrls"),
+        limit=MAX_OCR_SOURCE_IMAGES,
+    )
 
 
 def _inbound_webhook_metadata(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -715,6 +811,11 @@ def _ocr_intake_snapshot_from_submission_row(
         "correlation_id": normalize_optional_text(payload_snapshot.get("correlation_id")) or fallback_correlation_id,
         "source": normalize_optional_text(payload_snapshot.get("source")) or "make-webhook",
         "image_url": normalize_optional_text(payload_snapshot.get("image_url")),
+        "image_urls": _normalize_image_url_list(
+            payload_snapshot.get("image_urls"),
+            payload_snapshot.get("image_url"),
+            limit=MAX_OCR_SOURCE_IMAGES,
+        ),
         "metadata": metadata,
         "raw_text": normalize_optional_text(payload_snapshot.get("raw_text")),
         "normalized_analysis": normalized_analysis,
@@ -849,6 +950,11 @@ def _build_ocr_preview_from_snapshot(
     return _build_ocr_preview_response(
         image_analysis=normalized_analysis,
         image_url=normalize_optional_text(snapshot.get("image_url")),
+        image_urls=_normalize_image_url_list(
+            snapshot.get("image_urls"),
+            snapshot.get("image_url"),
+            limit=MAX_OCR_SOURCE_IMAGES,
+        ),
         context=context,
         event=None,
         run_group=None,
@@ -871,6 +977,11 @@ def _build_ocr_staged_draft_response(snapshot: dict[str, Any]) -> OcrStagedDraft
         correlation_id=normalize_optional_text(snapshot.get("correlation_id")) or None,
         source=normalize_optional_text(snapshot.get("source")) or None,
         image_url=normalize_optional_text(snapshot.get("image_url")) or None,
+        image_urls=_normalize_image_url_list(
+            snapshot.get("image_urls"),
+            snapshot.get("image_url"),
+            limit=MAX_OCR_SOURCE_IMAGES,
+        ),
         raw_text=normalize_optional_text(snapshot.get("raw_text")) or None,
         created_at=snapshot.get("created_at"),
         created_by=normalize_optional_text(snapshot.get("created_by")) or None,
@@ -1225,6 +1336,7 @@ def ingest_ocr_webhook_payload(
     normalized_analysis = extract_normalized_inbound_analysis(raw_payload)
     payload_shape = _payload_shape(raw_payload)
     image_url = _inbound_webhook_image_url(envelope, raw_payload)
+    image_urls = _inbound_webhook_image_urls(envelope, raw_payload)
     metadata = _inbound_webhook_metadata(envelope)
     source = (normalize_optional_text(envelope.get("source")) or "make-webhook")[:32]
     submission_input_source = _normalize_submission_input_source(source)
@@ -1272,6 +1384,7 @@ def ingest_ocr_webhook_payload(
         "template_type": template_type,
         "payload_shape": payload_shape,
         "image_url": image_url,
+        "image_urls": image_urls,
         "raw_text": raw_text,
         "metadata": metadata,
         "ocr_payload": raw_payload,
@@ -1381,6 +1494,7 @@ def get_ocr_preview_status(
         return _build_ocr_preview_response(
             image_analysis=_build_ocr_waiting_analysis(),
             image_url=None,
+            image_urls=[],
             context={},
             event=None,
             run_group=None,
@@ -1448,13 +1562,29 @@ def preview_ocr_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OcrPreviewRead | JSONResponse:
+    preview_image_urls = _normalize_image_url_list(
+        preview_in.image_url,
+        preview_in.image_urls,
+        limit=None,
+    )
     logger.info(
-        "OCR preview endpoint called: event_id=%s run_group_id=%s has_image=%s context_keys=%s",
+        "OCR preview endpoint called: event_id=%s run_group_id=%s image_count=%s context_keys=%s",
         preview_in.event_id,
         preview_in.run_group_id,
-        bool(normalize_optional_text(preview_in.image_url)),
+        len(preview_image_urls),
         sorted(_dict_or_empty(preview_in.context).keys()),
     )
+    if not preview_image_urls:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one OCR source image is required",
+        )
+    if len(preview_image_urls) > MAX_OCR_SOURCE_IMAGES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OCR preview supports up to {MAX_OCR_SOURCE_IMAGES} source images",
+        )
+
     ocr_config = get_ocr_config_status(settings)
     if ocr_config["missing_requirements"]:
         logger.warning(ocr_config["developer_message"])
@@ -1504,8 +1634,11 @@ def preview_ocr_submission(
         created_by_id=current_user.id,
         correlation_id=str(uuid4()),
         raw_text=normalize_optional_text(preview_in.raw_text),
-        image_url=normalize_optional_text(preview_in.image_url),
-        payload={"context": preview_in.context},
+        image_url=preview_image_urls[0],
+        payload={
+            "context": preview_in.context,
+            "image_urls": preview_image_urls,
+        },
         analysis_result={"ocr_preview": True, "force_review_staging": True},
         structured_ingest_status="skipped",
         structured_ingest_warnings=[],
@@ -1548,7 +1681,8 @@ def preview_ocr_submission(
 
     return _build_ocr_preview_response(
         image_analysis=image_analysis,
-        image_url=normalize_optional_text(preview_in.image_url),
+        image_url=preview_image_urls[0],
+        image_urls=preview_image_urls,
         context=preview_in.context,
         event=event,
         run_group=run_group,
@@ -1624,23 +1758,37 @@ def create_submission(
         if not normalize_optional_text(submission_in.raw_text):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voice transcript is empty")
 
+    submission_image_urls = _normalize_image_url_list(
+        submission_in.image_url,
+        submission_in.image_urls,
+        limit=None,
+    )
+    if len(submission_image_urls) > MAX_OCR_SOURCE_IMAGES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OCR review supports up to {MAX_OCR_SOURCE_IMAGES} source images",
+        )
+
     submission_ref = _ensure_unique_submission_ref(db, submission_in.submission_ref)
     correlation_id = _ensure_unique_correlation_id(db, submission_in.correlation_id)
     submission_input = submission_in.model_copy(
         update={
             "submission_ref": submission_ref,
             "correlation_id": correlation_id,
+            "image_url": submission_image_urls[0] if submission_image_urls else None,
+            "image_urls": submission_image_urls,
+            "payload": _merge_payload_image_urls(submission_in.payload, submission_image_urls),
         }
     )
     submission_log_summary = _submission_log_summary(
         submission_ref=submission_ref,
         correlation_id=correlation_id,
-        event_id=submission_in.event_id,
-        run_group_id=submission_in.run_group_id,
-        driver_id=submission_in.driver_id,
-        vehicle_id=submission_in.vehicle_id,
+        event_id=submission_input.event_id,
+        run_group_id=submission_input.run_group_id,
+        driver_id=submission_input.driver_id,
+        vehicle_id=submission_input.vehicle_id,
         current_user_id=current_user.id,
-        payload=submission_in.payload,
+        payload=submission_input.payload,
     )
 
     submission = _build_submission_candidate(

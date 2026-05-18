@@ -8,6 +8,18 @@ const QUICK_PHOTO = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+X2XW4wAAAABJRU5ErkJggg==",
   "base64",
 );
+const QUICK_PHOTO_RED = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+  "base64",
+);
+const QUICK_PHOTO_GREEN = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==",
+  "base64",
+);
+const QUICK_PHOTO_BLUE = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 const makeDateTime = (isoString) => new Date(isoString).toISOString();
 
@@ -1288,6 +1300,261 @@ test.describe("submission flow", () => {
       ),
     ).toBeVisible({ timeout: 5000 });
     await expect(page.getByAltText("OCR note preview")).toBeVisible();
+  });
+
+  test("ocr notes support up to three source images for OCR review", async ({ page }) => {
+    const requests = await mockSubmissionApp(page, {
+      buildOcrPreviewResponse: (body) => ({
+        status: "submitted_to_make",
+        message: "Submitted to Make.com. Waiting for the OCR draft response.",
+        submission_ref: "OCR-PREVIEW-MULTI-1",
+        correlation_id: "corr-multi-1",
+        source: "make.com",
+        image_url: body.image_url ?? null,
+        image_urls: body.image_urls ?? [],
+        doc_type: "unknown",
+        confidence: 0,
+        model_used: "make.com",
+        fallback_used: false,
+        metadata: {},
+        structured_data: {
+          alignment: {},
+          pressures: { cold: {}, hot: {} },
+          suspension: {},
+          shock_setup: { rr: {}, lr: {}, lf: {}, rf: {} },
+          notes: [],
+        },
+        raw_evidence: {
+          visible_text: [],
+          detected_grids: [],
+          detected_labels: [],
+          unmapped_values: [],
+        },
+        review_flags: [],
+        raw_text: "",
+        extracted_text: "",
+        summary: "Waiting for Make OCR callback",
+        recommended_review_status: "PENDING",
+        parser_version: "ocr-v1",
+        model: "make.com",
+      }),
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-notes`);
+    await page.getByTestId("ocr-submission-image-input").setInputFiles([
+      {
+        name: "ocr-sheet-1.png",
+        mimeType: "image/png",
+        buffer: QUICK_PHOTO_RED,
+      },
+      {
+        name: "ocr-sheet-2.png",
+        mimeType: "image/png",
+        buffer: QUICK_PHOTO_GREEN,
+      },
+      {
+        name: "ocr-sheet-3.png",
+        mimeType: "image/png",
+        buffer: QUICK_PHOTO_BLUE,
+      },
+    ]);
+
+    await expect(page.getByRole("img", { name: /^OCR note preview$/ })).toBeVisible();
+    await expect(page.getByAltText("OCR note preview 2")).toBeVisible();
+    await expect(page.getByAltText("OCR note preview 3")).toBeVisible();
+    await expect(page.getByText("3 source images selected").first()).toBeVisible();
+
+    await page.getByTestId("ocr-extract-button").click();
+    await expect.poll(() => requests.ocrPreviewRequests.length).toBe(1);
+    expect(requests.ocrPreviewRequests[0].image_url).toContain("data:image/png;base64,");
+    expect(requests.ocrPreviewRequests[0].image_urls).toHaveLength(3);
+    expect(requests.ocrPreviewRequests[0].image_urls[0]).toContain("data:image/png;base64,");
+  });
+
+  test("ocr review can submit an extracted draft even when the source image is no longer attached", async ({
+    page,
+  }) => {
+    const requests = await mockSubmissionApp(page);
+
+    await page.addInitScript(({ storageKey, draftPayload }) => {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          savedAt: new Date().toISOString(),
+          draft: draftPayload,
+        }),
+      );
+    }, {
+      storageKey: "sm2:ocr-draft:event-1:user-1",
+      draftPayload: {
+        intakeState: {
+          date: "2026-04-23",
+          time: "15:31",
+          track: TRACK_NAME,
+          driver_id: "NG",
+          vehicle_id: "NG-GT4-2025",
+          session_type: "Practice",
+          session_number: "3",
+          duration_min: "30",
+          notes: "",
+        },
+        reviewDraft: {
+          status: "review_required",
+          message: "",
+          submissionRef: "OCR-PREVIEW-LOCAL-1",
+          correlationId: "corr-local-1",
+          source: "make.com",
+          docType: "printed_form_with_values",
+          templateName: "general_setup_note",
+          confidence: 0.9,
+          summary: "Setup sheet parsed",
+          rawText: "RH front 80 rear 121",
+          extractedText: "RH front 80 rear 121",
+          recommendedReviewStatus: "PENDING",
+          parserVersion: "ocr-v1",
+          modelUsed: "make.com",
+          fallbackUsed: false,
+          model: "make.com",
+          metadata: {
+            driver_text: "Alex G",
+            track_text: TRACK_NAME,
+            session_text: "Practice / S1",
+          },
+          rawEvidence: {
+            visible_text: [],
+            detected_grids: [],
+            detected_labels: [],
+            unmapped_values: [],
+            quality_flags: [],
+            template_labels: [],
+          },
+          fieldEvidence: [],
+          normalizedSections: {},
+          preprocessing: {},
+          reviewFlags: ["Manual review required"],
+          parsedSession: {
+            date: "2026-04-23",
+            time: "15:31",
+            track: TRACK_NAME,
+            session_type: "Practice",
+            session_number: "1",
+            duration_min: "",
+            driver_id: "NG",
+            vehicle_id: "NG-GT4-2025",
+          },
+          alignment: {
+            rh_fl: "80",
+            rh_fr: "81",
+            rh_rl: "121",
+            rh_rr: "120.8",
+            ride_height_f: "",
+            ride_height_r: "",
+            camber_fl: "3.8",
+            camber_fr: "4.0",
+            camber_rl: "3.3",
+            camber_rr: "3.7",
+            toe_fl: "0.10 out",
+            toe_fr: "0.12 out",
+            toe_rl: "0.05 in",
+            toe_rr: "0.06 in",
+            toe_front: "",
+            toe_rear: "",
+            caster_l: "",
+            caster_r: "",
+            rake_mm: "",
+            wheelbase_mm: "",
+          },
+          pressures: {
+            cold: { fl: "22.8", fr: "23.1", rl: "21.9", rr: "22.2" },
+            hot: { fl: "", fr: "", rl: "", rr: "" },
+          },
+          suspension: {},
+          tireTemperatures: {},
+          sheetFields: {
+            fuel_liters: "42",
+            driver_weight_lbs: "178",
+            scale_weight_lbs: "",
+            percentage_box_weight_lbs: "",
+            cross_weight_percent: "50.2",
+            roll_bar_text: "900 / 1050",
+            spacer_text: "8",
+            bump_text: "6",
+            rebound_text: "9",
+            springs_front: "900",
+            springs_rear: "1050",
+            bump_stops_front: "6",
+            bump_stops_rear: "8",
+            wheelbase_left_mm: "109.8",
+            wheelbase_right_mm: "109.9",
+            wing_rake_deg: "2.5",
+            wing_angle_deg: "7",
+            wing_gurney_mm: "12",
+            wicker_text: "",
+            specs_toe_text: "",
+            corner_weight_text: "531 / 536 / 848 / 853",
+            static_ride_height_text: "",
+            bump_stop_height_text: "",
+            arb_front_text: "",
+            arb_rear_text: "",
+            fuel_pumped_out_liters: "",
+            notes_block: "",
+          },
+          postSession: {
+            camber_text: "",
+            toe_text: "",
+            weight_text: "",
+            height_text: "",
+            shocks_text: "",
+          },
+          shockSetup: {
+            rr_position: "",
+            rr_hsr: "",
+            rr_lsr: "",
+            rr_hsb: "",
+            rr_lsb: "",
+            rr_total_setup: "",
+            lr_position: "",
+            lr_hsr: "",
+            lr_lsr: "",
+            lr_hsb: "",
+            lr_lsb: "",
+            lr_total_setup: "",
+            lf_position: "",
+            lf_hsr: "",
+            lf_lsr: "",
+            lf_hsb: "",
+            lf_lsb: "",
+            lf_total_setup: "",
+            rf_position: "",
+            rf_hsr: "",
+            rf_lsr: "",
+            rf_hsb: "",
+            rf_lsb: "",
+            rf_total_setup: "",
+          },
+          notes: [],
+        },
+        imageAttachments: [],
+        imageDataUrl: null,
+        imageName: "",
+        reviewDirty: false,
+        workflowState: "extract_success",
+      },
+    });
+
+    await page.goto(`/event/${EVENT_ID}/ocr-review?correlation_id=corr-local-1`);
+    await expect(page.getByTestId("ocr-review-sections")).toBeVisible();
+    await expect(
+      page.getByText(
+        "No source image is attached in this browser session. You can still submit this reviewed draft, and any empty OCR fields will be sent as null.",
+      ),
+    ).toBeVisible();
+
+    await page.getByTestId("ocr-submit-review-button").click();
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0].image_url).toBeUndefined();
+    expect(requests[0].image_urls).toBeUndefined();
+    expect(requests[0].payload.data.track).toBe(TRACK_NAME);
   });
 
   test("ocr notes can save a local draft and submit the reviewed draft for review", async ({

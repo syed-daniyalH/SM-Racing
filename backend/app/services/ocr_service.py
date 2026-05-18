@@ -33,6 +33,31 @@ def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _normalize_submission_image_urls(submission: Submission) -> list[str]:
+    payload = _dict_or_empty(getattr(submission, "payload", None))
+    image_urls: list[str] = []
+
+    def append_image_url(value: Any) -> None:
+        normalized_value = _normalize_text(value)
+        if not normalized_value or normalized_value in image_urls:
+            return
+        image_urls.append(normalized_value)
+
+    for candidate in (
+        getattr(submission, "image_url", None),
+        payload.get("image_urls"),
+        payload.get("imageUrls"),
+        _dict_or_empty(payload.get("media")).get("image_urls"),
+    ):
+        if isinstance(candidate, list):
+            for item in candidate:
+                append_image_url(item)
+        else:
+            append_image_url(candidate)
+
+    return image_urls
+
+
 MAKE_SETUP_CORNERS = ("LF", "RF", "LR", "RR")
 ALIGNMENT_CORNER_SUFFIX = {
     "LF": "fl",
@@ -577,18 +602,11 @@ def _adapt_flexible_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "cold_rr": _normalize_text(_corner_value(tire_pressure, "RR")),
     }
 
-    if _normalize_text(_first_present(core_setup, "percentage_box_weight_lbs")) and not _normalize_text(
-        _first_present(core_setup, "total_weight_lbs", "scale_weight_lbs")
-    ):
-        _append_unique(
-            warnings,
-            "Percentage box weight preserved only in raw payload to avoid mislabeling scale weight",
-        )
-
     sheet_fields = {
         "fuel_liters": _normalize_text(_first_present(core_setup, "fuel_liters", "fuel")),
         "driver_weight_lbs": _normalize_text(_first_present(core_setup, "driver_weight_lbs", "driver_weight")),
         "scale_weight_lbs": _normalize_text(_first_present(core_setup, "total_weight_lbs", "scale_weight_lbs")),
+        "percentage_box_weight_lbs": _normalize_text(_first_present(core_setup, "percentage_box_weight_lbs")),
         "cross_weight_percent": _normalize_text(_first_present(core_setup, "cross_weight_percent", "percentage")),
         "springs_front": _normalize_text(_first_present(springs_map, "front")),
         "springs_rear": _normalize_text(_first_present(springs_map, "rear")),
@@ -669,16 +687,17 @@ def _adapt_flexible_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
             _first_present(shock_map, "HBS", "HSB", "hbs", "hsb")
         )
         suspension[f"lsb_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "LSB", "lsb"))
-        shock_setup[shock_setup_suffix] = {
-            "position": corner,
-            "hsr": _normalize_text(_first_present(shock_map, "HSR", "hsr")),
-            "lsr": _normalize_text(_first_present(shock_map, "LSR", "lsr")),
-            "hsb": _normalize_text(_first_present(shock_map, "HBS", "HSB", "hbs", "hsb")),
-            "lsb": _normalize_text(_first_present(shock_map, "LSB", "lsb")),
-            "total_setup": _normalize_text(
-                _first_present(shock_map, "SETUP", "setup_total", "setup", "total_setup")
-            ),
-        }
+        if _has_meaningful_value(shock_map):
+            shock_setup[shock_setup_suffix] = {
+                "position": corner,
+                "hsr": _normalize_text(_first_present(shock_map, "HSR", "hsr")),
+                "lsr": _normalize_text(_first_present(shock_map, "LSR", "lsr")),
+                "hsb": _normalize_text(_first_present(shock_map, "HBS", "HSB", "hbs", "hsb")),
+                "lsb": _normalize_text(_first_present(shock_map, "LSB", "lsb")),
+                "total_setup": _normalize_text(
+                    _first_present(shock_map, "SETUP", "setup_total", "setup", "total_setup")
+                ),
+            }
 
     inferred_document_type = "printed_form_with_values"
     has_primary_setup_values = _has_meaningful_value(
@@ -813,6 +832,7 @@ def _adapt_make_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "fuel_liters": _normalize_text(setup.get("fuel_liters")),
         "driver_weight_lbs": _normalize_text(setup.get("driver_weight_lbs")),
         "scale_weight_lbs": _normalize_text(setup.get("total_weight_lbs")),
+        "percentage_box_weight_lbs": _normalize_text(setup.get("percentage_box_weight_lbs")),
         "cross_weight_percent": _normalize_text(setup.get("cross_weight_percent")),
         "springs_front": _normalize_text(_dict_or_empty(setup.get("springs")).get("front")),
         "springs_rear": _normalize_text(_dict_or_empty(setup.get("springs")).get("rear")),
@@ -976,7 +996,7 @@ def _build_make_ocr_payload(
     run_group: RunGroup,
     driver: Driver | None,
     vehicle: Vehicle | None,
-    preprocessing_info: dict[str, Any],
+    preprocessing_info: dict[str, Any] | list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     context = _dict_or_empty(submission.payload).get("context")
     context_map = _dict_or_empty(context)
@@ -984,9 +1004,29 @@ def _build_make_ocr_payload(
     if hasattr(run_group_value, "value"):
         run_group_value = run_group_value.value
 
-    image_payload = _build_make_ocr_image_payload(preprocessing_info)
-    if image_payload is None:
+    preprocessing_items = (
+        preprocessing_info
+        if isinstance(preprocessing_info, list)
+        else [preprocessing_info]
+    )
+    image_payloads: list[dict[str, Any]] = []
+    for index, item in enumerate(preprocessing_items):
+        image_payload = _build_make_ocr_image_payload(item)
+        if image_payload is None:
+            logger.warning("Make OCR source image %s could not be prepared", index)
+            return None
+        image_payloads.append(image_payload)
+
+    if not image_payloads:
         return None
+
+    source_documents = [
+        {
+            "index": index,
+            **image_payload,
+        }
+        for index, image_payload in enumerate(image_payloads)
+    ]
 
     return {
         "correlation_id": getattr(submission, "correlation_id", None),
@@ -994,7 +1034,8 @@ def _build_make_ocr_payload(
         "ocr_preview": True,
         "force_review_staging": True,
         "raw_text": _normalize_text(submission.raw_text),
-        "image": image_payload,
+        "image": image_payloads[0],
+        "source_documents": source_documents,
         "context": context_map,
         "event": {
             "id": str(event.id),
@@ -1247,41 +1288,43 @@ def _analyze_submission_image_via_make(
 ) -> dict[str, Any] | None:
     settings = get_settings()
     webhook_url = _normalize_text(getattr(settings, "make_ocr_webhook_url", None))
-    image_url = (submission.image_url or "").strip()
-    preprocessing_info = (
-        image_analysis_service._preprocess_image_payload(image_url)
-        if image_url
-        else {"valid": False, "error": "No image file received."}
+    image_urls = _normalize_submission_image_urls(submission)
+    preprocessing_infos = (
+        [image_analysis_service._preprocess_image_payload(image_url) for image_url in image_urls]
+        if image_urls
+        else [{"valid": False, "error": "No image file received."}]
     )
+    primary_preprocessing = preprocessing_infos[0]
 
     logger.info(
-        "OCR analyze request routed to Make webhook: file_received=%s mime_type=%s size_bytes=%s width=%s height=%s variant=%s",
-        bool(image_url),
-        preprocessing_info.get("mime_type") or "unknown",
-        preprocessing_info.get("size_bytes"),
-        preprocessing_info.get("width"),
-        preprocessing_info.get("height"),
-        preprocessing_info.get("selected_variant") or "original",
+        "OCR analyze request routed to Make webhook: image_count=%s mime_type=%s size_bytes=%s width=%s height=%s variant=%s",
+        len(image_urls),
+        primary_preprocessing.get("mime_type") or "unknown",
+        primary_preprocessing.get("size_bytes"),
+        primary_preprocessing.get("width"),
+        primary_preprocessing.get("height"),
+        primary_preprocessing.get("selected_variant") or "original",
     )
 
-    if not webhook_url or not image_url:
+    if not webhook_url or not image_urls:
         logger.warning(
-            "Make OCR analyze request skipped: webhook_configured=%s has_image=%s",
+            "Make OCR analyze request skipped: webhook_configured=%s image_count=%s",
             bool(webhook_url),
-            bool(image_url),
+            len(image_urls),
         )
         return None
 
-    if not preprocessing_info.get("valid"):
+    invalid_preprocessing = next((info for info in preprocessing_infos if not info.get("valid")), None)
+    if invalid_preprocessing is not None:
         logger.warning(
             "Make OCR preprocessing rejected image: error=%s mime_type=%s",
-            preprocessing_info.get("error"),
-            preprocessing_info.get("mime_type") or "unknown",
+            invalid_preprocessing.get("error"),
+            invalid_preprocessing.get("mime_type") or "unknown",
         )
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
-                message=preprocessing_info.get("error") or "Image could not be prepared for OCR.",
-                preprocessing_info=preprocessing_info,
+                message=invalid_preprocessing.get("error") or "Image could not be prepared for OCR.",
+                preprocessing_info=invalid_preprocessing,
                 model="make.com",
             )
         )
@@ -1292,14 +1335,14 @@ def _analyze_submission_image_via_make(
         run_group=run_group,
         driver=driver,
         vehicle=vehicle,
-        preprocessing_info=preprocessing_info,
+        preprocessing_info=preprocessing_infos,
     )
     if payload is None:
         logger.warning("Make OCR JSON payload could not be prepared from the selected image variant")
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="Image could not be prepared for OCR.",
-                preprocessing_info=preprocessing_info,
+                preprocessing_info=primary_preprocessing,
                 model="make.com",
             )
         )
@@ -1318,7 +1361,7 @@ def _analyze_submission_image_via_make(
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
+                preprocessing_info=primary_preprocessing,
                 model="make.com",
             )
         )
@@ -1327,7 +1370,7 @@ def _analyze_submission_image_via_make(
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
+                preprocessing_info=primary_preprocessing,
                 model="make.com",
             )
         )
@@ -1337,7 +1380,7 @@ def _analyze_submission_image_via_make(
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
+                preprocessing_info=primary_preprocessing,
                 model="make.com",
             )
         )
@@ -1349,7 +1392,7 @@ def _analyze_submission_image_via_make(
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
                 message="OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
+                preprocessing_info=primary_preprocessing,
                 model="make.com",
             )
         )

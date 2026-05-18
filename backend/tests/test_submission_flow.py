@@ -1092,6 +1092,9 @@ def test_build_make_ocr_request_uses_json_base64_payload():
     assert parsed_payload["image"]["filename"] == "high_contrast_grayscale.png"
     assert parsed_payload["image"]["mime_type"] == "image/png"
     assert parsed_payload["image"]["base64"] == PNG_SIGNATURE_BASE64
+    assert len(parsed_payload["source_documents"]) == 1
+    assert parsed_payload["source_documents"][0]["index"] == 0
+    assert parsed_payload["source_documents"][0]["filename"] == "high_contrast_grayscale.png"
     assert parsed_payload["image"]["base64"].startswith("iVBOR")
     assert not parsed_payload["image"]["base64"].startswith("IMTString")
     assert not parsed_payload["image"]["base64"].startswith("data:")
@@ -1145,6 +1148,55 @@ def test_build_make_ocr_payload_uses_actual_file_extension_for_non_png_variants(
     assert payload["image"]["mime_type"] == "image/jpeg"
     assert payload["image"]["base64"] == JPEG_SIGNATURE_BASE64
     assert payload["image"]["base64"].startswith("/9j/")
+
+
+def test_build_make_ocr_payload_includes_multiple_source_documents():
+    submission, event, run_group, driver, vehicle, _current_user = _make_actor_context(
+        "OCR-MAKE-MULTI",
+        _submission_payload(),
+    )
+    submission.payload = {
+        **submission.payload,
+        "image_urls": [
+            f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
+            f"data:image/jpeg;base64,{JPEG_SIGNATURE_BASE64}",
+        ],
+    }
+
+    payload = ocr_service._build_make_ocr_payload(
+        submission=submission,
+        event=event,
+        run_group=run_group,
+        driver=driver,
+        vehicle=vehicle,
+        preprocessing_info=[
+            {
+                "selected_image_url": f"data:image/png;base64,{PNG_SIGNATURE_BASE64}",
+                "selected_variant": "high_contrast_grayscale",
+                "mime_type": "image/png",
+                "size_bytes": len(base64.b64decode(PNG_SIGNATURE_BASE64)),
+                "width": 1,
+                "height": 1,
+            },
+            {
+                "selected_image_url": f"data:image/jpeg;base64,{JPEG_SIGNATURE_BASE64}",
+                "selected_variant": "deskewed",
+                "mime_type": "image/jpeg",
+                "size_bytes": len(base64.b64decode(JPEG_SIGNATURE_BASE64)),
+                "width": 2,
+                "height": 2,
+            },
+        ],
+    )
+
+    assert payload is not None
+    assert payload["image"]["filename"] == "high_contrast_grayscale.png"
+    assert len(payload["source_documents"]) == 2
+    assert payload["source_documents"][0]["index"] == 0
+    assert payload["source_documents"][1]["index"] == 1
+    assert payload["source_documents"][1]["filename"] == "deskewed.jpg"
+    assert payload["source_documents"][1]["mime_type"] == "image/jpeg"
+    assert payload["source_documents"][1]["base64"] == JPEG_SIGNATURE_BASE64
 
 
 def test_validate_make_ocr_base64_string_rejects_imt_wrappers_and_data_urls():
@@ -1431,14 +1483,12 @@ def test_adapt_flexible_setup_payload_maps_flat_schema_into_review_draft():
     assert normalized["setup"]["pressures"]["cold_rr"] == "22.2"
     assert normalized["setup"]["sheet_fields"]["fuel_liters"] == "42"
     assert normalized["setup"]["sheet_fields"]["scale_weight_lbs"] == ""
+    assert normalized["setup"]["sheet_fields"]["percentage_box_weight_lbs"] == "1278"
     assert normalized["setup"]["sheet_fields"]["cross_weight_percent"] == "50.2"
     assert normalized["setup"]["sheet_fields"]["corner_weight_text"] == "531 / 536 / 848 / 853"
     assert normalized["setup"]["post_session"]["toe_text"] == "0.08 out / 0.10 out / 0.04 in / 0.05 in"
     assert normalized["setup"]["post_session"]["shocks_text"] == "front 6 / 9 | rear 6 / 9"
-    assert (
-        "Percentage box weight preserved only in raw payload to avoid mislabeling scale weight"
-        in normalized["warnings"]
-    )
+    assert "Percentage box weight preserved only in raw payload to avoid mislabeling scale weight" not in normalized["warnings"]
 
 
 def test_adapt_flexible_setup_payload_leaves_missing_short_template_fields_blank():
@@ -2052,6 +2102,68 @@ def test_preview_ocr_submission_returns_tracking_fields_for_make_polling(monkeyp
     assert result.submission_ref.startswith("OCR-PREVIEW-")
     assert result.correlation_id
     assert result.source == "make.com"
+
+
+def test_preview_ocr_submission_preserves_multiple_source_images(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+    captured_submission = {}
+    image_urls = [
+        "data:image/png;base64,AAAA",
+        "data:image/png;base64,BBBB",
+        "data:image/png;base64,CCCC",
+    ]
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+        ),
+    )
+
+    def capture_submission(**kwargs):
+        submission = kwargs["submission"]
+        captured_submission["image_url"] = submission.image_url
+        captured_submission["image_urls"] = submission.payload.get("image_urls")
+        return submissions_endpoints._build_ocr_waiting_analysis()
+
+    monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", capture_submission)
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url=image_urls[0],
+            image_urls=image_urls,
+        ),
+        session,
+        current_user,
+    )
+
+    assert captured_submission["image_url"] == image_urls[0]
+    assert captured_submission["image_urls"] == image_urls
+    assert result.image_url == image_urls[0]
+    assert result.image_urls == image_urls
+    assert result.status == "submitted_to_make"
 
 
 def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
