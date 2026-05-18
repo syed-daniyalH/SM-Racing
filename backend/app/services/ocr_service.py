@@ -341,6 +341,38 @@ def _build_session_text(session: dict[str, Any]) -> str | None:
     return " | ".join(normalized) if normalized else None
 
 
+def _build_make_waiting_analysis(message: str | None = None) -> dict[str, Any]:
+    waiting_message = _normalize_text(message) or "Submitted to Make.com. Waiting for the OCR draft response."
+    return {
+        "status": "submitted_to_make",
+        "message": waiting_message,
+        "document_type": "unknown",
+        "confidence": 0.0,
+        "has_values": False,
+        "summary": waiting_message,
+        "extracted_text": "",
+        "raw_text": "",
+        "metadata": {},
+        "raw_evidence": {
+            "visible_text": [],
+            "detected_grids": [],
+            "detected_labels": [],
+            "unmapped_values": [],
+            "quality_flags": [],
+            "template_labels": [],
+        },
+        "field_evidence": [],
+        "normalized_sections": {},
+        "preprocessing": {},
+        "setup": {},
+        "warnings": [],
+        "recommended_review_status": "PENDING",
+        "parser_version": None,
+        "model": "make.com",
+        "fallback_model_used": False,
+    }
+
+
 def _adapt_compact_shock_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_evidence = {
         "visible_text": [],
@@ -1324,14 +1356,12 @@ def _analyze_submission_image_via_make(
 
     normalized = extract_normalized_inbound_analysis(parsed_response)
     if normalized is None:
-        logger.warning("Make OCR webhook returned no analysis payload: message=%s", _extract_error_message(parsed_response))
-        return normalize_image_analysis_result(
-            image_analysis_service._build_extraction_failed_analysis(
-                message=_extract_error_message(parsed_response) or "OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
-                model="make.com",
-            )
+        pending_message = _extract_error_message(parsed_response)
+        logger.info(
+            "Make OCR webhook returned no inline analysis payload; assuming async callback is pending: message=%s",
+            pending_message or "none",
         )
+        return normalize_image_analysis_result(_build_make_waiting_analysis(pending_message))
 
     logger.info(
         "Make OCR normalized: status=%s doc_type=%s confidence=%s",

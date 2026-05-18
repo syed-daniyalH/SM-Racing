@@ -1,3 +1,4 @@
+import json
 import logging
 import secrets
 from datetime import date, datetime, time, timedelta, timezone
@@ -6,7 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -334,6 +335,18 @@ def _list_or_empty(value: object) -> list:
     return value if isinstance(value, list) else []
 
 
+def _json_dict_or_empty(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _preview_text(value: object) -> str:
     return normalize_optional_text(value) or ""
 
@@ -377,14 +390,49 @@ def _build_ocr_failure_analysis(message: str) -> dict[str, object]:
     }
 
 
+def _build_ocr_waiting_analysis(message: str | None = None) -> dict[str, object]:
+    waiting_message = (
+        normalize_optional_text(message)
+        or "Submitted to Make.com. Waiting for the OCR draft response."
+    )
+    return {
+        "status": "submitted_to_make",
+        "message": waiting_message,
+        "document_type": "unknown",
+        "confidence": 0.0,
+        "has_values": False,
+        "metadata": {},
+        "raw_evidence": {
+            "visible_text": [],
+            "detected_grids": [],
+            "detected_labels": [],
+            "unmapped_values": [],
+            "quality_flags": [],
+            "template_labels": [],
+        },
+        "field_evidence": [],
+        "normalized_sections": {},
+        "preprocessing": {},
+        "setup": {},
+        "warnings": [],
+        "recommended_review_status": "PENDING",
+        "summary": waiting_message,
+        "model": "make.com",
+        "fallback_model_used": False,
+    }
+
+
 def _build_ocr_preview_response(
     *,
     image_analysis: dict | None,
     context: dict | None,
-    event: Event,
-    run_group: RunGroup,
+    event: Event | None,
+    run_group: RunGroup | None,
     driver: Driver | None,
     vehicle: Vehicle | None,
+    submission_ref: str | None = None,
+    correlation_id: str | None = None,
+    source: str | None = None,
 ) -> OcrPreviewRead:
     analysis = normalize_image_analysis_result(image_analysis)
     preview_context = _dict_or_empty(context)
@@ -412,11 +460,14 @@ def _build_ocr_preview_response(
             or _preview_text(getattr(driver, "driver_id", None))
         ),
         "vehicle_text": _preview_text(getattr(vehicle, "vehicle_id", None)),
-        "track_text": _preview_text(extracted_metadata.get("track_text")) or _preview_text(preview_context.get("track")) or _preview_text(event.track),
+        "track_text": _preview_text(extracted_metadata.get("track_text"))
+        or _preview_text(preview_context.get("track"))
+        or _preview_text(getattr(event, "track", None)),
         "session_text": _preview_text(extracted_metadata.get("session_text"))
         or _preview_session_text(preview_context.get("session_type"), preview_context.get("session_number")),
-        "event_name": _preview_text(event.name),
-        "run_group": _preview_text(run_group.normalized or run_group.raw_text),
+        "event_name": _preview_text(extracted_metadata.get("event_name")) or _preview_text(getattr(event, "name", None)),
+        "run_group": _preview_text(extracted_metadata.get("run_group"))
+        or _preview_text(getattr(run_group, "normalized", None) or getattr(run_group, "raw_text", None)),
         "template_name": template_name,
     }
 
@@ -482,6 +533,9 @@ def _build_ocr_preview_response(
     return OcrPreviewRead(
         status=_preview_text(analysis.get("status")) or "success",
         message=_preview_text(analysis.get("message")) or None,
+        submission_ref=_preview_text(submission_ref) or None,
+        correlation_id=_preview_text(correlation_id) or None,
+        source=_preview_text(source) or None,
         doc_type=_preview_text(analysis.get("document_type")) or "unknown",
         template_name=template_name or None,
         confidence=analysis.get("confidence"),
@@ -598,6 +652,66 @@ def _validate_inbound_webhook_secret(secret_header: str | None) -> None:
             "INVALID_WEBHOOK_SECRET",
             "Webhook secret is invalid.",
         )
+
+
+def _latest_ocr_intake_snapshot_by_correlation_id(
+    db: Session,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    normalized_correlation_id = normalize_optional_text(correlation_id)
+    if not normalized_correlation_id:
+        return None
+
+    submission_row = db.execute(
+        text(
+            """
+            SELECT submission_id, raw_payload_json, validation_status, validation_message
+            FROM sm2racing.submission_inputs
+            WHERE raw_payload_json ->> 'correlation_id' = :correlation_id
+            ORDER BY submission_id DESC
+            LIMIT 1
+            """
+        ),
+        {"correlation_id": normalized_correlation_id},
+    ).mappings().first()
+    if not submission_row:
+        return None
+
+    submission_input_id = int(submission_row["submission_id"])
+    payload_snapshot = _json_dict_or_empty(submission_row.get("raw_payload_json"))
+    metadata = _dict_or_empty(payload_snapshot.get("metadata"))
+
+    ocr_row = db.execute(
+        text(
+            """
+            SELECT ocr_id, review_status, extracted_json
+            FROM sm2racing.ocr_results
+            WHERE submission_id = :submission_id
+            ORDER BY created_at DESC, ocr_id DESC
+            LIMIT 1
+            """
+        ),
+        {"submission_id": submission_input_id},
+    ).mappings().first()
+
+    extracted_json = _json_dict_or_empty(ocr_row.get("extracted_json")) if ocr_row else {}
+    normalized_analysis = _json_dict_or_empty(payload_snapshot.get("normalized_analysis"))
+    if not normalized_analysis and extracted_json:
+        normalized_analysis = extracted_json
+
+    return {
+        "submission_input_id": submission_input_id,
+        "submission_ref": normalize_optional_text(payload_snapshot.get("submission_ref")),
+        "correlation_id": normalize_optional_text(payload_snapshot.get("correlation_id")) or normalized_correlation_id,
+        "source": normalize_optional_text(payload_snapshot.get("source")) or "make-webhook",
+        "metadata": metadata,
+        "raw_text": normalize_optional_text(payload_snapshot.get("raw_text")),
+        "normalized_analysis": normalized_analysis,
+        "validation_status": normalize_optional_text(submission_row.get("validation_status")) or "PENDING",
+        "validation_message": normalize_optional_text(submission_row.get("validation_message")),
+        "ocr_id": int(ocr_row["ocr_id"]) if ocr_row and ocr_row.get("ocr_id") is not None else None,
+        "review_status": normalize_optional_text(ocr_row.get("review_status")) if ocr_row else None,
+    }
 
 
 def _build_submission_candidate(
@@ -1069,6 +1183,52 @@ def ingest_ocr_webhook_payload(
     )
 
 
+@router.get("/ocr-preview/{correlation_id}", response_model=OcrPreviewRead)
+def get_ocr_preview_status(
+    correlation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OcrPreviewRead:
+    snapshot = _latest_ocr_intake_snapshot_by_correlation_id(db, correlation_id)
+    normalized_correlation_id = normalize_optional_text(correlation_id) or correlation_id
+
+    if snapshot is None:
+        return _build_ocr_preview_response(
+            image_analysis=_build_ocr_waiting_analysis(),
+            context={},
+            event=None,
+            run_group=None,
+            driver=None,
+            vehicle=None,
+            correlation_id=normalized_correlation_id,
+            source="make.com",
+        )
+
+    normalized_analysis = _dict_or_empty(snapshot.get("normalized_analysis"))
+    if not normalized_analysis:
+        message = (
+            normalize_optional_text(snapshot.get("validation_message"))
+            or "Make.com callback arrived, but no recognized OCR draft was stored."
+        )
+        normalized_analysis = _build_ocr_failure_analysis(message)
+        raw_text = normalize_optional_text(snapshot.get("raw_text"))
+        if raw_text:
+            normalized_analysis["raw_text"] = raw_text
+            normalized_analysis["extracted_text"] = raw_text
+
+    return _build_ocr_preview_response(
+        image_analysis=normalized_analysis,
+        context=_dict_or_empty(snapshot.get("metadata")),
+        event=None,
+        run_group=None,
+        driver=None,
+        vehicle=None,
+        submission_ref=normalize_optional_text(snapshot.get("submission_ref")),
+        correlation_id=normalize_optional_text(snapshot.get("correlation_id")) or normalized_correlation_id,
+        source=normalize_optional_text(snapshot.get("source")) or "make.com",
+    )
+
+
 @router.post("/ocr-preview", response_model=OcrPreviewRead)
 def preview_ocr_submission(
     preview_in: OcrPreviewCreate,
@@ -1180,6 +1340,9 @@ def preview_ocr_submission(
         run_group=run_group,
         driver=driver,
         vehicle=vehicle,
+        submission_ref=preview_submission.submission_ref,
+        correlation_id=preview_submission.correlation_id,
+        source="make.com",
     )
 
 

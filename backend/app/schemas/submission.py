@@ -41,6 +41,9 @@ class OcrPreviewCreate(ORMModel):
 class OcrPreviewRead(ORMModel):
     status: str = "success"
     message: str | None = None
+    submission_ref: str | None = None
+    correlation_id: str | None = None
+    source: str | None = None
     doc_type: str = "unknown"
     template_name: str | None = None
     confidence: float | None = None

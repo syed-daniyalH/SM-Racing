@@ -211,6 +211,9 @@ class FakeSession:
         self.storage: dict[tuple[type, object], object] = {}
         self.added: list[object] = []
         self.commits = 0
+        self.submission_inputs: list[dict] = []
+        self.ocr_results: list[dict] = []
+        self.media_files: list[dict] = []
 
     def _identity_key(self, obj):
         mapper = getattr(obj.__class__, "__mapper__", None)
@@ -234,16 +237,59 @@ class FakeSession:
         self.executed.append((sql, params))
 
         if "insert into sm2racing.submission_inputs" in normalized:
-            return FakeResult(scalar_value=101)
+            submission_id = 101 + len(self.submission_inputs)
+            self.submission_inputs.append({"submission_id": submission_id, **params})
+            return FakeResult(scalar_value=submission_id)
         if "insert into sm2racing.media_files" in normalized:
-            return FakeResult(scalar_value=202)
+            media_id = 202 + len(self.media_files)
+            self.media_files.append({"media_id": media_id, **params})
+            return FakeResult(scalar_value=media_id)
         if "insert into sm2racing.logs" in normalized:
             return FakeResult()
         if "insert into sm2racing.ocr_results" in normalized:
-            return FakeResult(scalar_value=303)
+            ocr_id = 303 + len(self.ocr_results)
+            self.ocr_results.append({"ocr_id": ocr_id, **params})
+            return FakeResult(scalar_value=ocr_id)
         if "select submission_id" in normalized and "from sm2racing.submission_inputs" in normalized:
+            if "correlation_id" in params:
+                for row in reversed(self.submission_inputs):
+                    payload = json.loads(row["raw_payload_json"])
+                    if payload.get("correlation_id") == params["correlation_id"]:
+                        return FakeResult(
+                            row={
+                                "submission_id": row["submission_id"],
+                                "raw_payload_json": row["raw_payload_json"],
+                                "validation_status": row.get("validation_status"),
+                                "validation_message": row.get("validation_message"),
+                            }
+                        )
+                return FakeResult(row=None)
+
+            if "submission_ref" in params:
+                for row in reversed(self.submission_inputs):
+                    payload = json.loads(row["raw_payload_json"])
+                    if payload.get("submission_ref") == params["submission_ref"]:
+                        return FakeResult(row={"submission_id": row["submission_id"]})
+                return FakeResult(row=None)
+
+            return FakeResult(row=None)
+        if "select ocr_id" in normalized and "from sm2racing.ocr_results" in normalized:
+            submission_id = params.get("submission_id")
+            for row in reversed(self.ocr_results):
+                if row.get("submission_id") == submission_id:
+                    return FakeResult(
+                        row={
+                            "ocr_id": row["ocr_id"],
+                            "review_status": row.get("review_status"),
+                            "extracted_json": row.get("extracted_json"),
+                        }
+                    )
             return FakeResult(row=None)
         if "select media_id" in normalized and "from sm2racing.media_files" in normalized:
+            submission_id = params.get("submission_id")
+            for row in reversed(self.media_files):
+                if row.get("submission_id") == submission_id:
+                    return FakeResult(row={"media_id": row["media_id"]})
             return FakeResult(row={"media_id": 202})
         if "insert into sm2racing.tire_inventory" in normalized:
             status_value = params.get("status") or TireInventoryStatus.ACTIVE
@@ -1613,6 +1659,75 @@ def test_ingest_ocr_webhook_payload_rejects_invalid_secret(monkeypatch):
     assert exc_info.value.detail["code"] == "INVALID_WEBHOOK_SECRET"
 
 
+def test_get_ocr_preview_status_returns_waiting_when_callback_not_received():
+    result = submissions_endpoints.get_ocr_preview_status(
+        "corr-waiting-123",
+        db=FakeSession(),
+        current_user=SimpleNamespace(id=uuid4()),
+    )
+
+    assert result.status == "submitted_to_make"
+    assert result.correlation_id == "corr-waiting-123"
+    assert result.source == "make.com"
+
+
+def test_get_ocr_preview_status_returns_normalized_draft_from_callback(monkeypatch):
+    db = FakeSession()
+    current_user = SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    ingest_result = submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-ASYNC-001",
+            "correlation_id": "corr-async-001",
+            "source": "make-http",
+            "metadata": {"track": "Sebring", "session_type": "Practice", "session_number": "1"},
+            "payload": [
+                {
+                    "sheet_type": "alignment_sheet",
+                    "date": "04/18/26",
+                    "time": "10:15 AM",
+                    "driver": "Alex G",
+                    "track": "Sebring",
+                    "camber": {
+                        "front_left": 3.8,
+                        "front_right": 4.0,
+                        "rear_left": 3.3,
+                        "rear_right": 3.7,
+                    },
+                    "toe": {
+                        "front_left": "0.10 out",
+                        "front_right": "0.12 out",
+                        "rear_left": "0.05 in",
+                        "rear_right": "0.06 in",
+                    },
+                }
+            ],
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    result = submissions_endpoints.get_ocr_preview_status(
+        "corr-async-001",
+        db=db,
+        current_user=current_user,
+    )
+
+    assert ingest_result.normalized is True
+    assert result.status == "review_required"
+    assert result.submission_ref == "MAKE-OCR-ASYNC-001"
+    assert result.correlation_id == "corr-async-001"
+    assert result.source == "make-http"
+    assert result.metadata["track_text"] == "Sebring"
+    assert result.structured_data["alignment"]["camber_fl"] == "3.8"
+    assert result.structured_data["alignment"]["toe_fr"] == "0.12 out"
+
+
 def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypatch):
     event = SimpleNamespace(
         id=uuid4(),
@@ -1672,6 +1787,57 @@ def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypat
     assert result.model_used == "make.com"
 
 
+def test_preview_ocr_submission_returns_tracking_fields_for_make_polling(monkeypatch):
+    event = SimpleNamespace(
+        id=uuid4(),
+        name="Sebring",
+        track="Sebring International Raceway",
+        start_date=_dt(2026, 5, 10),
+        end_date=_dt(2026, 5, 20),
+        is_active=True,
+    )
+    run_group = SimpleNamespace(
+        id=uuid4(),
+        event_id=event.id,
+        raw_text="BLUE",
+        normalized="BLUE",
+    )
+    session = _PreviewSession(event=event, run_group=run_group)
+    current_user = SimpleNamespace(id=uuid4(), name="Mechanic One", email="mechanic@example.com")
+
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(
+            chatbot_image_analysis_enabled=False,
+            openai_api_key=None,
+            openai_vision_model="gpt-5.4",
+            openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
+        ),
+    )
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "analyze_submission_image",
+        lambda **_kwargs: submissions_endpoints._build_ocr_waiting_analysis(),
+    )
+
+    result = submissions_endpoints.preview_ocr_submission(
+        OcrPreviewCreate(
+            event_id=event.id,
+            run_group_id=run_group.id,
+            image_url="data:image/png;base64,AAAA",
+        ),
+        session,
+        current_user,
+    )
+
+    assert result.status == "submitted_to_make"
+    assert result.submission_ref.startswith("OCR-PREVIEW-")
+    assert result.correlation_id
+    assert result.source == "make.com"
+
+
 def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
     event = SimpleNamespace(
         id=uuid4(),
@@ -1698,6 +1864,7 @@ def test_preview_ocr_submission_returns_editable_draft(monkeypatch):
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(
@@ -1906,6 +2073,7 @@ def test_preview_ocr_submission_tolerates_partial_analysis(monkeypatch):
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(
@@ -1967,6 +2135,7 @@ def test_preview_ocr_submission_reports_service_failure(monkeypatch):
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(submissions_endpoints, "analyze_submission_image", lambda **_kwargs: None)
@@ -2014,6 +2183,7 @@ def test_preview_ocr_submission_calls_ocr_service_with_structured_context(monkey
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
 
@@ -2838,6 +3008,7 @@ def test_preview_ocr_submission_unknown_document_returns_review_required(monkeyp
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(
@@ -2977,6 +3148,7 @@ def test_preview_ocr_submission_accepts_blank_setup_sheet(monkeypatch):
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(
@@ -3036,6 +3208,7 @@ def test_preview_ocr_submission_builds_review_draft_from_data_blocks(monkeypatch
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
         ),
     )
     monkeypatch.setattr(

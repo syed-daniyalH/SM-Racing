@@ -216,6 +216,9 @@ const normalizeOcrPreviewResponse = (data) => {
     ...preview,
     status: String(preview?.status || "success").trim().toLowerCase() || "success",
     message: preview?.message || "",
+    submissionRef: preview?.submission_ref || preview?.submissionRef || null,
+    correlationId: preview?.correlation_id || preview?.correlationId || null,
+    source: preview?.source || null,
     docType: preview?.doc_type || preview?.docType || "unknown",
     templateName: preview?.template_name || preview?.templateName || null,
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
@@ -426,6 +429,20 @@ export const extractOcrDraft = async (previewRequest) => {
       data: error.response?.data,
     });
     throw buildApiError(error, "Failed to extract OCR draft. Please try again.");
+  }
+};
+
+export const getOcrDraftStatus = async (correlationId) => {
+  try {
+    const response = await axiosInstance.get(`/submissions/ocr-preview/${encodeURIComponent(correlationId)}`);
+    return normalizeOcrPreviewResponse(response.data);
+  } catch (error) {
+    console.error("Get OCR Draft Status API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to load OCR draft status. Please try again.");
   }
 };
 

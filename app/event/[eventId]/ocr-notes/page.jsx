@@ -37,6 +37,7 @@ import { DRIVER_OPTIONS, SESSION_TYPE_OPTIONS, VEHICLE_OPTIONS } from "../../../
 import {
   clearOcrDraft,
   extractOcrDraft,
+  getOcrDraftStatus,
   loadOcrDraft,
   rerunOcrDraft,
   saveOcrDraft,
@@ -253,6 +254,9 @@ const OCR_REVIEW_SAFE_STATUSES = new Set([
 const createEmptyReviewDraft = () => ({
   status: "idle",
   message: "",
+  submissionRef: "",
+  correlationId: "",
+  source: "",
   docType: "unknown",
   templateName: "",
   confidence: null,
@@ -544,6 +548,9 @@ const mergePreviewIntoReviewDraft = (preview) => {
     ...baseDraft,
     status: preview?.status || "success",
     message: preview?.message || "",
+    submissionRef: preview?.submissionRef || "",
+    correlationId: preview?.correlationId || "",
+    source: preview?.source || "",
     docType: preview?.docType || "unknown",
     templateName:
       preview?.templateName || preview?.metadata?.template_name || preview?.metadata?.templateName || "",
@@ -892,6 +899,9 @@ const buildReviewedSubmissionRequest = ({
       ocr_parser_version: reviewDraft.parserVersion,
       ocr_model: reviewDraft.modelUsed || reviewDraft.model,
       ocr_fallback_used: Boolean(reviewDraft.fallbackUsed),
+      ocr_source_submission_ref: normalizeText(reviewDraft.submissionRef) || null,
+      ocr_source_correlation_id: normalizeText(reviewDraft.correlationId) || null,
+      ocr_source: normalizeText(reviewDraft.source) || null,
     },
   };
 };
@@ -949,6 +959,9 @@ const getOcrStatusMessage = (status, fallbackMessage = "") => {
   }
   if (normalizedStatus === "extraction_failed") {
     return "OCR service failed. Please retry or enter manually.";
+  }
+  if (normalizedStatus === "submitted_to_make") {
+    return "Submitted to Make.com. Waiting for the OCR draft response.";
   }
   if (normalizedStatus === "success") {
     return "OCR draft ready. Review and correct the extracted setup values before submitting.";
@@ -1286,6 +1299,9 @@ export default function OCRNotesPage() {
           modelUsed: storedDraft?.reviewDraft?.modelUsed,
           fallbackUsed: storedDraft?.reviewDraft?.fallbackUsed,
           model: storedDraft?.reviewDraft?.model,
+          submissionRef: storedDraft?.reviewDraft?.submissionRef,
+          correlationId: storedDraft?.reviewDraft?.correlationId,
+          source: storedDraft?.reviewDraft?.source,
           metadata: storedDraft?.reviewDraft?.metadata,
           rawEvidence: storedDraft?.reviewDraft?.rawEvidence,
           reviewFlags: storedDraft?.reviewDraft?.reviewFlags,
@@ -1294,7 +1310,14 @@ export default function OCRNotesPage() {
       setImageDataUrl(storedDraft?.imageDataUrl || null);
       setImageName(storedDraft?.imageName || "");
       setReviewDirty(Boolean(storedDraft?.reviewDirty));
-      setWorkflowState(storedDraft?.workflowState || (storedDraft?.reviewDraft ? "extract_success" : "ready_to_extract"));
+      setWorkflowState(
+        storedDraft?.workflowState ||
+          (normalizeText(storedDraft?.reviewDraft?.status) === "submitted_to_make"
+            ? "submitted_to_make"
+            : storedDraft?.reviewDraft
+              ? "extract_success"
+              : "ready_to_extract"),
+      );
       setWorkflowMessage("Draft restored from this device.");
       setDraftRestored(true);
     }
@@ -1322,7 +1345,86 @@ export default function OCRNotesPage() {
   );
   const hasExtractedDraft = hasExtractedDraftData(reviewDraft);
   const hasImage = Boolean(imageDataUrl);
+  const isWaitingForMakeDraft = workflowState === "submitted_to_make" || normalizeText(reviewDraft.status) === "submitted_to_make";
   const activeAsyncState = ["extracting", "rerunning_ocr", "saving_draft", "submitting_review"].includes(workflowState);
+
+  useEffect(() => {
+    if (!isWaitingForMakeDraft) {
+      return undefined;
+    }
+
+    const correlationId = normalizeText(reviewDraft.correlationId);
+    if (!correlationId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timeoutId = null;
+
+    const scheduleNextPoll = (delayMs = 4000) => {
+      if (cancelled) {
+        return;
+      }
+      timeoutId = window.setTimeout(pollStatus, delayMs);
+    };
+
+    const pollStatus = async () => {
+      try {
+        const preview = await getOcrDraftStatus(correlationId);
+        if (cancelled) {
+          return;
+        }
+
+        if (preview.status === "submitted_to_make") {
+          setReviewDraft((prev) => ({
+            ...prev,
+            status: preview.status || prev.status,
+            message: preview.message || prev.message,
+            submissionRef: preview.submissionRef || prev.submissionRef,
+            correlationId: preview.correlationId || prev.correlationId,
+            source: preview.source || prev.source,
+            modelUsed: preview.modelUsed || prev.modelUsed,
+            model: preview.model || prev.model,
+          }));
+          setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+          scheduleNextPoll();
+          return;
+        }
+
+        const mergedDraft = mergePreviewIntoReviewDraft(preview);
+        setReviewDraft(mergedDraft);
+        setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
+        setReviewDirty(false);
+        setPageError("");
+
+        if (preview.status === "extraction_failed") {
+          setWorkflowState("extract_failed");
+          setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+          setPageError(getExtractionFailureMessage(preview));
+          return;
+        }
+
+        setWorkflowState(isReviewSafeOcrStatus(preview.status) ? "editing_review" : "extract_success");
+        setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+      } catch (error) {
+        console.error("Failed to refresh OCR draft status:", error);
+        if (cancelled) {
+          return;
+        }
+        setWorkflowMessage("Submitted to Make.com. Waiting for the OCR draft response.");
+        scheduleNextPoll(6000);
+      }
+    };
+
+    pollStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [eventTrack, isWaitingForMakeDraft, reviewDraft.correlationId]);
 
   const effectiveWorkflowState = useMemo(() => {
     if (workflowState === "submit_success" || workflowState === "submit_failed") {
@@ -1333,7 +1435,7 @@ export default function OCRNotesPage() {
       return "draft_saved";
     }
 
-    if (workflowState === "submitted_to_make") {
+    if (isWaitingForMakeDraft) {
       return "submitted_to_make";
     }
 
@@ -1362,7 +1464,7 @@ export default function OCRNotesPage() {
     }
 
     return "extract_success";
-  }, [hasExtractedDraft, hasImage, reviewDirty, reviewDraft.status, workflowState]);
+  }, [hasExtractedDraft, hasImage, isWaitingForMakeDraft, reviewDirty, reviewDraft.status, workflowState]);
   const hasReviewSafeStatus = isReviewSafeOcrStatus(reviewDraft.status);
   const shouldShowManualCorrection =
     hasExtractedDraft || (hasImage && (effectiveWorkflowState === "extract_failed" || hasReviewSafeStatus));
@@ -1665,12 +1767,17 @@ export default function OCRNotesPage() {
       setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
       setReviewDirty(false);
 
-      if (preview.status === "extraction_failed") {
+      if (preview.status === "submitted_to_make") {
         setWorkflowState("submitted_to_make");
-        setWorkflowMessage(
-          "Submitted to Make.com. The image reached the Make.com queue and is waiting for the OCR draft response.",
-        );
+        setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
         setPageError("");
+        return;
+      }
+
+      if (preview.status === "extraction_failed") {
+        setWorkflowState("extract_failed");
+        setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+        setPageError(getExtractionFailureMessage(preview));
         return;
       }
 
@@ -1699,7 +1806,13 @@ export default function OCRNotesPage() {
         imageDataUrl,
         imageName,
         reviewDirty,
-        workflowState: hasExtractedDraft ? "extract_success" : hasImage ? "ready_to_extract" : "waiting_for_image",
+        workflowState: isWaitingForMakeDraft
+          ? "submitted_to_make"
+          : hasExtractedDraft
+            ? "extract_success"
+            : hasImage
+              ? "ready_to_extract"
+              : "waiting_for_image",
       });
       setWorkflowState("draft_saved");
       setWorkflowMessage("OCR draft saved locally on this device.");
