@@ -654,6 +654,26 @@ def _validate_inbound_webhook_secret(secret_header: str | None) -> None:
         )
 
 
+def _normalize_submission_input_source(source_value: object) -> str:
+    normalized_source = normalize_optional_text(source_value)
+    if not normalized_source:
+        return "make"
+
+    normalized_key = normalized_source.strip().lower().replace("-", "_").replace(".", "_")
+    aliases = {
+        "make": "make",
+        "make_http": "make",
+        "make_webhook": "make",
+        "make_com": "make",
+        "api": "api",
+        "pwa": "pwa",
+        "admin": "admin",
+        "offline_sync": "offline_sync",
+        "photo": "photo",
+    }
+    return aliases.get(normalized_key, "make")
+
+
 def _latest_ocr_intake_snapshot_by_correlation_id(
     db: Session,
     correlation_id: str,
@@ -1043,6 +1063,7 @@ def ingest_ocr_webhook_payload(
     image_url = _inbound_webhook_image_url(envelope, raw_payload)
     metadata = _inbound_webhook_metadata(envelope)
     source = (normalize_optional_text(envelope.get("source")) or "make-webhook")[:32]
+    submission_input_source = _normalize_submission_input_source(source)
     created_by = (normalize_optional_text(envelope.get("created_by")) or "make-webhook")[:255]
     submission_ref = (normalize_optional_text(envelope.get("submission_ref")) or f"MAKE-OCR-{uuid4().hex[:12]}")[:120]
     correlation_id = (normalize_optional_text(envelope.get("correlation_id")) or str(uuid4()))[:36]
@@ -1099,7 +1120,7 @@ def ingest_ocr_webhook_payload(
             db,
             id_seance=None,
             submission_type="detail",
-            source=source,
+            source=submission_input_source,
             raw_text=raw_text,
             raw_payload=payload_snapshot,
             confidence=confidence,

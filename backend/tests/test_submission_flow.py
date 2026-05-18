@@ -1503,6 +1503,7 @@ def test_ingest_ocr_webhook_payload_accepts_direct_compact_shock_list(monkeypatc
         params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
     )
     snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert insert_submission["source"] == "make"
     assert snapshot["payload_shape"] == "list"
     assert snapshot["normalized_analysis"]["document_type"] == "shock_setup_sheet"
     assert snapshot["ocr_payload"][0]["RR"]["HSR"] == 7
@@ -1560,6 +1561,7 @@ def test_ingest_ocr_webhook_payload_accepts_flat_flexible_setup_list(monkeypatch
         params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
     )
     snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert insert_submission["source"] == "make"
     assert snapshot["normalized_analysis"]["template_name"] == "alignment_sheet"
     assert snapshot["normalized_analysis"]["setup"]["alignment"]["camber_fl"] == "3.8"
 
@@ -1597,6 +1599,7 @@ def test_ingest_ocr_webhook_payload_stores_wrapped_payload_metadata_and_image(mo
         params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
     )
     snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert insert_submission["source"] == "make"
     assert snapshot["submission_ref"] == "MAKE-OCR-WRAPPED-001"
     assert snapshot["metadata"]["event_id"] == "evt-1"
     assert snapshot["image_url"] == "data:image/png;base64,AAAA"
