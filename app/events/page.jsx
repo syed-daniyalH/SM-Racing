@@ -32,8 +32,14 @@ const SORT_OPTIONS = [
   { value: "alpha", label: "Alphabetical" },
 ];
 
-const getEventId = (event) =>
-  event?.id || event?._id || event?.eventId || event?.event_id || null;
+const getEventId = (event) => {
+  if (typeof event === "string" || typeof event === "number") {
+    const normalized = String(event).trim();
+    return normalized || null;
+  }
+
+  return event?.id || event?._id || event?.eventId || event?.event_id || null;
+};
 
 const parseDateValue = (value) => {
   if (!value) return null;

@@ -2,8 +2,14 @@ import { normalizeEvent } from "../../../utils/apiTransforms";
 
 const EVENT_NOTES_STORAGE_KEY = "sm2_admin_event_notes";
 
-export const getEventId = (event) =>
-  event?.id || event?._id || event?.eventId || event?.event_id || null;
+export const getEventId = (event) => {
+  if (typeof event === "string" || typeof event === "number") {
+    const normalized = String(event).trim();
+    return normalized || null;
+  }
+
+  return event?.id || event?._id || event?.eventId || event?.event_id || null;
+};
 
 export const parseDateValue = (value) => {
   if (!value) return null;
