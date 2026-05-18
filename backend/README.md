@@ -84,11 +84,12 @@ app/
 2. Set `DATABASE_URL` to your Neon connection string and `JWT_SECRET_KEY`
 3. Optionally set `MAKE_WEBHOOK_URL` to forward each saved submission to Make.com
 4. Optionally set `MAKE_OCR_WEBHOOK_URL` to route OCR preview extraction through a Make.com webhook
-5. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
-6. Optionally enable backend OpenAI OCR with `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`
-7. Install dependencies with `pip install -r requirements.txt`
-8. Apply the PostgreSQL schema with `alembic upgrade head`
-9. Start the API with `uvicorn app.main:app --reload`
+5. Optionally set `MAKE_INBOUND_WEBHOOK_SECRET` to accept direct Make.com HTTP POST OCR payloads
+6. Optionally enable the NLP intent layer with `CHATBOT_NLP_ENABLED=true` and `OPENAI_API_KEY`
+7. Optionally enable backend OpenAI OCR with `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`
+8. Install dependencies with `pip install -r requirements.txt`
+9. Apply the PostgreSQL schema with `alembic upgrade head`
+10. Start the API with `uvicorn app.main:app --reload`
 
 The API will be available at `http://127.0.0.1:8000`.
 
@@ -113,6 +114,10 @@ structured intake tables so it can be reviewed later. If
 Make.com as `application/json` with a `payload_json` string plus top-level
 preview metadata, and embeds the selected OCR image variant as clean base64 in
 `payload_json.image` for normalization and review.
+If `MAKE_INBOUND_WEBHOOK_SECRET` is configured, Make.com can also post OCR
+template payloads directly into `POST /api/v1/submissions/ocr-intake` using the
+`X-SM2-Webhook-Secret` header. Recognized templates are normalized into
+`ocr_results`; unrecognized templates are still stored as raw JSON in staging.
 If `MAKE_OCR_WEBHOOK_URL` is not set and
 `CHATBOT_IMAGE_ANALYSIS_ENABLED=true`, the backend falls back to direct OpenAI
 Vision extraction. In both cases, the extracted draft is stored with `PENDING`
@@ -135,6 +140,7 @@ Set these environment variables on Render:
 - `CORS_ORIGIN_REGEX` - `^https://.*\.vercel\.app$`
 - `MAKE_WEBHOOK_URL` - optional Make.com custom webhook endpoint for structured submission forwarding
 - `MAKE_OCR_WEBHOOK_URL` - optional Make.com webhook endpoint for OCR preview extraction
+- `MAKE_INBOUND_WEBHOOK_SECRET` - optional shared secret for direct Make.com OCR intake
 - `CHATBOT_NLP_ENABLED` - optional; set to `true` to let OpenAI classify chatbot intent before deterministic fallback
 - `CHATBOT_IMAGE_ANALYSIS_ENABLED` - optional; set to `true` only when you want the backend to call OpenAI directly for OCR fallback
 - `OPENAI_API_KEY` - optional; required only when `CHATBOT_NLP_ENABLED=true`

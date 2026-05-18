@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     cors_origin_regex: str | None = None
     make_webhook_url: str | None = None
     make_ocr_webhook_url: str | None = None
+    make_inbound_webhook_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MAKE_INBOUND_WEBHOOK_SECRET",
+            "OCR_INGEST_WEBHOOK_SECRET",
+            "SM2_WEBHOOK_SECRET",
+        ),
+    )
     make_ocr_timeout_seconds: float = 20.0
     chatbot_nlp_enabled: bool = False
     chatbot_image_analysis_enabled: bool = False
@@ -104,7 +112,13 @@ class Settings(BaseSettings):
 
         return value
 
-    @field_validator("openai_api_key", "openai_fallback_model", "make_ocr_webhook_url", mode="before")
+    @field_validator(
+        "openai_api_key",
+        "openai_fallback_model",
+        "make_ocr_webhook_url",
+        "make_inbound_webhook_secret",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_openai_fields(cls, value: Any) -> str | None:
         return _normalize_optional_text(value)

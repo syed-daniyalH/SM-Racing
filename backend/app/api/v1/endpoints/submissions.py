@@ -1,8 +1,10 @@
 import logging
+import secrets
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +24,7 @@ from app.models.vehicle import Vehicle
 from app.models.voice_note import VoiceNoteSession
 from app.schemas.submission import (
     OcrPreviewCreate,
+    OcrWebhookIngestRead,
     OcrPreviewRead,
     RawSubmissionCreate,
     RawSubmissionResult,
@@ -29,7 +32,11 @@ from app.schemas.submission import (
     SubmissionRead,
     SubmissionUpdate,
 )
-from app.services.ocr_service import analyze_submission_image, normalize_image_analysis_result
+from app.services.ocr_service import (
+    analyze_submission_image,
+    extract_normalized_inbound_analysis,
+    normalize_image_analysis_result,
+)
 from app.services.raw_note_llm_service import extract_raw_note_via_openai
 from app.services.raw_submission_service import (
     RawSubmissionValidationError,
@@ -52,6 +59,9 @@ from app.services.submission_delivery_service import (
     process_submission_delivery_task,
 )
 from app.services.submission_ingest_service import (
+    _insert_media_file,
+    _insert_ocr_result,
+    _insert_submission_input,
     _write_audit_log,
     persist_structured_submission,
     record_image_analysis_result,
@@ -493,6 +503,103 @@ def _build_ocr_preview_response(
     )
 
 
+def _payload_shape(value: Any) -> str:
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, dict):
+        return "object"
+    return "scalar"
+
+
+def _extract_inbound_webhook_parts(body: Any) -> tuple[dict[str, Any], Any]:
+    if isinstance(body, dict) and any(
+        key in body for key in ("payload", "raw_payload", "analysis_payload", "ocr_payload")
+    ):
+        envelope = body
+        raw_payload = (
+            envelope.get("payload")
+            or envelope.get("raw_payload")
+            or envelope.get("analysis_payload")
+            or envelope.get("ocr_payload")
+        )
+    else:
+        envelope = {}
+        raw_payload = body
+
+    if raw_payload in (None, "", [], {}):
+        raise _submission_error(
+            status.HTTP_400_BAD_REQUEST,
+            "INVALID_OCR_WEBHOOK_PAYLOAD",
+            "OCR webhook payload is required.",
+        )
+
+    return envelope, raw_payload
+
+
+def _template_hint_from_payload(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        return normalize_optional_text(
+            payload.get("template_type")
+            or payload.get("template_name")
+            or payload.get("document_type")
+            or payload.get("type")
+        )
+    if isinstance(payload, list) and payload:
+        return _template_hint_from_payload(payload[0])
+    return None
+
+
+def _inbound_webhook_image_url(envelope: dict[str, Any], raw_payload: Any) -> str | None:
+    direct_value = normalize_optional_text(envelope.get("image_url") or envelope.get("image"))
+    if direct_value:
+        return direct_value
+
+    if isinstance(raw_payload, dict):
+        return normalize_optional_text(
+            raw_payload.get("image_url") or raw_payload.get("imageUrl") or raw_payload.get("image")
+        )
+
+    return None
+
+
+def _inbound_webhook_metadata(envelope: dict[str, Any]) -> dict[str, Any]:
+    metadata = _dict_or_empty(envelope.get("metadata"))
+    passthrough_fields = (
+        "event_id",
+        "event_name",
+        "run_group_id",
+        "run_group",
+        "driver_id",
+        "vehicle_id",
+        "track",
+        "session_type",
+        "session_number",
+    )
+    for field_name in passthrough_fields:
+        value = envelope.get(field_name)
+        if value not in (None, "") and field_name not in metadata:
+            metadata[field_name] = value
+    return metadata
+
+
+def _validate_inbound_webhook_secret(secret_header: str | None) -> None:
+    configured_secret = normalize_optional_text(getattr(settings, "make_inbound_webhook_secret", None))
+    if not configured_secret:
+        raise _submission_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OCR_WEBHOOK_DISABLED",
+            "Inbound OCR webhook is disabled because the webhook secret is not configured.",
+        )
+
+    provided_secret = normalize_optional_text(secret_header)
+    if not provided_secret or not secrets.compare_digest(provided_secret, configured_secret):
+        raise _submission_error(
+            status.HTTP_403_FORBIDDEN,
+            "INVALID_WEBHOOK_SECRET",
+            "Webhook secret is invalid.",
+        )
+
+
 def _build_submission_candidate(
     submission_in: SubmissionCreate,
     current_user: User,
@@ -806,6 +913,160 @@ def list_submissions_by_user(
 
     stmt = _submission_stmt().where(Submission.created_by_id == user_id)
     return list(db.scalars(stmt).unique().all())
+
+
+@router.post("/ocr-intake", response_model=OcrWebhookIngestRead, status_code=status.HTTP_201_CREATED)
+def ingest_ocr_webhook_payload(
+    body: Any = Body(...),
+    x_sm2_webhook_secret: str | None = Header(default=None, alias="X-SM2-Webhook-Secret"),
+    db: Session = Depends(get_db),
+) -> OcrWebhookIngestRead:
+    _validate_inbound_webhook_secret(x_sm2_webhook_secret)
+
+    envelope, raw_payload = _extract_inbound_webhook_parts(body)
+    normalized_analysis = extract_normalized_inbound_analysis(raw_payload)
+    payload_shape = _payload_shape(raw_payload)
+    image_url = _inbound_webhook_image_url(envelope, raw_payload)
+    metadata = _inbound_webhook_metadata(envelope)
+    source = (normalize_optional_text(envelope.get("source")) or "make-webhook")[:32]
+    created_by = (normalize_optional_text(envelope.get("created_by")) or "make-webhook")[:255]
+    submission_ref = (normalize_optional_text(envelope.get("submission_ref")) or f"MAKE-OCR-{uuid4().hex[:12]}")[:120]
+    correlation_id = (normalize_optional_text(envelope.get("correlation_id")) or str(uuid4()))[:36]
+    raw_text = (
+        normalize_optional_text(envelope.get("raw_text"))
+        or (normalize_optional_text(raw_payload) if isinstance(raw_payload, str) else None)
+        or (
+            normalize_optional_text(normalized_analysis.get("raw_text"))
+            if normalized_analysis is not None
+            else None
+        )
+    )
+    template_type = (
+        normalize_optional_text(envelope.get("template_type"))
+        or (
+            normalize_optional_text(normalized_analysis.get("document_type"))
+            if normalized_analysis is not None
+            else None
+        )
+        or _template_hint_from_payload(raw_payload)
+    )
+    review_status = (
+        normalize_optional_text(normalized_analysis.get("recommended_review_status"))
+        if normalized_analysis is not None
+        else None
+    ) or "PENDING"
+    parser_version = (
+        normalize_optional_text(normalized_analysis.get("parser_version"))
+        if normalized_analysis is not None
+        else None
+    )
+    confidence = (
+        normalized_analysis.get("confidence")
+        if normalized_analysis is not None and isinstance(normalized_analysis.get("confidence"), (int, float))
+        else None
+    )
+
+    payload_snapshot = {
+        "submission_ref": submission_ref,
+        "correlation_id": correlation_id,
+        "source": source,
+        "template_type": template_type,
+        "payload_shape": payload_shape,
+        "image_url": image_url,
+        "raw_text": raw_text,
+        "metadata": metadata,
+        "ocr_payload": raw_payload,
+        "normalized_analysis": normalized_analysis,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        submission_input_id = _insert_submission_input(
+            db,
+            id_seance=None,
+            submission_type="detail",
+            source=source,
+            raw_text=raw_text,
+            raw_payload=payload_snapshot,
+            confidence=confidence,
+            created_by=created_by,
+            validation_status="PENDING",
+            validation_message=(
+                "Normalized OCR payload staged for review."
+                if normalized_analysis is not None
+                else "Raw OCR payload stored without a recognized template mapping."
+            ),
+        )
+        if image_url:
+            _insert_media_file(
+                db,
+                submission_id=submission_input_id,
+                submission_ref=submission_ref,
+                image_url=image_url,
+                uploaded_by=created_by,
+            )
+
+        ocr_id = None
+        if normalized_analysis is not None:
+            ocr_id = _insert_ocr_result(
+                db,
+                submission_input_id=submission_input_id,
+                raw_ocr_text=raw_text,
+                cleaned_ocr_text=raw_text,
+                extracted_json=normalized_analysis,
+                ocr_confidence=confidence,
+                parser_version=parser_version,
+                review_status=review_status,
+            )
+
+        _write_audit_log(
+            db,
+            action="submission.stage.ocr_webhook",
+            status="SUCCESS",
+            message=f"Stored inbound OCR webhook payload {submission_ref}",
+            payload={
+                "submission_ref": submission_ref,
+                "correlation_id": correlation_id,
+                "submission_input_id": submission_input_id,
+                "ocr_id": ocr_id,
+                "source": source,
+                "template_type": template_type,
+                "payload_shape": payload_shape,
+                "normalized": normalized_analysis is not None,
+            },
+            user=created_by,
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Inbound OCR webhook storage failed: submission_ref=%s source=%s", submission_ref, source)
+        raise _submission_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "OCR_WEBHOOK_STORE_FAILED",
+            "Inbound OCR webhook payload could not be stored.",
+            detail={"error": str(exc)},
+        )
+
+    return OcrWebhookIngestRead(
+        status="success",
+        message=(
+            "OCR payload stored and normalized for review."
+            if normalized_analysis is not None
+            else "OCR payload stored as raw JSON. No template mapping was recognized yet."
+        ),
+        submission_input_id=submission_input_id,
+        ocr_id=ocr_id,
+        submission_ref=submission_ref,
+        correlation_id=correlation_id,
+        source=source,
+        payload_shape=payload_shape,
+        template_type=template_type,
+        normalized=normalized_analysis is not None,
+        review_status=review_status,
+    )
 
 
 @router.post("/ocr-preview", response_model=OcrPreviewRead)

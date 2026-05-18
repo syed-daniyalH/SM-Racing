@@ -46,6 +46,24 @@ SHOCK_SETUP_CORNER_SUFFIX = {
     "LR": "lr",
     "RR": "rr",
 }
+CORNER_KEY_ALIASES = {
+    "LF": ("LF", "lf", "front_left", "frontLeft", "fl", "FL", "left_front", "leftFront"),
+    "RF": ("RF", "rf", "front_right", "frontRight", "fr", "FR", "right_front", "rightFront"),
+    "LR": ("LR", "lr", "rear_left", "rearLeft", "rl", "RL", "left_rear", "leftRear"),
+    "RR": ("RR", "rr", "rear_right", "rearRight", "right_rear", "rightRear"),
+}
+
+
+def _first_present(value: Any, *keys: str) -> Any:
+    mapping = _dict_or_empty(value)
+    for key in keys:
+        if key in mapping:
+            return mapping.get(key)
+    return None
+
+
+def _corner_value(values: Any, corner: str) -> Any:
+    return _first_present(values, *CORNER_KEY_ALIASES.get(corner, (corner,)))
 
 
 def _extension_for_mime_type(mime_type: Any) -> str:
@@ -66,6 +84,83 @@ def _is_make_setup_payload(payload: Any) -> bool:
 
     schema_version = _normalize_text(payload.get("schema_version"))
     return bool(schema_version and schema_version.startswith("smr_ocr_setup_v"))
+
+
+def _is_compact_shock_setup_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    document_type = _normalize_text(payload.get("type") or payload.get("document_type"))
+    if document_type not in {"shock_setup_sheet", "shock_setup"}:
+        return False
+
+    return any(
+        isinstance(payload.get(corner), dict) or isinstance(payload.get(corner.lower()), dict)
+        for corner in MAKE_SETUP_CORNERS
+    )
+
+
+def _is_flexible_setup_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    if _is_make_setup_payload(payload) or _is_compact_shock_setup_payload(payload):
+        return False
+
+    setup_payload = _dict_or_empty(payload.get("setup"))
+    candidate = (
+        setup_payload
+        if any(
+            key in setup_payload
+            for key in (
+                "camber",
+                "toe",
+                "tire_pressure",
+                "weight",
+                "corner_weight",
+                "height",
+                "ride_height",
+                "wing",
+                "aero",
+                "springs",
+                "bump_stops",
+                "wheel_base",
+                "roll_bar",
+                "fuel_liters",
+                "fuel",
+            )
+        )
+        else payload
+    )
+
+    structural_keys = (
+        "camber",
+        "toe",
+        "tire_pressure",
+        "weight",
+        "corner_weight",
+        "height",
+        "ride_height",
+        "after_session_set_down",
+        "post_session",
+        "wing",
+        "aero",
+        "springs",
+        "bump_stops",
+        "wheel_base",
+        "roll_bar",
+        "fuel_liters",
+        "fuel",
+    )
+    structural_matches = sum(1 for key in structural_keys if key in candidate)
+    type_hint_present = any(key in payload for key in ("sheet_type", "document_type", "type"))
+    session_matches = sum(1 for key in ("date", "time", "driver", "track", "team_name", "series", "car_number") if key in payload)
+
+    return (
+        structural_matches >= 2 and (type_hint_present or session_matches >= 2)
+    ) or (
+        type_hint_present and session_matches >= 2
+    )
 
 
 def _has_meaningful_value(value: Any) -> bool:
@@ -93,6 +188,22 @@ def _append_unique(values: list[str], value: Any) -> None:
         values.append(normalized)
 
 
+def _collect_notes(value: Any) -> list[str]:
+    notes: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            _append_unique(notes, item)
+        return notes
+
+    normalized = _normalize_text(value)
+    if not normalized:
+        return notes
+
+    for line in normalized.splitlines():
+        _append_unique(notes, line)
+    return notes
+
+
 def _join_non_empty(values: list[Any], separator: str = " / ") -> str | None:
     normalized_values = [_normalize_text(value) for value in values]
     if not any(normalized_values):
@@ -112,18 +223,16 @@ def _format_directional_value(value: Any) -> str | None:
 
 
 def _format_corner_values(values: Any) -> str | None:
-    mapping = _dict_or_empty(values)
-    return _join_non_empty([mapping.get(corner) for corner in MAKE_SETUP_CORNERS])
+    return _join_non_empty([_corner_value(values, corner) for corner in MAKE_SETUP_CORNERS])
 
 
 def _format_post_session_toe(values: Any) -> str | None:
-    mapping = _dict_or_empty(values)
     return _join_non_empty(
         [
-            _format_directional_value(mapping.get("front_left")),
-            _format_directional_value(mapping.get("front_right")),
-            _format_directional_value(mapping.get("rear_left")),
-            _format_directional_value(mapping.get("rear_right")),
+            _format_directional_value(_corner_value(values, "LF")),
+            _format_directional_value(_corner_value(values, "RF")),
+            _format_directional_value(_corner_value(values, "LR")),
+            _format_directional_value(_corner_value(values, "RR")),
         ]
     )
 
@@ -134,8 +243,11 @@ def _format_post_session_shocks(values: Any) -> str | None:
     rear = _dict_or_empty(mapping.get("rear"))
     segments: list[str] = []
 
-    front_value = _join_non_empty([front.get("bump"), front.get("rebound")])
-    rear_value = _join_non_empty([rear.get("bump"), rear.get("rebound")])
+    front_value = _join_non_empty([front.get("bump"), front.get("rebound")]) or _normalize_text(mapping.get("front"))
+    rear_value = _join_non_empty([rear.get("bump"), rear.get("rebound")]) or _normalize_text(mapping.get("rear"))
+    if not front_value and not rear_value:
+        front_value = _join_non_empty([_corner_value(mapping, "LF"), _corner_value(mapping, "RF")])
+        rear_value = _join_non_empty([_corner_value(mapping, "LR"), _corner_value(mapping, "RR")])
     if front_value:
         segments.append(f"front {front_value}")
     if rear_value:
@@ -227,6 +339,372 @@ def _build_session_text(session: dict[str, Any]) -> str | None:
     session_bits = [date_value, time_value, car_number, series, team]
     normalized = [value for value in session_bits if value]
     return " | ".join(normalized) if normalized else None
+
+
+def _adapt_compact_shock_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_evidence = {
+        "visible_text": [],
+        "detected_grids": [],
+        "detected_labels": [],
+        "unmapped_values": [],
+        "quality_flags": [],
+        "template_labels": [],
+    }
+    warnings: list[str] = []
+    notes: list[str] = []
+    shock_setup: dict[str, dict[str, str | None]] = {}
+
+    for warning in payload.get("warnings") if isinstance(payload.get("warnings"), list) else []:
+        _append_unique(warnings, warning)
+        _append_unique(raw_evidence["quality_flags"], warning)
+
+    raw_notes = payload.get("notes")
+    if isinstance(raw_notes, list):
+        for note in raw_notes:
+            _append_unique(notes, note)
+    else:
+        _append_unique(notes, raw_notes)
+
+    for corner in MAKE_SETUP_CORNERS:
+        raw_corner = _dict_or_empty(payload.get(corner) or payload.get(corner.lower()))
+        normalized_corner = {
+            "position": corner,
+            "hsr": _normalize_text(raw_corner.get("HSR") or raw_corner.get("hsr")),
+            "lsr": _normalize_text(raw_corner.get("LSR") or raw_corner.get("lsr")),
+            "hsb": _normalize_text(
+                raw_corner.get("HBS")
+                or raw_corner.get("HSB")
+                or raw_corner.get("hbs")
+                or raw_corner.get("hsb")
+            ),
+            "lsb": _normalize_text(raw_corner.get("LSB") or raw_corner.get("lsb")),
+            "total_setup": _normalize_text(
+                raw_corner.get("SETUP")
+                or raw_corner.get("setup_total")
+                or raw_corner.get("setup")
+                or raw_corner.get("total_setup")
+            ),
+        }
+        shock_setup[SHOCK_SETUP_CORNER_SUFFIX[corner]] = normalized_corner
+
+        corner_summary = _join_non_empty(
+            [
+                normalized_corner["hsr"],
+                normalized_corner["lsr"],
+                normalized_corner["hsb"],
+                normalized_corner["lsb"],
+                normalized_corner["total_setup"],
+            ]
+        )
+        if corner_summary:
+            _append_unique(raw_evidence["visible_text"], f"{corner} {corner_summary}")
+
+    document_type = _normalize_text(payload.get("type") or payload.get("document_type")) or "shock_setup_sheet"
+    confidence = payload.get("confidence") if isinstance(payload.get("confidence"), (int, float)) else 0.9
+    extracted_text = _normalize_text(payload.get("extracted_text")) or _join_non_empty(
+        raw_evidence["visible_text"],
+        separator="\n",
+    )
+
+    adapted = {
+        "status": _normalize_text(payload.get("status")) or "review_required",
+        "document_type": "shock_setup_sheet" if document_type == "shock_setup" else document_type,
+        "template_name": _normalize_text(payload.get("template_name")) or "shock_setup",
+        "confidence": confidence,
+        "has_values": _has_meaningful_value(shock_setup),
+        "summary": _normalize_text(payload.get("summary")) or "Shock setup values detected from Make.com payload.",
+        "extracted_text": extracted_text,
+        "metadata": {
+            "driver_text": _normalize_text(payload.get("driver")) or _normalize_text(payload.get("driver_text")),
+            "track_text": _normalize_text(payload.get("track")) or _normalize_text(payload.get("track_text")),
+            "session_text": _normalize_text(payload.get("session")) or _normalize_text(payload.get("session_text")),
+        },
+        "raw_evidence": raw_evidence,
+        "field_evidence": [],
+        "setup": {
+            "alignment": {},
+            "pressures": {},
+            "suspension": {},
+            "sheet_fields": {},
+            "post_session": {},
+            "shock_setup": shock_setup,
+            "notes": notes,
+        },
+        "warnings": warnings,
+        "recommended_review_status": _normalize_text(payload.get("recommended_review_status")) or "PENDING",
+        "parser_version": _normalize_text(payload.get("schema_version")),
+        "model": _normalize_text(payload.get("model")) or "make.com",
+        "fallback_model_used": bool(payload.get("fallback_model_used")),
+    }
+
+    return adapted
+
+
+def _adapt_flexible_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    setup_payload = _dict_or_empty(payload.get("setup"))
+    core_setup = (
+        setup_payload
+        if any(
+            key in setup_payload
+            for key in (
+                "camber",
+                "toe",
+                "tire_pressure",
+                "weight",
+                "corner_weight",
+                "height",
+                "ride_height",
+                "wing",
+                "aero",
+                "springs",
+                "bump_stops",
+                "wheel_base",
+                "roll_bar",
+                "fuel_liters",
+                "fuel",
+            )
+        )
+        else payload
+    )
+    post_session = _dict_or_empty(
+        _first_present(
+            payload,
+            "after_session_set_down",
+            "post_session",
+            "after_session",
+        )
+        or _first_present(
+            core_setup,
+            "after_session_set_down",
+            "post_session",
+            "after_session",
+        )
+    )
+
+    session = {
+        "team": _normalize_text(_first_present(payload, "team_name", "team")),
+        "series": _normalize_text(_first_present(payload, "series")),
+        "car_number": _normalize_text(_first_present(payload, "car_number", "carNo", "car_no")),
+        "date_raw": _normalize_text(_first_present(payload, "date", "date_raw")),
+        "time_raw": _normalize_text(_first_present(payload, "time", "time_raw")),
+        "driver": _normalize_text(_first_present(payload, "driver", "driver_name")),
+        "track": _normalize_text(_first_present(payload, "track")),
+    }
+
+    raw_evidence = {
+        "visible_text": [],
+        "detected_grids": [],
+        "detected_labels": [],
+        "unmapped_values": [],
+        "quality_flags": [],
+        "template_labels": [],
+    }
+    warnings: list[str] = []
+    notes = _collect_notes(_first_present(payload, "notes", "notes_block", "note"))
+
+    original_type = _normalize_text(_first_present(payload, "sheet_type", "document_type", "type"))
+    template_name = original_type or "race_setup_packet"
+    session_text = _build_session_text(session)
+
+    if original_type:
+        _append_unique(raw_evidence["template_labels"], original_type)
+    for visible_line in (session.get("driver"), session.get("track"), session_text):
+        _append_unique(raw_evidence["visible_text"], visible_line)
+    for note in notes:
+        _append_unique(raw_evidence["visible_text"], note)
+
+    camber_map = _dict_or_empty(_first_present(core_setup, "camber"))
+    toe_map = _dict_or_empty(_first_present(core_setup, "toe"))
+    tire_pressure = _dict_or_empty(_first_present(core_setup, "tire_pressure", "pressures"))
+    ride_height_map = _dict_or_empty(_first_present(core_setup, "height", "ride_height"))
+    corner_weight_map = _dict_or_empty(_first_present(core_setup, "weight", "corner_weight"))
+    roll_bar_map = _dict_or_empty(_first_present(core_setup, "roll_bar"))
+    anti_roll_bar_map = _dict_or_empty(_first_present(core_setup, "anti_roll_bar", "arb"))
+    wheel_base_map = _dict_or_empty(_first_present(core_setup, "wheel_base", "wheelbase"))
+    wing_map = _dict_or_empty(_first_present(core_setup, "wing", "aero"))
+    springs_map = _dict_or_empty(_first_present(core_setup, "springs"))
+    bump_stops_map = _dict_or_empty(_first_present(core_setup, "bump_stops"))
+    bump_stop_height_map = _dict_or_empty(_first_present(core_setup, "bump_stop_height"))
+    static_ride_height_map = _dict_or_empty(_first_present(core_setup, "static_ride_height"))
+    top_level_shocks = _dict_or_empty(_first_present(core_setup, "shocks"))
+
+    alignment: dict[str, Any] = {}
+    for corner, suffix in ALIGNMENT_CORNER_SUFFIX.items():
+        alignment[f"camber_{suffix}"] = _normalize_text(_corner_value(camber_map, corner))
+        alignment[f"rh_{suffix}"] = _normalize_text(_corner_value(ride_height_map, corner))
+
+    alignment["toe_fl"] = _format_directional_value(_corner_value(toe_map, "LF"))
+    alignment["toe_fr"] = _format_directional_value(_corner_value(toe_map, "RF"))
+    alignment["toe_rl"] = _format_directional_value(_corner_value(toe_map, "LR"))
+    alignment["toe_rr"] = _format_directional_value(_corner_value(toe_map, "RR"))
+
+    pressures = {
+        "cold_fl": _normalize_text(_corner_value(tire_pressure, "LF")),
+        "cold_fr": _normalize_text(_corner_value(tire_pressure, "RF")),
+        "cold_rl": _normalize_text(_corner_value(tire_pressure, "LR")),
+        "cold_rr": _normalize_text(_corner_value(tire_pressure, "RR")),
+    }
+
+    if _normalize_text(_first_present(core_setup, "percentage_box_weight_lbs")) and not _normalize_text(
+        _first_present(core_setup, "total_weight_lbs", "scale_weight_lbs")
+    ):
+        _append_unique(
+            warnings,
+            "Percentage box weight preserved only in raw payload to avoid mislabeling scale weight",
+        )
+
+    sheet_fields = {
+        "fuel_liters": _normalize_text(_first_present(core_setup, "fuel_liters", "fuel")),
+        "driver_weight_lbs": _normalize_text(_first_present(core_setup, "driver_weight_lbs", "driver_weight")),
+        "scale_weight_lbs": _normalize_text(_first_present(core_setup, "total_weight_lbs", "scale_weight_lbs")),
+        "cross_weight_percent": _normalize_text(_first_present(core_setup, "cross_weight_percent", "percentage")),
+        "springs_front": _normalize_text(_first_present(springs_map, "front")),
+        "springs_rear": _normalize_text(_first_present(springs_map, "rear")),
+        "roll_bar_text": _join_non_empty(
+            [
+                _first_present(roll_bar_map, "front"),
+                _first_present(roll_bar_map, "rear"),
+            ]
+        ),
+        "arb_front_text": _join_non_empty(
+            [
+                _first_present(anti_roll_bar_map, "front"),
+                _first_present(anti_roll_bar_map, "LF", "lf", "front_left"),
+                _first_present(anti_roll_bar_map, "RF", "rf", "front_right"),
+            ],
+            separator=" / ",
+        ),
+        "arb_rear_text": _join_non_empty(
+            [
+                _first_present(anti_roll_bar_map, "rear"),
+                _first_present(anti_roll_bar_map, "LR", "lr", "rear_left"),
+                _first_present(anti_roll_bar_map, "RR", "rr", "rear_right"),
+            ],
+            separator=" / ",
+        ),
+        "wheelbase_left_mm": _normalize_text(_first_present(wheel_base_map, "left")),
+        "wheelbase_right_mm": _normalize_text(_first_present(wheel_base_map, "right")),
+        "wing_rake_deg": _normalize_text(_first_present(wing_map, "rake_deg", "rake_degrees")),
+        "wing_angle_deg": _normalize_text(_first_present(wing_map, "wing_deg", "wing_degrees", "angle_deg")),
+        "wing_gurney_mm": _normalize_text(_first_present(wing_map, "gurney_mm")),
+        "wicker_text": _normalize_text(_first_present(wing_map, "wicker_mm", "wicker")),
+        "bump_stops_front": _normalize_text(_first_present(bump_stops_map, "front")),
+        "bump_stops_rear": _normalize_text(_first_present(bump_stops_map, "rear")),
+        "spacer_text": _normalize_text(_first_present(core_setup, "spacer_mm", "spacer")),
+        "bump_text": _normalize_text(_first_present(core_setup, "bump"))
+        or _normalize_text(_first_present(_first_present(core_setup, "main_bump_rebound"), "bump")),
+        "rebound_text": _normalize_text(_first_present(core_setup, "rebound"))
+        or _normalize_text(_first_present(_first_present(core_setup, "main_bump_rebound"), "rebound")),
+        "corner_weight_text": _format_corner_values(corner_weight_map),
+        "static_ride_height_text": _join_non_empty(
+            [
+                _first_present(static_ride_height_map, "left"),
+                _first_present(static_ride_height_map, "right"),
+            ]
+        ),
+        "bump_stop_height_text": _join_non_empty(
+            [
+                _first_present(bump_stop_height_map, "left"),
+                _first_present(bump_stop_height_map, "right"),
+            ]
+        ),
+        "fuel_pumped_out_liters": _normalize_text(
+            _first_present(payload, "fuel_pumped_out_liters")
+            if _first_present(payload, "fuel_pumped_out_liters") is not None
+            else _first_present(post_session, "fuel_pumped_out_liters")
+        ),
+        "notes_block": _join_non_empty(notes, separator="\n"),
+    }
+
+    post_session_map = {
+        "camber_text": _format_corner_values(_first_present(post_session, "camber")),
+        "toe_text": _format_post_session_toe(_first_present(post_session, "toe")),
+        "weight_text": _format_corner_values(_first_present(post_session, "weight", "corner_weight")),
+        "height_text": _format_corner_values(_first_present(post_session, "height", "ride_height")),
+        "shocks_text": _format_post_session_shocks(_first_present(post_session, "shocks")),
+    }
+
+    suspension: dict[str, Any] = {}
+    shock_setup: dict[str, dict[str, str | None]] = {}
+    for corner, alignment_suffix in ALIGNMENT_CORNER_SUFFIX.items():
+        shock_map = _dict_or_empty(_corner_value(top_level_shocks, corner))
+        shock_setup_suffix = SHOCK_SETUP_CORNER_SUFFIX[corner]
+        suspension[f"bump_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "compression", "bump"))
+        suspension[f"rebound_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "rebound"))
+        suspension[f"hsr_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "HSR", "hsr"))
+        suspension[f"lsr_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "LSR", "lsr"))
+        suspension[f"hsb_{alignment_suffix}"] = _normalize_text(
+            _first_present(shock_map, "HBS", "HSB", "hbs", "hsb")
+        )
+        suspension[f"lsb_{alignment_suffix}"] = _normalize_text(_first_present(shock_map, "LSB", "lsb"))
+        shock_setup[shock_setup_suffix] = {
+            "position": corner,
+            "hsr": _normalize_text(_first_present(shock_map, "HSR", "hsr")),
+            "lsr": _normalize_text(_first_present(shock_map, "LSR", "lsr")),
+            "hsb": _normalize_text(_first_present(shock_map, "HBS", "HSB", "hbs", "hsb")),
+            "lsb": _normalize_text(_first_present(shock_map, "LSB", "lsb")),
+            "total_setup": _normalize_text(
+                _first_present(shock_map, "SETUP", "setup_total", "setup", "total_setup")
+            ),
+        }
+
+    inferred_document_type = "printed_form_with_values"
+    has_primary_setup_values = _has_meaningful_value(
+        {
+            "camber": camber_map,
+            "toe": toe_map,
+            "tire_pressure": tire_pressure,
+            "ride_height": ride_height_map,
+            "corner_weight": corner_weight_map,
+            "sheet_fields": sheet_fields,
+        }
+    )
+    has_shock_values = _has_meaningful_value(top_level_shocks)
+    has_post_session_values = _has_meaningful_value(post_session)
+
+    if original_type in {"shock_setup_sheet", "shock_setup"} and has_shock_values and not has_primary_setup_values:
+        inferred_document_type = "shock_setup_sheet"
+    elif not has_primary_setup_values and not has_shock_values and notes:
+        inferred_document_type = "mixed_session_notes"
+    elif not has_primary_setup_values and not has_shock_values and not notes and not has_post_session_values:
+        inferred_document_type = "blank_setup_sheet"
+
+    for warning in warnings:
+        _append_unique(raw_evidence["quality_flags"], warning)
+
+    adapted = {
+        "status": _normalize_text(payload.get("status")) or "review_required",
+        "document_type": inferred_document_type,
+        "template_name": template_name,
+        "confidence": payload.get("confidence") if isinstance(payload.get("confidence"), (int, float)) else 0.9,
+        "has_values": has_primary_setup_values or has_shock_values or has_post_session_values,
+        "summary": _normalize_text(payload.get("summary")) or "Flexible OCR setup payload adapted for review.",
+        "extracted_text": _join_non_empty(notes, separator="\n") or session_text,
+        "metadata": {
+            "driver_text": _normalize_text(session.get("driver")),
+            "track_text": _normalize_text(session.get("track")),
+            "session_text": session_text,
+            "session_notes": _join_non_empty(notes, separator="\n") or "",
+        },
+        "raw_evidence": raw_evidence,
+        "field_evidence": [],
+        "setup": {
+            "alignment": alignment,
+            "pressures": pressures,
+            "suspension": suspension,
+            "sheet_fields": sheet_fields,
+            "post_session": post_session_map,
+            "shock_setup": shock_setup,
+            "notes": notes,
+        },
+        "warnings": warnings,
+        "recommended_review_status": _normalize_text(payload.get("recommended_review_status")) or "PENDING",
+        "parser_version": _normalize_text(payload.get("schema_version")) or "smr_flexible_ocr_v1",
+        "model": _normalize_text(payload.get("model")) or "make.com",
+        "fallback_model_used": bool(payload.get("fallback_model_used")),
+    }
+
+    return adapted
 
 
 def _adapt_make_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -434,6 +912,31 @@ def _adapt_make_setup_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return adapted
 
 
+def extract_normalized_inbound_analysis(payload: Any) -> dict[str, Any] | None:
+    analysis = _extract_analysis_candidate(payload)
+    if analysis is None:
+        return None
+
+    if _is_make_setup_payload(analysis):
+        analysis = _adapt_make_setup_payload(analysis)
+    elif _is_compact_shock_setup_payload(analysis):
+        analysis = _adapt_compact_shock_setup_payload(analysis)
+    elif _is_flexible_setup_payload(analysis):
+        analysis = _adapt_flexible_setup_payload(analysis)
+
+    normalized = normalize_image_analysis_result(analysis)
+    if normalized is None:
+        return None
+
+    if not _normalize_text(normalized.get("model")):
+        normalized["model"] = _normalize_text(_dict_or_empty(analysis).get("model")) or "make.com"
+
+    if "fallback_model_used" not in normalized:
+        normalized["fallback_model_used"] = False
+
+    return normalized
+
+
 def _build_make_ocr_payload(
     *,
     submission: Submission,
@@ -629,10 +1132,23 @@ def _build_make_ocr_request(
 
 
 def _extract_analysis_candidate(payload: Any) -> dict[str, Any] | None:
+    if isinstance(payload, list):
+        for item in payload:
+            nested = _extract_analysis_candidate(item)
+            if nested is not None:
+                return nested
+        return None
+
     if not isinstance(payload, dict):
         return None
 
     if _is_make_setup_payload(payload):
+        return payload
+
+    if _is_compact_shock_setup_payload(payload):
+        return payload
+
+    if _is_flexible_setup_payload(payload):
         return payload
 
     if any(
@@ -806,8 +1322,8 @@ def _analyze_submission_image_via_make(
             )
         )
 
-    analysis = _extract_analysis_candidate(parsed_response)
-    if analysis is None:
+    normalized = extract_normalized_inbound_analysis(parsed_response)
+    if normalized is None:
         logger.warning("Make OCR webhook returned no analysis payload: message=%s", _extract_error_message(parsed_response))
         return normalize_image_analysis_result(
             image_analysis_service._build_extraction_failed_analysis(
@@ -816,30 +1332,6 @@ def _analyze_submission_image_via_make(
                 model="make.com",
             )
         )
-
-    if _is_make_setup_payload(analysis):
-        analysis = _adapt_make_setup_payload(analysis)
-
-    normalized = normalize_image_analysis_result(analysis)
-    if normalized is None:
-        logger.warning("Make OCR webhook returned malformed analysis payload")
-        return normalize_image_analysis_result(
-            image_analysis_service._build_extraction_failed_analysis(
-                message="OCR service failed. Please retry or enter manually.",
-                preprocessing_info=preprocessing_info,
-                model="make.com",
-            )
-        )
-
-    if not _normalize_text(normalized.get("model")):
-        normalized["model"] = (
-            _normalize_text(analysis.get("model"))
-            or _normalize_text(parsed_response.get("model"))
-            or "make.com"
-        )
-
-    if "fallback_model_used" not in normalized:
-        normalized["fallback_model_used"] = False
 
     logger.info(
         "Make OCR normalized: status=%s doc_type=%s confidence=%s",

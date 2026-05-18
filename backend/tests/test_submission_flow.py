@@ -1110,6 +1110,42 @@ def test_extract_analysis_candidate_accepts_wrapped_make_setup_schema():
     assert candidate["schema_version"] == "smr_ocr_setup_v1.2"
 
 
+def test_extract_analysis_candidate_accepts_flat_flexible_setup_list_payload():
+    candidate = ocr_service._extract_analysis_candidate(
+        [
+            {
+                "sheet_type": "alignment_sheet",
+                "date": "04/18/26",
+                "time": "10:15 AM",
+                "driver": "Alex G",
+                "track": "Sebring",
+                "camber": {
+                    "front_left": 3.8,
+                    "front_right": 4.0,
+                    "rear_left": 3.3,
+                    "rear_right": 3.7,
+                },
+                "toe": {
+                    "front_left": "0.10 out",
+                    "front_right": "0.12 out",
+                    "rear_left": "0.05 in",
+                    "rear_right": "0.06 in",
+                },
+                "fuel_liters": 42,
+                "weight": {
+                    "front_left": 531,
+                    "front_right": 536,
+                    "rear_left": 848,
+                    "rear_right": 853,
+                },
+            }
+        ]
+    )
+
+    assert candidate is not None
+    assert candidate["sheet_type"] == "alignment_sheet"
+
+
 def test_adapt_make_setup_payload_maps_make_schema_into_review_draft():
     adapted = ocr_service._adapt_make_setup_payload(
         {
@@ -1214,6 +1250,367 @@ def test_adapt_make_setup_payload_maps_make_schema_into_review_draft():
     assert "Reference setup preserved in notes for manual review" in normalized["warnings"]
     assert "Baseline shocks preserved in notes for manual review" in normalized["warnings"]
     assert any(note.startswith("Baseline shocks package: Road Course A") for note in normalized["setup"]["notes"])
+
+
+def test_adapt_flexible_setup_payload_maps_flat_schema_into_review_draft():
+    adapted = ocr_service._adapt_flexible_setup_payload(
+        {
+            "sheet_type": "alignment_sheet",
+            "team_name": "Farnbacher-Loles Racing",
+            "series": "Grand-Am Rolex Series",
+            "car_number": "86",
+            "date": "04/18/26",
+            "time": "10:15 AM",
+            "driver": "Alex G",
+            "track": "Sebring",
+            "camber": {
+                "front_left": 3.8,
+                "front_right": 4.0,
+                "rear_left": 3.3,
+                "rear_right": 3.7,
+            },
+            "toe": {
+                "front_left": "0.10 out",
+                "front_right": "0.12 out",
+                "rear_left": "0.05 in",
+                "rear_right": "0.06 in",
+            },
+            "roll_bar": {"front": 3, "rear": 2},
+            "spacer_mm": 8,
+            "bump": 6,
+            "rebound": 9,
+            "fuel_liters": 42,
+            "driver_weight_lbs": 178,
+            "tire_pressure": {
+                "front_left": 22.8,
+                "front_right": 23.1,
+                "rear_left": 21.9,
+                "rear_right": 22.2,
+            },
+            "height": {
+                "front_left": 80,
+                "front_right": 81.1,
+                "rear_left": 121,
+                "rear_right": 120.8,
+            },
+            "weight": {
+                "front_left": 531,
+                "front_right": 536,
+                "rear_left": 848,
+                "rear_right": 853,
+            },
+            "percentage": 50.2,
+            "percentage_box_weight_lbs": 1278,
+            "wing": {"rake_degrees": 2.5, "wing_degrees": 7, "gurney_mm": 12},
+            "springs": {"front": 900, "rear": 1050},
+            "bump_stops": {"front": 6, "rear": 8},
+            "wheel_base": {"left": 109.8, "right": 109.9},
+            "notes": [
+                "1. Good overall balance, slight push on entry.",
+                "2. Entry stability improved with more front bar.",
+            ],
+            "after_session_set_down": {
+                "camber": {
+                    "front_left": 3.6,
+                    "front_right": 3.8,
+                    "rear_left": 3.1,
+                    "rear_right": 3.5,
+                },
+                "toe": {
+                    "front_left": "0.08 out",
+                    "front_right": "0.10 out",
+                    "rear_left": "0.04 in",
+                    "rear_right": "0.05 in",
+                },
+                "weight": {
+                    "front_left": 528,
+                    "front_right": 533,
+                    "rear_left": 842,
+                    "rear_right": 846,
+                },
+                "height": {
+                    "front_left": 80.2,
+                    "front_right": 81.3,
+                    "rear_left": 121.1,
+                    "rear_right": 120.9,
+                },
+                "shocks": {
+                    "front_left": 6,
+                    "front_right": 9,
+                    "rear_left": 6,
+                    "rear_right": 9,
+                },
+            },
+            "fuel_pumped_out_liters": None,
+        }
+    )
+    normalized = image_analysis_service.normalize_image_analysis_result(adapted)
+
+    assert normalized["document_type"] == "printed_form_with_values"
+    assert normalized["template_name"] == "alignment_sheet"
+    assert normalized["status"] == "review_required"
+    assert normalized["parser_version"] == "smr_flexible_ocr_v1"
+    assert normalized["setup"]["alignment"]["camber_fl"] == "3.8"
+    assert normalized["setup"]["alignment"]["toe_fr"] == "0.12 out"
+    assert normalized["setup"]["pressures"]["cold_rr"] == "22.2"
+    assert normalized["setup"]["sheet_fields"]["fuel_liters"] == "42"
+    assert normalized["setup"]["sheet_fields"]["scale_weight_lbs"] == ""
+    assert normalized["setup"]["sheet_fields"]["cross_weight_percent"] == "50.2"
+    assert normalized["setup"]["sheet_fields"]["corner_weight_text"] == "531 / 536 / 848 / 853"
+    assert normalized["setup"]["post_session"]["toe_text"] == "0.08 out / 0.10 out / 0.04 in / 0.05 in"
+    assert normalized["setup"]["post_session"]["shocks_text"] == "front 6 / 9 | rear 6 / 9"
+    assert (
+        "Percentage box weight preserved only in raw payload to avoid mislabeling scale weight"
+        in normalized["warnings"]
+    )
+
+
+def test_adapt_flexible_setup_payload_leaves_missing_short_template_fields_blank():
+    adapted = ocr_service._adapt_flexible_setup_payload(
+        {
+            "sheet_type": "alignment_sheet",
+            "driver": "Alex G",
+            "track": "Sebring",
+            "setup": {
+                "fuel": 40,
+                "camber": {
+                    "front_left": 3.1,
+                    "front_right": 3.2,
+                },
+                "toe": {
+                    "front_left": "0.10 out",
+                },
+            },
+        }
+    )
+    normalized = image_analysis_service.normalize_image_analysis_result(adapted)
+
+    assert normalized["setup"]["alignment"]["camber_fl"] == "3.1"
+    assert normalized["setup"]["alignment"]["camber_rr"] == ""
+    assert normalized["setup"]["alignment"]["toe_fl"] == "0.10 out"
+    assert normalized["setup"]["alignment"]["toe_rr"] == ""
+    assert normalized["setup"]["pressures"]["cold_fl"] == ""
+    assert normalized["setup"]["sheet_fields"]["fuel_liters"] == "40"
+    assert normalized["setup"]["sheet_fields"]["driver_weight_lbs"] == ""
+    assert normalized["setup"]["post_session"]["toe_text"] == ""
+
+
+def test_extract_analysis_candidate_accepts_compact_shock_setup_list_payload():
+    candidate = ocr_service._extract_analysis_candidate(
+        [
+            {
+                "type": "shock_setup_sheet",
+                "RR": {"HSR": 7, "LSR": 6, "HBS": 9, "LSB": 8, "SETUP": 30},
+                "LR": {"HSR": 7, "LSR": 5, "HBS": 8, "LSB": 8, "SETUP": 28},
+                "LF": {"HSR": 6, "LSR": 5, "HBS": 8, "LSB": 7, "SETUP": 26},
+                "RF": {"HSR": 6, "LSR": 6, "HBS": 9, "LSB": 7, "SETUP": 28},
+            }
+        ]
+    )
+
+    assert candidate is not None
+    adapted = ocr_service._adapt_compact_shock_setup_payload(candidate)
+    normalized = image_analysis_service.normalize_image_analysis_result(adapted)
+
+    assert normalized["document_type"] == "shock_setup_sheet"
+    assert normalized["template_name"] == "shock_setup"
+    assert normalized["status"] == "review_required"
+    assert normalized["setup"]["shock_setup"]["rr"]["position"] == "RR"
+    assert normalized["setup"]["shock_setup"]["rr"]["hsr"] == "7"
+    assert normalized["setup"]["shock_setup"]["rr"]["hsb"] == "9"
+    assert normalized["setup"]["shock_setup"]["lr"]["total_setup"] == "28"
+    assert normalized["setup"]["shock_setup"]["lf"]["total_setup"] == "26"
+    assert normalized["setup"]["shock_setup"]["rf"]["lsb"] == "7"
+
+
+def test_ingest_ocr_webhook_payload_accepts_direct_compact_shock_list(monkeypatch):
+    db = FakeSession()
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    result = submissions_endpoints.ingest_ocr_webhook_payload(
+        [
+            {
+                "type": "shock_setup_sheet",
+                "RR": {"HSR": 7, "LSR": 6, "HBS": 9, "LSB": 8, "SETUP": 30},
+                "LR": {"HSR": 7, "LSR": 5, "HBS": 8, "LSB": 8, "SETUP": 28},
+                "LF": {"HSR": 6, "LSR": 5, "HBS": 8, "LSB": 7, "SETUP": 26},
+                "RF": {"HSR": 6, "LSR": 6, "HBS": 9, "LSB": 7, "SETUP": 28},
+            }
+        ],
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    assert result.status == "success"
+    assert result.normalized is True
+    assert result.payload_shape == "list"
+    assert result.template_type == "shock_setup_sheet"
+    assert result.submission_input_id == 101
+    assert result.ocr_id == 303
+    assert db.commits == 1
+
+    insert_submission = next(
+        params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
+    )
+    snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert snapshot["payload_shape"] == "list"
+    assert snapshot["normalized_analysis"]["document_type"] == "shock_setup_sheet"
+    assert snapshot["ocr_payload"][0]["RR"]["HSR"] == 7
+
+
+def test_ingest_ocr_webhook_payload_accepts_flat_flexible_setup_list(monkeypatch):
+    db = FakeSession()
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    result = submissions_endpoints.ingest_ocr_webhook_payload(
+        [
+            {
+                "sheet_type": "alignment_sheet",
+                "date": "04/18/26",
+                "time": "10:15 AM",
+                "driver": "Alex G",
+                "track": "Sebring",
+                "camber": {
+                    "front_left": 3.8,
+                    "front_right": 4.0,
+                    "rear_left": 3.3,
+                    "rear_right": 3.7,
+                },
+                "toe": {
+                    "front_left": "0.10 out",
+                    "front_right": "0.12 out",
+                    "rear_left": "0.05 in",
+                    "rear_right": "0.06 in",
+                },
+                "fuel_liters": 42,
+                "weight": {
+                    "front_left": 531,
+                    "front_right": 536,
+                    "rear_left": 848,
+                    "rear_right": 853,
+                },
+            }
+        ],
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    assert result.status == "success"
+    assert result.normalized is True
+    assert result.payload_shape == "list"
+    assert result.template_type == "printed_form_with_values"
+    assert result.submission_input_id == 101
+    assert result.ocr_id == 303
+
+    insert_submission = next(
+        params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
+    )
+    snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert snapshot["normalized_analysis"]["template_name"] == "alignment_sheet"
+    assert snapshot["normalized_analysis"]["setup"]["alignment"]["camber_fl"] == "3.8"
+
+
+def test_ingest_ocr_webhook_payload_stores_wrapped_payload_metadata_and_image(monkeypatch):
+    db = FakeSession()
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    result = submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-WRAPPED-001",
+            "source": "make-http",
+            "template_type": "shock_setup_sheet",
+            "image_url": "data:image/png;base64,AAAA",
+            "metadata": {"event_id": "evt-1"},
+            "payload": [
+                {
+                    "type": "shock_setup_sheet",
+                    "RR": {"HSR": 7, "LSR": 6, "HBS": 9, "LSB": 8, "SETUP": 30},
+                }
+            ],
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    assert result.normalized is True
+    assert result.template_type == "shock_setup_sheet"
+
+    insert_submission = next(
+        params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
+    )
+    snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert snapshot["submission_ref"] == "MAKE-OCR-WRAPPED-001"
+    assert snapshot["metadata"]["event_id"] == "evt-1"
+    assert snapshot["image_url"] == "data:image/png;base64,AAAA"
+
+    insert_media = next(
+        params for sql, params in db.executed if "insert into sm2racing.media_files" in sql.lower()
+    )
+    assert insert_media["storage_url"] == "data:image/png;base64,AAAA"
+    assert insert_media["file_name"] == "MAKE-OCR-WRAPPED-001.img"
+
+
+def test_ingest_ocr_webhook_payload_stores_unknown_templates_as_raw_only(monkeypatch):
+    db = FakeSession()
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    result = submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "template_type": "custom_tire_sheet_v2",
+            "payload": {
+                "type": "custom_tire_sheet_v2",
+                "fields": {"lf_hot": 23.1, "rf_hot": 23.0},
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    assert result.status == "success"
+    assert result.normalized is False
+    assert result.ocr_id is None
+    assert result.template_type == "custom_tire_sheet_v2"
+
+    insert_submission = next(
+        params for sql, params in db.executed if "insert into sm2racing.submission_inputs" in sql.lower()
+    )
+    snapshot = json.loads(insert_submission["raw_payload_json"])
+    assert snapshot["template_type"] == "custom_tire_sheet_v2"
+    assert snapshot["normalized_analysis"] is None
+
+
+def test_ingest_ocr_webhook_payload_rejects_invalid_secret(monkeypatch):
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        submissions_endpoints.ingest_ocr_webhook_payload(
+            {"payload": {"type": "shock_setup_sheet"}},
+            x_sm2_webhook_secret="wrong-secret",
+            db=FakeSession(),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "INVALID_WEBHOOK_SECRET"
 
 
 def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypatch):

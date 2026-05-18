@@ -61,6 +61,20 @@ class OcrPreviewRead(ORMModel):
     model: str | None = None
 
 
+class OcrWebhookIngestRead(ORMModel):
+    status: str
+    message: str
+    submission_input_id: int
+    ocr_id: int | None = None
+    submission_ref: str
+    correlation_id: str
+    source: str
+    payload_shape: str
+    template_type: str | None = None
+    normalized: bool = False
+    review_status: str = "PENDING"
+
+
 class RawSubmissionCreate(ORMModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
