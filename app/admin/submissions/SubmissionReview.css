@@ -213,6 +213,94 @@
   background: rgba(239, 68, 68, 0.08);
 }
 
+.submission-ocr-drafts-section {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.submission-ocr-drafts-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 149, 0, 0.24);
+  background: rgba(255, 149, 0, 0.08);
+  color: #ffbf9f;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.submission-ocr-drafts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.9rem;
+}
+
+.submission-ocr-draft-card {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent),
+    linear-gradient(160deg, rgba(26, 26, 26, 0.98), rgba(12, 12, 12, 0.98));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+}
+
+.submission-ocr-draft-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  color: #8f96a6;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.submission-ocr-draft-title {
+  color: #ffffff;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.submission-ocr-draft-copy {
+  color: #b8bcc4;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.submission-ocr-draft-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.submission-ocr-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.submission-ocr-draft-empty {
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  color: #b8bcc4;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .submission-table-section {
   position: relative;
   z-index: 1;
@@ -879,6 +967,10 @@
 
   .submission-sheet-table {
     min-width: 0;
+  }
+
+  .submission-ocr-draft-actions {
+    justify-content: flex-start;
   }
 }
 

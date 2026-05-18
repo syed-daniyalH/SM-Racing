@@ -191,15 +191,19 @@ def _make_actor_context(
 
 
 class FakeResult:
-    def __init__(self, *, scalar_value=None, row=None):
+    def __init__(self, *, scalar_value=None, row=None, rows=None):
         self._scalar_value = scalar_value
         self._row = row
+        self._rows = rows or []
 
     def scalar_one(self):
         return self._scalar_value
 
     def first(self):
         return self._row
+
+    def all(self):
+        return self._rows
 
     def mappings(self):
         return self
@@ -251,19 +255,45 @@ class FakeSession:
             self.ocr_results.append({"ocr_id": ocr_id, **params})
             return FakeResult(scalar_value=ocr_id)
         if "select submission_id" in normalized and "from sm2racing.submission_inputs" in normalized:
+            wants_many = "limit" in params
+
+            def _row_mapping(row):
+                return {
+                    "submission_id": row["submission_id"],
+                    "raw_payload_json": row["raw_payload_json"],
+                    "created_at": row.get("created_at"),
+                    "created_by": row.get("created_by"),
+                    "validation_status": row.get("validation_status"),
+                    "validation_message": row.get("validation_message"),
+                }
+
             if "correlation_id" in params:
                 for row in reversed(self.submission_inputs):
                     payload = json.loads(row["raw_payload_json"])
                     if payload.get("correlation_id") == params["correlation_id"]:
-                        return FakeResult(
-                            row={
-                                "submission_id": row["submission_id"],
-                                "raw_payload_json": row["raw_payload_json"],
-                                "validation_status": row.get("validation_status"),
-                                "validation_message": row.get("validation_message"),
-                            }
-                        )
+                        return FakeResult(row=_row_mapping(row))
                 return FakeResult(row=None)
+
+            if "event_id" in params:
+                matched_rows = []
+                for row in reversed(self.submission_inputs):
+                    payload = json.loads(row["raw_payload_json"])
+                    metadata = payload.get("metadata") or {}
+                    if metadata.get("event_id") == params["event_id"]:
+                        matched_rows.append(_row_mapping(row))
+                        if not wants_many:
+                            return FakeResult(row=matched_rows[0])
+                        if len(matched_rows) >= int(params["limit"]):
+                            break
+                return FakeResult(rows=matched_rows) if wants_many else FakeResult(row=None)
+
+            if wants_many:
+                matched_rows = [
+                    _row_mapping(row)
+                    for row in reversed(self.submission_inputs)
+                    if row.get("source") == "make"
+                ][: int(params["limit"])]
+                return FakeResult(rows=matched_rows)
 
             if "submission_ref" in params:
                 for row in reversed(self.submission_inputs):
@@ -1729,6 +1759,189 @@ def test_get_ocr_preview_status_returns_normalized_draft_from_callback(monkeypat
     assert result.metadata["track_text"] == "Sebring"
     assert result.structured_data["alignment"]["camber_fl"] == "3.8"
     assert result.structured_data["alignment"]["toe_fr"] == "0.12 out"
+
+
+def test_get_latest_ocr_preview_for_event_returns_latest_staged_draft(monkeypatch):
+    db = FakeSession()
+    current_user = SimpleNamespace(id=uuid4())
+    event_id = str(uuid4())
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-EVT-001",
+            "correlation_id": "corr-evt-001",
+            "source": "make-http",
+            "image_url": "data:image/png;base64,AAAA",
+            "metadata": {
+                "event_id": event_id,
+                "track": "Road Atlanta",
+                "session_type": "Practice",
+                "session_number": "1",
+            },
+            "payload": {
+                "sheet_type": "general_setup_note",
+                "date": "04/18/26",
+                "time": "2:40 AM",
+                "driver": "N. Green",
+                "track": "Road Atlanta",
+                "camber": {
+                    "front_left": 3.6,
+                    "front_right": None,
+                    "rear_left": None,
+                    "rear_right": None,
+                },
+                "toe": {
+                    "front_left": "0.08 OUT",
+                    "front_right": None,
+                    "rear_left": "0.09 OUT",
+                    "rear_right": None,
+                },
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    result = submissions_endpoints.get_latest_ocr_preview_for_event(
+        event_id,
+        db=db,
+        current_user=current_user,
+    )
+
+    assert result.status == "review_required"
+    assert result.submission_ref == "MAKE-OCR-EVT-001"
+    assert result.correlation_id == "corr-evt-001"
+    assert result.image_url == "data:image/png;base64,AAAA"
+    assert result.source == "make-http"
+    assert result.metadata["track_text"] == "Road Atlanta"
+    assert result.metadata["driver_text"] == "N. Green"
+    assert result.structured_data["alignment"]["camber_fl"] == "3.6"
+
+
+def test_list_ocr_intake_drafts_by_event_returns_staged_drafts(monkeypatch):
+    db = FakeSession()
+    current_user = SimpleNamespace(id=uuid4())
+    target_event_id = uuid4()
+    other_event_id = uuid4()
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-EVT-LIST-001",
+            "correlation_id": "corr-evt-list-001",
+            "source": "make-http",
+            "metadata": {
+                "event_id": str(target_event_id),
+                "event_name": "Sebring Test",
+                "run_group": "BLUE",
+                "track": "Sebring",
+                "session_type": "Practice",
+                "session_number": "1",
+                "driver_id": "NG",
+                "vehicle_id": "NG-GT4-2025",
+            },
+            "payload": {
+                "sheet_type": "general_setup_note",
+                "driver": "N. Green",
+                "track": "Sebring",
+                "notes": ["Entry oversteer."],
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+    submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-EVT-LIST-002",
+            "correlation_id": "corr-evt-list-002",
+            "source": "make-http",
+            "metadata": {
+                "event_id": str(other_event_id),
+                "track": "Road Atlanta",
+            },
+            "payload": {
+                "sheet_type": "general_setup_note",
+                "driver": "Other Driver",
+                "track": "Road Atlanta",
+                "notes": ["Ignore this draft."],
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    result = submissions_endpoints.list_ocr_intake_drafts_by_event(
+        target_event_id,
+        db=db,
+        current_user=current_user,
+    )
+
+    assert len(result) == 1
+    assert result[0].submission_ref == "MAKE-OCR-EVT-LIST-001"
+    assert result[0].event_id == str(target_event_id)
+    assert result[0].run_group == "BLUE"
+    assert result[0].track == "Sebring"
+    assert result[0].normalized is True
+
+
+def test_list_ocr_intake_drafts_returns_all_staged_make_drafts(monkeypatch):
+    db = FakeSession()
+    current_user = SimpleNamespace(id=uuid4(), role="OWNER")
+    monkeypatch.setattr(
+        submissions_endpoints,
+        "settings",
+        SimpleNamespace(make_inbound_webhook_secret="top-secret"),
+    )
+
+    submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-ADMIN-001",
+            "correlation_id": "corr-admin-001",
+            "source": "make-http",
+            "metadata": {"event_id": str(uuid4()), "track": "Sebring"},
+            "payload": {
+                "sheet_type": "general_setup_note",
+                "driver": "N. Green",
+                "track": "Sebring",
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+    submissions_endpoints.ingest_ocr_webhook_payload(
+        {
+            "submission_ref": "MAKE-OCR-ADMIN-002",
+            "correlation_id": "corr-admin-002",
+            "source": "make-http",
+            "metadata": {"event_id": str(uuid4()), "track": "Road Atlanta"},
+            "payload": {
+                "template_type": "custom_tire_sheet_v2",
+                "payload": {"type": "custom_tire_sheet_v2"},
+            },
+        },
+        x_sm2_webhook_secret="top-secret",
+        db=db,
+    )
+
+    result = submissions_endpoints.list_ocr_intake_drafts(
+        db=db,
+        current_user=current_user,
+    )
+
+    assert len(result) == 2
+    assert result[0].submission_ref == "MAKE-OCR-ADMIN-002"
+    assert result[1].submission_ref == "MAKE-OCR-ADMIN-001"
+    assert result[0].normalized is False
+    assert result[1].normalized is True
 
 
 def test_preview_ocr_submission_allows_make_webhook_without_openai_key(monkeypatch):

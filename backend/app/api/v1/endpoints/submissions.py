@@ -1,6 +1,7 @@
 import json
 import logging
 import secrets
+from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,8 +26,9 @@ from app.models.vehicle import Vehicle
 from app.models.voice_note import VoiceNoteSession
 from app.schemas.submission import (
     OcrPreviewCreate,
-    OcrWebhookIngestRead,
     OcrPreviewRead,
+    OcrStagedDraftRead,
+    OcrWebhookIngestRead,
     RawSubmissionCreate,
     RawSubmissionResult,
     SubmissionCreate,
@@ -676,26 +678,12 @@ def _normalize_submission_input_source(source_value: object) -> str:
     return aliases.get(normalized_key, "make")
 
 
-def _latest_ocr_intake_snapshot_by_correlation_id(
+def _ocr_intake_snapshot_from_submission_row(
     db: Session,
-    correlation_id: str,
+    submission_row: Mapping[str, Any] | None,
+    *,
+    fallback_correlation_id: str | None = None,
 ) -> dict[str, Any] | None:
-    normalized_correlation_id = normalize_optional_text(correlation_id)
-    if not normalized_correlation_id:
-        return None
-
-    submission_row = db.execute(
-        text(
-            """
-            SELECT submission_id, raw_payload_json, validation_status, validation_message
-            FROM sm2racing.submission_inputs
-            WHERE raw_payload_json ->> 'correlation_id' = :correlation_id
-            ORDER BY submission_id DESC
-            LIMIT 1
-            """
-        ),
-        {"correlation_id": normalized_correlation_id},
-    ).mappings().first()
     if not submission_row:
         return None
 
@@ -724,17 +712,190 @@ def _latest_ocr_intake_snapshot_by_correlation_id(
     return {
         "submission_input_id": submission_input_id,
         "submission_ref": normalize_optional_text(payload_snapshot.get("submission_ref")),
-        "correlation_id": normalize_optional_text(payload_snapshot.get("correlation_id")) or normalized_correlation_id,
+        "correlation_id": normalize_optional_text(payload_snapshot.get("correlation_id")) or fallback_correlation_id,
         "source": normalize_optional_text(payload_snapshot.get("source")) or "make-webhook",
         "image_url": normalize_optional_text(payload_snapshot.get("image_url")),
         "metadata": metadata,
         "raw_text": normalize_optional_text(payload_snapshot.get("raw_text")),
         "normalized_analysis": normalized_analysis,
+        "created_at": submission_row.get("created_at"),
+        "created_by": normalize_optional_text(submission_row.get("created_by")),
         "validation_status": normalize_optional_text(submission_row.get("validation_status")) or "PENDING",
         "validation_message": normalize_optional_text(submission_row.get("validation_message")),
         "ocr_id": int(ocr_row["ocr_id"]) if ocr_row and ocr_row.get("ocr_id") is not None else None,
         "review_status": normalize_optional_text(ocr_row.get("review_status")) if ocr_row else None,
+        "template_type": normalize_optional_text(payload_snapshot.get("template_type")),
+        "payload_shape": normalize_optional_text(payload_snapshot.get("payload_shape")) or _payload_shape(payload_snapshot.get("ocr_payload")),
     }
+
+
+def _latest_ocr_intake_snapshot_by_correlation_id(
+    db: Session,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    normalized_correlation_id = normalize_optional_text(correlation_id)
+    if not normalized_correlation_id:
+        return None
+
+    submission_row = db.execute(
+        text(
+            """
+            SELECT submission_id, raw_payload_json, created_at, created_by, validation_status, validation_message
+            FROM sm2racing.submission_inputs
+            WHERE raw_payload_json ->> 'correlation_id' = :correlation_id
+            ORDER BY submission_id DESC
+            LIMIT 1
+            """
+        ),
+        {"correlation_id": normalized_correlation_id},
+    ).mappings().first()
+
+    return _ocr_intake_snapshot_from_submission_row(
+        db,
+        submission_row,
+        fallback_correlation_id=normalized_correlation_id,
+    )
+
+
+def _latest_ocr_intake_snapshot_by_event_id(
+    db: Session,
+    event_id: str,
+) -> dict[str, Any] | None:
+    normalized_event_id = normalize_optional_text(event_id)
+    if not normalized_event_id:
+        return None
+
+    submission_row = db.execute(
+        text(
+            """
+            SELECT submission_id, raw_payload_json, created_at, created_by, validation_status, validation_message
+            FROM sm2racing.submission_inputs
+            WHERE raw_payload_json -> 'metadata' ->> 'event_id' = :event_id
+            ORDER BY submission_id DESC
+            LIMIT 1
+            """
+        ),
+        {"event_id": normalized_event_id},
+    ).mappings().first()
+
+    return _ocr_intake_snapshot_from_submission_row(db, submission_row)
+
+
+def _list_ocr_intake_snapshots(
+    db: Session,
+    *,
+    event_id: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    normalized_event_id = normalize_optional_text(event_id)
+    normalized_limit = max(1, min(limit, 200))
+
+    if normalized_event_id:
+        rows = db.execute(
+            text(
+                """
+                SELECT submission_id, raw_payload_json, created_at, created_by, validation_status, validation_message
+                FROM sm2racing.submission_inputs
+                WHERE source = 'make'
+                  AND raw_payload_json -> 'metadata' ->> 'event_id' = :event_id
+                ORDER BY submission_id DESC
+                LIMIT :limit
+                """
+            ),
+            {"event_id": normalized_event_id, "limit": normalized_limit},
+        ).mappings().all()
+    else:
+        rows = db.execute(
+            text(
+                """
+                SELECT submission_id, raw_payload_json, created_at, created_by, validation_status, validation_message
+                FROM sm2racing.submission_inputs
+                WHERE source = 'make'
+                ORDER BY submission_id DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": normalized_limit},
+        ).mappings().all()
+
+    snapshots: list[dict[str, Any]] = []
+    for row in rows:
+        snapshot = _ocr_intake_snapshot_from_submission_row(db, row)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return snapshots
+
+
+def _build_ocr_preview_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    default_message: str,
+    source_fallback: str,
+    event_id_override: str | None = None,
+) -> OcrPreviewRead:
+    normalized_analysis = _dict_or_empty(snapshot.get("normalized_analysis"))
+    if not normalized_analysis:
+        message = normalize_optional_text(snapshot.get("validation_message")) or default_message
+        normalized_analysis = _build_ocr_failure_analysis(message)
+        raw_text = normalize_optional_text(snapshot.get("raw_text"))
+        if raw_text:
+            normalized_analysis["raw_text"] = raw_text
+            normalized_analysis["extracted_text"] = raw_text
+
+    context = _dict_or_empty(snapshot.get("metadata"))
+    if event_id_override:
+        context = {**context, "event_id": event_id_override}
+
+    return _build_ocr_preview_response(
+        image_analysis=normalized_analysis,
+        image_url=normalize_optional_text(snapshot.get("image_url")),
+        context=context,
+        event=None,
+        run_group=None,
+        driver=None,
+        vehicle=None,
+        submission_ref=normalize_optional_text(snapshot.get("submission_ref")),
+        correlation_id=normalize_optional_text(snapshot.get("correlation_id")),
+        source=normalize_optional_text(snapshot.get("source")) or source_fallback,
+    )
+
+
+def _build_ocr_staged_draft_response(snapshot: dict[str, Any]) -> OcrStagedDraftRead:
+    metadata = _dict_or_empty(snapshot.get("metadata"))
+    normalized_analysis = _dict_or_empty(snapshot.get("normalized_analysis"))
+
+    return OcrStagedDraftRead(
+        submission_input_id=int(snapshot.get("submission_input_id")),
+        ocr_id=snapshot.get("ocr_id"),
+        submission_ref=normalize_optional_text(snapshot.get("submission_ref")) or None,
+        correlation_id=normalize_optional_text(snapshot.get("correlation_id")) or None,
+        source=normalize_optional_text(snapshot.get("source")) or None,
+        image_url=normalize_optional_text(snapshot.get("image_url")) or None,
+        raw_text=normalize_optional_text(snapshot.get("raw_text")) or None,
+        created_at=snapshot.get("created_at"),
+        created_by=normalize_optional_text(snapshot.get("created_by")) or None,
+        validation_status=normalize_optional_text(snapshot.get("validation_status")) or "PENDING",
+        validation_message=normalize_optional_text(snapshot.get("validation_message")) or None,
+        review_status=normalize_optional_text(snapshot.get("review_status")) or None,
+        template_type=normalize_optional_text(snapshot.get("template_type")) or None,
+        payload_shape=normalize_optional_text(snapshot.get("payload_shape")) or "object",
+        normalized=bool(normalized_analysis),
+        confidence=normalized_analysis.get("confidence")
+        if isinstance(normalized_analysis.get("confidence"), (int, float))
+        else None,
+        document_type=normalize_optional_text(normalized_analysis.get("document_type"))
+        or normalize_optional_text(snapshot.get("template_type"))
+        or None,
+        event_id=normalize_optional_text(metadata.get("event_id")) or None,
+        event_name=normalize_optional_text(metadata.get("event_name")) or None,
+        run_group=normalize_optional_text(metadata.get("run_group")) or None,
+        track=normalize_optional_text(metadata.get("track")) or None,
+        session_type=normalize_optional_text(metadata.get("session_type")) or None,
+        session_number=normalize_optional_text(metadata.get("session_number")) or None,
+        driver_id=normalize_optional_text(metadata.get("driver_id")) or None,
+        vehicle_id=normalize_optional_text(metadata.get("vehicle_id")) or None,
+        metadata=metadata,
+    )
 
 
 def _build_submission_candidate(
@@ -1229,30 +1390,56 @@ def get_ocr_preview_status(
             source="make.com",
         )
 
-    normalized_analysis = _dict_or_empty(snapshot.get("normalized_analysis"))
-    if not normalized_analysis:
-        message = (
-            normalize_optional_text(snapshot.get("validation_message"))
-            or "Make.com callback arrived, but no recognized OCR draft was stored."
-        )
-        normalized_analysis = _build_ocr_failure_analysis(message)
-        raw_text = normalize_optional_text(snapshot.get("raw_text"))
-        if raw_text:
-            normalized_analysis["raw_text"] = raw_text
-            normalized_analysis["extracted_text"] = raw_text
-
-    return _build_ocr_preview_response(
-        image_analysis=normalized_analysis,
-        image_url=normalize_optional_text(snapshot.get("image_url")),
-        context=_dict_or_empty(snapshot.get("metadata")),
-        event=None,
-        run_group=None,
-        driver=None,
-        vehicle=None,
-        submission_ref=normalize_optional_text(snapshot.get("submission_ref")),
-        correlation_id=normalize_optional_text(snapshot.get("correlation_id")) or normalized_correlation_id,
-        source=normalize_optional_text(snapshot.get("source")) or "make.com",
+    preview = _build_ocr_preview_from_snapshot(
+        snapshot,
+        default_message="Make.com callback arrived, but no recognized OCR draft was stored.",
+        source_fallback="make.com",
     )
+    if not preview.correlation_id:
+        preview.correlation_id = normalized_correlation_id
+    return preview
+
+
+@router.get("/ocr-preview/latest/event/{event_id}", response_model=OcrPreviewRead)
+def get_latest_ocr_preview_for_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OcrPreviewRead:
+    snapshot = _latest_ocr_intake_snapshot_by_event_id(db, event_id)
+    normalized_event_id = normalize_optional_text(event_id) or event_id
+
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No staged OCR draft found for this event",
+        )
+
+    return _build_ocr_preview_from_snapshot(
+        snapshot,
+        default_message="Make.com callback arrived, but no recognized OCR draft was stored.",
+        source_fallback="make.com",
+        event_id_override=normalized_event_id,
+    )
+
+
+@router.get("/ocr-intake", response_model=list[OcrStagedDraftRead])
+def list_ocr_intake_drafts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+) -> list[OcrStagedDraftRead]:
+    snapshots = _list_ocr_intake_snapshots(db)
+    return [_build_ocr_staged_draft_response(snapshot) for snapshot in snapshots]
+
+
+@router.get("/ocr-intake/event/{event_id}", response_model=list[OcrStagedDraftRead])
+def list_ocr_intake_drafts_by_event(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[OcrStagedDraftRead]:
+    snapshots = _list_ocr_intake_snapshots(db, event_id=str(event_id))
+    return [_build_ocr_staged_draft_response(snapshot) for snapshot in snapshots]
 
 
 @router.post("/ocr-preview", response_model=OcrPreviewRead)

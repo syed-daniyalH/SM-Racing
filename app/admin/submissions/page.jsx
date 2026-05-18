@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Loader from "../../components/Common/Loader";
@@ -31,6 +32,7 @@ import {
 import SubmissionReviewDrawer from "./_components/SubmissionReviewDrawer";
 import {
   deleteSubmission,
+  getAllOcrDrafts,
   getAllSubmissions,
   retryFailedSubmission,
   updateSubmission,
@@ -200,10 +202,41 @@ const isOfflineError = (error) => {
   );
 };
 
+const formatOcrDraftDateLabel = (value) => {
+  if (!value) return "Recently staged";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recently staged";
+  return formatDateTime(date);
+};
+
+const formatOcrDraftConfidence = (value) => {
+  if (value === null || value === undefined) return "Pending";
+  const percent = value <= 1 ? value * 100 : value;
+  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+};
+
+const buildOcrReviewHref = (draft) => {
+  const eventId = draft?.eventId || draft?.metadata?.event_id;
+  if (!eventId) return "";
+
+  const params = new URLSearchParams();
+  if (draft?.correlationId) {
+    params.set("correlation_id", draft.correlationId);
+  }
+  if (draft?.submissionRef) {
+    params.set("submission_ref", draft.submissionRef);
+  }
+
+  const query = params.toString();
+  return `/event/${eventId}/ocr-review${query ? `?${query}` : ""}`;
+};
+
 export default function SubmissionReviewPage() {
+  const router = useRouter();
   const { user } = useAuth();
 
   const [submissions, setSubmissions] = useState([]);
+  const [ocrDrafts, setOcrDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState("");
   const [notice, setNotice] = useState(null);
@@ -250,10 +283,15 @@ export default function SubmissionReviewPage() {
       }
       setPageError("");
 
-      const response = await getAllSubmissions();
-      const list = Array.isArray(response) ? response : response?.submissions || [];
+      const [submissionResponse, draftResponse] = await Promise.all([
+        getAllSubmissions(),
+        getAllOcrDrafts(),
+      ]);
+      const list = Array.isArray(submissionResponse) ? submissionResponse : submissionResponse?.submissions || [];
+      const draftList = Array.isArray(draftResponse) ? draftResponse : [];
+      setOcrDrafts(draftList);
 
-      if (list.length === 0) {
+      if (list.length === 0 && draftList.length === 0) {
         showDemoSubmission(
           "No live submissions were returned, so a sample submission is shown for inspection.",
         );
@@ -272,6 +310,7 @@ export default function SubmissionReviewPage() {
       }
 
       setSubmissions([]);
+      setOcrDrafts([]);
       setPageError(getApiErrorMessage(error, "Failed to load submissions."));
     } finally {
       if (showSpinner) {
@@ -1104,6 +1143,75 @@ export default function SubmissionReviewPage() {
         ) : null}
 
         {pageError ? <div className="submission-monitor-error">{pageError}</div> : null}
+
+        <section className="submission-ocr-drafts-section">
+          <div className="submission-table-heading">
+            <div>
+              <h2 className="submission-table-title">Staged OCR Drafts</h2>
+              <p className="submission-table-subtitle">
+                These OCR callbacks are already stored from Make.com, but they are not final submissions until someone
+                opens review and clicks Submit for Review.
+              </p>
+            </div>
+            <span className="submission-ocr-drafts-count">
+              {ocrDrafts.length} staged
+            </span>
+          </div>
+
+          {ocrDrafts.length ? (
+            <div className="submission-ocr-drafts-grid">
+              {ocrDrafts.map((draft) => {
+                const reviewHref = buildOcrReviewHref(draft);
+
+                return (
+                  <article
+                    key={draft.submissionInputId || draft.correlationId || draft.submissionRef}
+                    className="submission-ocr-draft-card"
+                  >
+                    <div className="submission-ocr-draft-meta">
+                      <span>{formatOcrDraftDateLabel(draft.createdAt)}</span>
+                      <span>{draft.templateType || draft.documentType || "OCR draft"}</span>
+                      <span>{draft.track || "Track pending"}</span>
+                    </div>
+                    <div className="submission-ocr-draft-title">
+                      {draft.submissionRef || draft.correlationId || "Staged OCR draft"}
+                    </div>
+                    <div className="submission-ocr-draft-copy">
+                      {(draft.validationMessage || "Ready for manual review.").trim()}
+                    </div>
+                    <div className="submission-ocr-draft-badges">
+                      <StatusBadge label={`Review ${draft.reviewStatus || "PENDING"}`} tone="warning" />
+                      <StatusBadge
+                        label={draft.normalized ? "Mapped OCR" : "Raw OCR"}
+                        tone={draft.normalized ? "success" : "neutral"}
+                      />
+                      <span className="submission-confidence-badge tone-warning">
+                        Confidence {formatOcrDraftConfidence(draft.confidence)}
+                      </span>
+                    </div>
+                    <div className="submission-ocr-draft-actions">
+                      <button
+                        type="button"
+                        className="fleet-btn fleet-btn-primary"
+                        onClick={() => {
+                          if (!reviewHref) return;
+                          router.push(reviewHref);
+                        }}
+                        disabled={!reviewHref}
+                      >
+                        Resume Review
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="submission-ocr-draft-empty">
+              No staged OCR drafts are waiting for review right now.
+            </div>
+          )}
+        </section>
 
         <section className="submission-table-section">
           <div className="submission-table-heading">

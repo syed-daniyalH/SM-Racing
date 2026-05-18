@@ -79,6 +79,35 @@ class OcrWebhookIngestRead(ORMModel):
     review_status: str = "PENDING"
 
 
+class OcrStagedDraftRead(ORMModel):
+    submission_input_id: int
+    ocr_id: int | None = None
+    submission_ref: str | None = None
+    correlation_id: str | None = None
+    source: str | None = None
+    image_url: str | None = None
+    raw_text: str | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+    validation_status: str = "PENDING"
+    validation_message: str | None = None
+    review_status: str | None = None
+    template_type: str | None = None
+    payload_shape: str = "object"
+    normalized: bool = False
+    confidence: float | None = None
+    document_type: str | None = None
+    event_id: str | None = None
+    event_name: str | None = None
+    run_group: str | None = None
+    track: str | None = None
+    session_type: str | None = None
+    session_number: str | None = None
+    driver_id: str | None = None
+    vehicle_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RawSubmissionCreate(ORMModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

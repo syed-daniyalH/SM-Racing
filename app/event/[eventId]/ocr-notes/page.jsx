@@ -37,6 +37,7 @@ import { DRIVER_OPTIONS, SESSION_TYPE_OPTIONS, VEHICLE_OPTIONS } from "../../../
 import {
   clearOcrDraft,
   extractOcrDraft,
+  getLatestOcrDraftForEvent,
   getOcrDraftStatus,
   loadOcrDraft,
   rerunOcrDraft,
@@ -1155,6 +1156,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const [reviewDirty, setReviewDirty] = useState(false);
   const [currentUserStorageKey, setCurrentUserStorageKey] = useState("anonymous");
   const [hasLoadedDraft, setHasLoadedDraft] = useState(false);
+  const [reviewBootstrapComplete, setReviewBootstrapComplete] = useState(() => !isReviewView);
 
   useEffect(() => {
     setCurrentUserStorageKey(resolveCurrentUserStorageKey());
@@ -1399,6 +1401,107 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     queryCorrelationId,
     querySubmissionRef,
     reviewDraft.correlationId,
+  ]);
+
+  useEffect(() => {
+    if (!isReviewView) {
+      setReviewBootstrapComplete(true);
+      return;
+    }
+
+    if (!hasLoadedDraft) {
+      return;
+    }
+
+    if (
+      queryCorrelationId ||
+      normalizeText(reviewDraft.correlationId) ||
+      hasImage ||
+      hasExtractedDraft ||
+      isWaitingForMakeDraft
+    ) {
+      setReviewBootstrapComplete(true);
+      return;
+    }
+
+    if (!routeEventId) {
+      setReviewBootstrapComplete(true);
+      return;
+    }
+
+    let cancelled = false;
+    setReviewBootstrapComplete(false);
+
+    const bootstrapLatestDraft = async () => {
+      try {
+        const preview = await getLatestOcrDraftForEvent(routeEventId);
+        if (cancelled) {
+          return;
+        }
+
+        const mergedDraft = mergePreviewIntoReviewDraft(preview);
+        const hasRecoverableDraft =
+          Boolean(normalizeText(mergedDraft.correlationId) || normalizeText(mergedDraft.submissionRef)) ||
+          Boolean(preview.imageUrl) ||
+          hasExtractedDraftData(mergedDraft);
+
+        if (!hasRecoverableDraft) {
+          return;
+        }
+
+        setReviewDraft(mergedDraft);
+        setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
+        if (preview.imageUrl) {
+          setImageDataUrl(preview.imageUrl);
+        }
+        setReviewDirty(false);
+        setPageError("");
+
+        if (preview.status === "extraction_failed") {
+          setWorkflowState("extract_failed");
+          setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+          setPageError(getExtractionFailureMessage(preview));
+        } else if (preview.status === "submitted_to_make") {
+          setWorkflowState("submitted_to_make");
+          setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+        } else {
+          const nextWorkflowState = isReviewSafeOcrStatus(preview.status) ? "editing_review" : "extract_success";
+          setWorkflowState(nextWorkflowState);
+          setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+        }
+
+        if (normalizeText(preview.correlationId) || normalizeText(preview.submissionRef)) {
+          router.replace(buildReviewRoute(preview.correlationId, preview.submissionRef));
+        }
+      } catch (error) {
+        const responseStatus = error?.response?.status || error?.status;
+        if (responseStatus !== 404) {
+          console.error("Failed to bootstrap OCR review from the latest staged draft:", error);
+        }
+      } finally {
+        if (!cancelled) {
+          setReviewBootstrapComplete(true);
+        }
+      }
+    };
+
+    bootstrapLatestDraft();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    buildReviewRoute,
+    eventTrack,
+    hasExtractedDraft,
+    hasImage,
+    hasLoadedDraft,
+    isReviewView,
+    isWaitingForMakeDraft,
+    queryCorrelationId,
+    reviewDraft.correlationId,
+    routeEventId,
+    router,
   ]);
 
   useEffect(() => {
@@ -1695,8 +1798,10 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
     : "The intake screen only stages the OCR job. Save locally if you need to pause, or send the image to Make.com and continue on the dedicated review screen.";
   const reviewEmptyState =
     hasLoadedDraft &&
+    reviewBootstrapComplete &&
     isReviewView &&
     !queryCorrelationId &&
+    !normalizeText(reviewDraft.correlationId) &&
     !hasImage &&
     !hasExtractedDraft &&
     !isWaitingForMakeDraft;

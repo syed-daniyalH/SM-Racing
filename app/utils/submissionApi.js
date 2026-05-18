@@ -258,6 +258,45 @@ const normalizeOcrPreviewResponse = (data) => {
   };
 };
 
+const normalizeOcrStagedDraft = (draft) => {
+  const metadata = draft?.metadata && isPlainObject(draft.metadata) ? draft.metadata : {};
+
+  return {
+    ...draft,
+    submissionInputId:
+      draft?.submission_input_id ?? draft?.submissionInputId ?? null,
+    ocrId: draft?.ocr_id ?? draft?.ocrId ?? null,
+    submissionRef: draft?.submission_ref || draft?.submissionRef || null,
+    correlationId: draft?.correlation_id || draft?.correlationId || null,
+    source: draft?.source || null,
+    imageUrl: draft?.image_url || draft?.imageUrl || null,
+    rawText: draft?.raw_text || draft?.rawText || null,
+    createdAt: draft?.created_at || draft?.createdAt || null,
+    createdBy: draft?.created_by || draft?.createdBy || null,
+    validationStatus: draft?.validation_status || draft?.validationStatus || "PENDING",
+    validationMessage: draft?.validation_message || draft?.validationMessage || null,
+    reviewStatus: draft?.review_status || draft?.reviewStatus || null,
+    templateType: draft?.template_type || draft?.templateType || null,
+    payloadShape: draft?.payload_shape || draft?.payloadShape || "object",
+    normalized: Boolean(draft?.normalized),
+    confidence: typeof draft?.confidence === "number" ? draft.confidence : null,
+    documentType: draft?.document_type || draft?.documentType || null,
+    eventId: draft?.event_id || draft?.eventId || metadata.event_id || null,
+    eventName: draft?.event_name || draft?.eventName || metadata.event_name || null,
+    runGroup: draft?.run_group || draft?.runGroup || metadata.run_group || null,
+    track: draft?.track || metadata.track || null,
+    sessionType: draft?.session_type || draft?.sessionType || metadata.session_type || null,
+    sessionNumber:
+      draft?.session_number || draft?.sessionNumber || metadata.session_number || null,
+    driverId: draft?.driver_id || draft?.driverId || metadata.driver_id || null,
+    vehicleId: draft?.vehicle_id || draft?.vehicleId || metadata.vehicle_id || null,
+    metadata,
+  };
+};
+
+const unwrapOcrDraftList = (data) =>
+  normalizeList(data?.drafts || data?.data || data, normalizeOcrStagedDraft);
+
 const buildRawSubmissionPayload = (submissionData) => {
   const rawText = submissionData?.raw_text ?? submissionData?.rawText ?? "";
 
@@ -444,6 +483,52 @@ export const getOcrDraftStatus = async (correlationId) => {
       data: error.response?.data,
     });
     throw buildApiError(error, "Failed to load OCR draft status. Please try again.");
+  }
+};
+
+export const getLatestOcrDraftForEvent = async (eventId) => {
+  try {
+    const response = await axiosInstance.get(
+      `/submissions/ocr-preview/latest/event/${encodeURIComponent(eventId)}`,
+    );
+    return normalizeOcrPreviewResponse(response.data);
+  } catch (error) {
+    console.error("Get Latest OCR Draft For Event API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to load the latest staged OCR draft. Please try again.");
+  }
+};
+
+export const getOcrDraftsByEvent = async (eventId) => {
+  try {
+    const response = await axiosInstance.get(
+      `/submissions/ocr-intake/event/${encodeURIComponent(eventId)}`,
+    );
+    return unwrapOcrDraftList(response.data);
+  } catch (error) {
+    console.error("Get OCR Drafts By Event API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to load staged OCR drafts for this event.");
+  }
+};
+
+export const getAllOcrDrafts = async () => {
+  try {
+    const response = await axiosInstance.get("/submissions/ocr-intake");
+    return unwrapOcrDraftList(response.data);
+  } catch (error) {
+    console.error("Get All OCR Drafts API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Failed to load staged OCR drafts.");
   }
 };
 
