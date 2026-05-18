@@ -425,6 +425,7 @@ def _build_ocr_waiting_analysis(message: str | None = None) -> dict[str, object]
 def _build_ocr_preview_response(
     *,
     image_analysis: dict | None,
+    image_url: str | None,
     context: dict | None,
     event: Event | None,
     run_group: RunGroup | None,
@@ -536,6 +537,7 @@ def _build_ocr_preview_response(
         submission_ref=_preview_text(submission_ref) or None,
         correlation_id=_preview_text(correlation_id) or None,
         source=_preview_text(source) or None,
+        image_url=_preview_text(image_url) or None,
         doc_type=_preview_text(analysis.get("document_type")) or "unknown",
         template_name=template_name or None,
         confidence=analysis.get("confidence"),
@@ -724,6 +726,7 @@ def _latest_ocr_intake_snapshot_by_correlation_id(
         "submission_ref": normalize_optional_text(payload_snapshot.get("submission_ref")),
         "correlation_id": normalize_optional_text(payload_snapshot.get("correlation_id")) or normalized_correlation_id,
         "source": normalize_optional_text(payload_snapshot.get("source")) or "make-webhook",
+        "image_url": normalize_optional_text(payload_snapshot.get("image_url")),
         "metadata": metadata,
         "raw_text": normalize_optional_text(payload_snapshot.get("raw_text")),
         "normalized_analysis": normalized_analysis,
@@ -1216,6 +1219,7 @@ def get_ocr_preview_status(
     if snapshot is None:
         return _build_ocr_preview_response(
             image_analysis=_build_ocr_waiting_analysis(),
+            image_url=None,
             context={},
             event=None,
             run_group=None,
@@ -1239,6 +1243,7 @@ def get_ocr_preview_status(
 
     return _build_ocr_preview_response(
         image_analysis=normalized_analysis,
+        image_url=normalize_optional_text(snapshot.get("image_url")),
         context=_dict_or_empty(snapshot.get("metadata")),
         event=None,
         run_group=None,
@@ -1356,6 +1361,7 @@ def preview_ocr_submission(
 
     return _build_ocr_preview_response(
         image_analysis=image_analysis,
+        image_url=normalize_optional_text(preview_in.image_url),
         context=preview_in.context,
         event=event,
         run_group=run_group,

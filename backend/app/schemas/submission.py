@@ -44,6 +44,7 @@ class OcrPreviewRead(ORMModel):
     submission_ref: str | None = None
     correlation_id: str | None = None
     source: str | None = None
+    image_url: str | None = None
     doc_type: str = "unknown"
     template_name: str | None = None
     confidence: float | None = None

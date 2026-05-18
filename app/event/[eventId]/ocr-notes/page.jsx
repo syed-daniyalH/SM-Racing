@@ -1118,6 +1118,23 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const reviewRoute = routeEventId ? `/event/${routeEventId}/ocr-review` : "/events";
   const manualIntakeRoute = routeEventId ? `/event/${routeEventId}/ocr-notes?view=intake` : "/events";
   const forceIntakeView = searchParams?.get("view") === "intake";
+  const queryCorrelationId = normalizeText(searchParams?.get("correlation_id"));
+  const querySubmissionRef = normalizeText(searchParams?.get("submission_ref"));
+  const buildReviewRoute = useCallback(
+    (correlationId, submissionRef) => {
+      const params = new URLSearchParams();
+      if (normalizeText(correlationId)) {
+        params.set("correlation_id", normalizeText(correlationId));
+      }
+      if (normalizeText(submissionRef)) {
+        params.set("submission_ref", normalizeText(submissionRef));
+      }
+
+      const query = params.toString();
+      return query ? `${reviewRoute}?${query}` : reviewRoute;
+    },
+    [reviewRoute],
+  );
 
   const [event, setEvent] = useState(null);
   const [runGroup, setRunGroup] = useState(null);
@@ -1355,6 +1372,36 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const activeAsyncState = ["extracting", "rerunning_ocr", "saving_draft", "submitting_review"].includes(workflowState);
 
   useEffect(() => {
+    if (!isReviewView || !queryCorrelationId || !hasLoadedDraft) {
+      return;
+    }
+
+    if (hasImage || hasExtractedDraft || isWaitingForMakeDraft || normalizeText(reviewDraft.correlationId)) {
+      return;
+    }
+
+    setReviewDraft((prev) => ({
+      ...prev,
+      status: "submitted_to_make",
+      message: prev.message || "Submitted to Make.com. Waiting for the OCR draft response.",
+      submissionRef: prev.submissionRef || querySubmissionRef || "",
+      correlationId: queryCorrelationId,
+      source: prev.source || "make.com",
+    }));
+    setWorkflowState("submitted_to_make");
+    setWorkflowMessage("Submitted to Make.com. Waiting for the OCR draft response.");
+  }, [
+    hasExtractedDraft,
+    hasImage,
+    hasLoadedDraft,
+    isReviewView,
+    isWaitingForMakeDraft,
+    queryCorrelationId,
+    querySubmissionRef,
+    reviewDraft.correlationId,
+  ]);
+
+  useEffect(() => {
     if (!isWaitingForMakeDraft) {
       return undefined;
     }
@@ -1400,6 +1447,9 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
         const mergedDraft = mergePreviewIntoReviewDraft(preview);
         setReviewDraft(mergedDraft);
         setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
+        if (preview.imageUrl) {
+          setImageDataUrl(preview.imageUrl);
+        }
         setReviewDirty(false);
         setPageError("");
 
@@ -1441,8 +1491,18 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
       return;
     }
 
-    router.replace(reviewRoute);
-  }, [forceIntakeView, hasExtractedDraft, hasLoadedDraft, isReviewView, isWaitingForMakeDraft, reviewRoute, router]);
+    router.replace(buildReviewRoute(reviewDraft.correlationId, reviewDraft.submissionRef));
+  }, [
+    buildReviewRoute,
+    forceIntakeView,
+    hasExtractedDraft,
+    hasLoadedDraft,
+    isReviewView,
+    isWaitingForMakeDraft,
+    reviewDraft.correlationId,
+    reviewDraft.submissionRef,
+    router,
+  ]);
 
   const effectiveWorkflowState = useMemo(() => {
     if (workflowState === "submit_success" || workflowState === "submit_failed") {
@@ -1633,7 +1693,13 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const footerCopy = isReviewView
     ? "This review workspace keeps polling Make.com until the draft is ready, then lets you correct the captured values before submitting the note for review."
     : "The intake screen only stages the OCR job. Save locally if you need to pause, or send the image to Make.com and continue on the dedicated review screen.";
-  const reviewEmptyState = hasLoadedDraft && isReviewView && !hasImage && !hasExtractedDraft && !isWaitingForMakeDraft;
+  const reviewEmptyState =
+    hasLoadedDraft &&
+    isReviewView &&
+    !queryCorrelationId &&
+    !hasImage &&
+    !hasExtractedDraft &&
+    !isWaitingForMakeDraft;
 
   const getFieldClassName = (baseClassName, fieldName) =>
     fieldErrors[fieldName] ? `${baseClassName} input-error` : baseClassName;
@@ -1843,7 +1909,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
           } catch (draftError) {
             console.warn("Failed to stage OCR draft locally before opening review:", draftError);
           }
-          router.push(reviewRoute);
+          router.push(buildReviewRoute(mergedDraft.correlationId || preview.correlationId, mergedDraft.submissionRef || preview.submissionRef));
         }
         return;
       }
@@ -1871,7 +1937,7 @@ export function OCRWorkflowPage({ initialView = "intake" } = {}) {
         } catch (draftError) {
           console.warn("Failed to stage OCR draft locally before opening review:", draftError);
         }
-        router.push(reviewRoute);
+        router.push(buildReviewRoute(mergedDraft.correlationId || preview.correlationId, mergedDraft.submissionRef || preview.submissionRef));
       }
     } catch (error) {
       console.error("Failed to extract OCR draft:", error);

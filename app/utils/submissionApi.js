@@ -219,6 +219,7 @@ const normalizeOcrPreviewResponse = (data) => {
     submissionRef: preview?.submission_ref || preview?.submissionRef || null,
     correlationId: preview?.correlation_id || preview?.correlationId || null,
     source: preview?.source || null,
+    imageUrl: preview?.image_url || preview?.imageUrl || null,
     docType: preview?.doc_type || preview?.docType || "unknown",
     templateName: preview?.template_name || preview?.templateName || null,
     confidence: typeof preview?.confidence === "number" ? preview.confidence : null,
