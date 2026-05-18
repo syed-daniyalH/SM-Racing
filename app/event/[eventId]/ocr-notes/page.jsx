@@ -1108,10 +1108,13 @@ const getWorkflowPresentation = (workflowState) => {
   }
 };
 
-export default function OCRNotesPage() {
+export function OCRWorkflowPage({ initialView = "intake" } = {}) {
   const router = useRouter();
   const params = useParams();
   const routeEventId = params?.eventId;
+  const isReviewView = initialView === "review";
+  const intakeRoute = routeEventId ? `/event/${routeEventId}/ocr-notes` : "/events";
+  const reviewRoute = routeEventId ? `/event/${routeEventId}/ocr-review` : "/events";
 
   const [event, setEvent] = useState(null);
   const [runGroup, setRunGroup] = useState(null);
@@ -1599,6 +1602,23 @@ export default function OCRNotesPage() {
     : !hasRunGroup
       ? "Run group configuration is required before drivers or mechanics can stage OCR notes."
       : workflowPresentation.note;
+  const pageTitle = isReviewView ? "OCR Review" : "OCR Notes";
+  const pageEyebrow = isReviewView ? "OCR Review" : "OCR Flow";
+  const pageSubtitle = isReviewView
+    ? "Wait for Make.com to return the OCR draft, review the captured values beside the source image, and correct anything that needs a human pass before final submission."
+    : "Capture only the intake details needed for OCR, upload the source image, and stage the draft in Make.com before moving into review.";
+  const overviewBannerTitle = isReviewView ? "OCR draft ready for review" : "Submit to Make.com, then continue to review";
+  const overviewBannerBody = isReviewView
+    ? "This workspace keeps the source image, OCR runtime status, and editable setup fields together while the async Make.com callback fills the draft."
+    : "The intake stays light here. As soon as Make.com accepts the OCR job, this flow opens the dedicated review screen for editing and final submission.";
+  const capturePanelCopy = isReviewView
+    ? "Keep the source image and OCR runtime details in view while the draft polls in, then rerun OCR from here if the first pass needs another attempt."
+    : "Upload one setup sheet or handwritten note image, send it to Make.com, and continue on the review screen once the OCR draft is staged.";
+  const footerTitle = isReviewView ? "Review, save, or submit the OCR draft" : "Stage the OCR draft and move into review";
+  const footerCopy = isReviewView
+    ? "This review workspace keeps polling Make.com until the draft is ready, then lets you correct the captured values before submitting the note for review."
+    : "The intake screen only stages the OCR job. Save locally if you need to pause, or send the image to Make.com and continue on the dedicated review screen.";
+  const reviewEmptyState = hasLoadedDraft && isReviewView && !hasImage && !hasExtractedDraft && !isWaitingForMakeDraft;
 
   const getFieldClassName = (baseClassName, fieldName) =>
     fieldErrors[fieldName] ? `${baseClassName} input-error` : baseClassName;
@@ -1714,6 +1734,31 @@ export default function OCRNotesPage() {
     }
   }, [draftStorageKey, eventTrack]);
 
+  const persistDraftSnapshot = useCallback(
+    ({
+      nextIntakeState = intakeState,
+      nextReviewDraft = reviewDraft,
+      nextWorkflowState = workflowState,
+      nextReviewDirty = reviewDirty,
+      nextImageDataUrl = imageDataUrl,
+      nextImageName = imageName,
+    } = {}) => {
+      if (!draftStorageKey) {
+        return;
+      }
+
+      saveOcrDraft(draftStorageKey, {
+        intakeState: nextIntakeState,
+        reviewDraft: nextReviewDraft,
+        imageDataUrl: nextImageDataUrl,
+        imageName: nextImageName,
+        reviewDirty: nextReviewDirty,
+        workflowState: nextWorkflowState,
+      });
+    },
+    [draftStorageKey, imageDataUrl, imageName, intakeState, reviewDirty, reviewDraft, workflowState],
+  );
+
   const handleExtract = async ({ rerun = false } = {}) => {
     if (!canSubmitOcr) {
       setPageError(
@@ -1763,14 +1808,28 @@ export default function OCRNotesPage() {
       });
 
       const mergedDraft = mergePreviewIntoReviewDraft(preview);
+      const nextIntakeState = mergePreviewIntoIntake(intakeState, preview, eventTrack);
       setReviewDraft(mergedDraft);
-      setIntakeState((prev) => mergePreviewIntoIntake(prev, preview, eventTrack));
+      setIntakeState(nextIntakeState);
       setReviewDirty(false);
 
       if (preview.status === "submitted_to_make") {
         setWorkflowState("submitted_to_make");
         setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
         setPageError("");
+        if (!isReviewView) {
+          try {
+            persistDraftSnapshot({
+              nextIntakeState,
+              nextReviewDraft: mergedDraft,
+              nextWorkflowState: "submitted_to_make",
+              nextReviewDirty: false,
+            });
+          } catch (draftError) {
+            console.warn("Failed to stage OCR draft locally before opening review:", draftError);
+          }
+          router.push(reviewRoute);
+        }
         return;
       }
 
@@ -1782,8 +1841,23 @@ export default function OCRNotesPage() {
       }
 
       setPageError("");
-      setWorkflowState(isReviewSafeOcrStatus(preview.status) ? "editing_review" : "extract_success");
+      const nextWorkflowState = isReviewSafeOcrStatus(preview.status) ? "editing_review" : "extract_success";
+      setWorkflowState(nextWorkflowState);
       setWorkflowMessage(getOcrStatusMessage(preview.status, preview.message));
+
+      if (!isReviewView) {
+        try {
+          persistDraftSnapshot({
+            nextIntakeState,
+            nextReviewDraft: mergedDraft,
+            nextWorkflowState,
+            nextReviewDirty: false,
+          });
+        } catch (draftError) {
+          console.warn("Failed to stage OCR draft locally before opening review:", draftError);
+        }
+        router.push(reviewRoute);
+      }
     } catch (error) {
       console.error("Failed to extract OCR draft:", error);
       setWorkflowState("extract_failed");
@@ -1930,6 +2004,39 @@ export default function OCRNotesPage() {
     );
   }
 
+  if (reviewEmptyState) {
+    return (
+      <ProtectedRoute allowedRoles={["OWNER", "ADMIN", "MECHANIC", "DRIVER"]}>
+        <div className="ocr-notes-page">
+          <div className="ocr-notes-orb ocr-notes-orb-one" />
+          <div className="ocr-notes-orb ocr-notes-orb-two" />
+          <div className="ocr-notes-shell ocr-notes-state-shell">
+            <div className="ocr-notes-state-card">
+              <div className="ocr-notes-state-icon warning">
+                <DocumentScannerRoundedIcon fontSize="inherit" />
+              </div>
+              <p className="ocr-notes-eyebrow">OCR Review</p>
+              <h1>No staged OCR draft yet</h1>
+              <p>
+                Start the OCR flow from intake first so this review screen has an image, correlation ID, and staged
+                draft to work with.
+              </p>
+
+              <div className="ocr-notes-state-actions">
+                <button type="button" className="ocr-notes-button-primary" onClick={() => router.push(intakeRoute)}>
+                  Open OCR Intake
+                </button>
+                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(`/event/${routeEventId}`)}>
+                  Back to Event
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
   return (
     <ProtectedRoute allowedRoles={["OWNER", "ADMIN", "MECHANIC", "DRIVER"]}>
       <div className="ocr-notes-page">
@@ -1939,16 +2046,16 @@ export default function OCRNotesPage() {
         <div className="ocr-notes-shell">
           <header className="ocr-notes-topbar">
             <div className="ocr-notes-topbar-copy">
-              <ScreenBackButton fallbackHref={`/event/${routeEventId}`} label="Back to Event" />
+              <ScreenBackButton
+                fallbackHref={isReviewView ? intakeRoute : `/event/${routeEventId}`}
+                label={isReviewView ? "Back to OCR Intake" : "Back to Event"}
+              />
               <p className="ocr-notes-eyebrow">
                 <DocumentScannerRoundedIcon fontSize="inherit" />
-                OCR Flow
+                {pageEyebrow}
               </p>
-              <h1 className="ocr-notes-title">OCR Notes</h1>
-              <p className="ocr-notes-subtitle">
-                Upload a setup sheet or handwritten notes image, extract the draft first, then review and correct the
-                captured values before sending anything into the review pipeline.
-              </p>
+              <h1 className="ocr-notes-title">{pageTitle}</h1>
+              <p className="ocr-notes-subtitle">{pageSubtitle}</p>
             </div>
 
             <div className="ocr-notes-topbar-meta">
@@ -2015,11 +2122,8 @@ export default function OCRNotesPage() {
           <div className="ocr-notes-banner neutral">
             <DocumentScannerRoundedIcon fontSize="inherit" />
             <div>
-              <strong>Submit to Make.com, then review</strong>
-              <span>
-                This OCR flow keeps the initial intake light. The editable setup sections appear only after Make.com
-                returns the OCR draft.
-              </span>
+              <strong>{overviewBannerTitle}</strong>
+              <span>{overviewBannerBody}</span>
             </div>
           </div>
 
@@ -2113,177 +2217,179 @@ export default function OCRNotesPage() {
             </div>
           ) : null}
 
-          <section className="ocr-notes-main-grid">
-            <div className="ocr-notes-panel">
-              <div className="ocr-notes-panel-head">
-                <div>
-                  <p className="ocr-notes-panel-eyebrow">Stage 1</p>
-                  <h2>Minimal intake</h2>
+          <section className={`ocr-notes-main-grid${isReviewView ? " single-panel" : ""}`}>
+            {!isReviewView ? (
+              <div className="ocr-notes-panel">
+                <div className="ocr-notes-panel-head">
+                  <div>
+                    <p className="ocr-notes-panel-eyebrow">Stage 1</p>
+                    <h2>Minimal intake</h2>
+                  </div>
+                  <PendingActionsRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
                 </div>
-                <PendingActionsRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
+
+                <p className="ocr-notes-panel-copy">
+                  Keep the manual context light before OCR. Event and run group stay fixed while track, session, driver,
+                  and vehicle can be filled only if they help extraction or review.
+                </p>
+
+                <div className="ocr-notes-form-grid">
+                  <div className="ocr-notes-field ocr-notes-field-wide">
+                    <label htmlFor="ocr-submission-track">Track</label>
+                    <input
+                      id="ocr-submission-track"
+                      data-testid="ocr-submission-track"
+                      className={getFieldClassName("ocr-notes-input", "track")}
+                      type="text"
+                      value={intakeState.track}
+                      onChange={(eventLike) => handleIntakeChange("track", eventLike.target.value)}
+                      placeholder="Prefilled from event when available"
+                    />
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label id="ocr-submission-driver-label" htmlFor="ocr-submission-driver">
+                      Driver
+                    </label>
+                    <Select value={intakeState.driver_id} onValueChange={(value) => handleIntakeChange("driver_id", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-driver"
+                        data-testid="ocr-submission-driver"
+                        aria-labelledby="ocr-submission-driver-label"
+                        className={getFieldClassName("ocr-notes-select-trigger", "driver_id")}
+                      >
+                        <SelectValue placeholder="Optional driver" />
+                      </SelectTrigger>
+                      <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                        {driverOptions.map((driver) => (
+                          <SelectItem key={driver.id} value={driver.id} className="ocr-notes-select-item">
+                            {driver.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label id="ocr-submission-vehicle-label" htmlFor="ocr-submission-vehicle">
+                      Vehicle
+                    </label>
+                    <Select value={intakeState.vehicle_id} onValueChange={(value) => handleIntakeChange("vehicle_id", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-vehicle"
+                        data-testid="ocr-submission-vehicle"
+                        aria-labelledby="ocr-submission-vehicle-label"
+                        className={getFieldClassName("ocr-notes-select-trigger", "vehicle_id")}
+                      >
+                        <SelectValue placeholder="Optional vehicle" />
+                      </SelectTrigger>
+                      <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                        {vehicleOptionsForDriver.map((vehicle) => (
+                          <SelectItem key={vehicle.id} value={vehicle.id} className="ocr-notes-select-item">
+                            {vehicle.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label id="ocr-submission-session-type-label" htmlFor="ocr-submission-session-type">
+                      Session Type
+                    </label>
+                    <Select value={intakeState.session_type} onValueChange={(value) => handleIntakeChange("session_type", value)}>
+                      <SelectTrigger
+                        id="ocr-submission-session-type"
+                        data-testid="ocr-submission-session-type"
+                        aria-labelledby="ocr-submission-session-type-label"
+                        className="ocr-notes-select-trigger"
+                      >
+                        <SelectValue placeholder="Select session type" />
+                      </SelectTrigger>
+                      <SelectContent position="popper" align="start" className="ocr-notes-select-content">
+                        {SESSION_TYPE_OPTIONS.map((option) => (
+                          <SelectItem key={option.id} value={option.id} className="ocr-notes-select-item">
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label htmlFor="ocr-submission-session-number">Session Number</label>
+                    <input
+                      id="ocr-submission-session-number"
+                      data-testid="ocr-submission-session-number"
+                      className="ocr-notes-input"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={intakeState.session_number}
+                      onChange={(eventLike) => handleIntakeChange("session_number", eventLike.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label htmlFor="ocr-submission-date">Date</label>
+                    <input
+                      id="ocr-submission-date"
+                      data-testid="ocr-submission-date"
+                      className="ocr-notes-input"
+                      type="date"
+                      value={intakeState.date}
+                      onChange={(eventLike) => handleIntakeChange("date", eventLike.target.value)}
+                    />
+                    <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label htmlFor="ocr-submission-time">Time</label>
+                    <input
+                      id="ocr-submission-time"
+                      data-testid="ocr-submission-time"
+                      className="ocr-notes-input"
+                      type="time"
+                      value={intakeState.time}
+                      onChange={(eventLike) => handleIntakeChange("time", eventLike.target.value)}
+                    />
+                    <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
+                  </div>
+
+                  <div className="ocr-notes-field">
+                    <label htmlFor="ocr-submission-duration">Duration (min)</label>
+                    <input
+                      id="ocr-submission-duration"
+                      data-testid="ocr-submission-duration"
+                      className="ocr-notes-input"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={intakeState.duration_min}
+                      onChange={(eventLike) => handleIntakeChange("duration_min", eventLike.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+
+                  <div className="ocr-notes-field ocr-notes-field-wide">
+                    <label htmlFor="ocr-submission-notes">Short Context</label>
+                    <textarea
+                      id="ocr-submission-notes"
+                      data-testid="ocr-submission-notes"
+                      className="ocr-notes-textarea"
+                      rows={5}
+                      value={intakeState.notes}
+                      onChange={(eventLike) => handleIntakeChange("notes", eventLike.target.value)}
+                      placeholder="Optional callouts before extraction, like tire condition or handwriting notes."
+                    />
+                    <p className="ocr-notes-field-hint">
+                      Keep this brief. The OCR image remains the primary source and the extracted draft appears next.
+                    </p>
+                  </div>
+                </div>
               </div>
-
-              <p className="ocr-notes-panel-copy">
-                Keep the manual context light before OCR. Event and run group stay fixed while track, session, driver,
-                and vehicle can be filled only if they help extraction or review.
-              </p>
-
-              <div className="ocr-notes-form-grid">
-                <div className="ocr-notes-field ocr-notes-field-wide">
-                  <label htmlFor="ocr-submission-track">Track</label>
-                  <input
-                    id="ocr-submission-track"
-                    data-testid="ocr-submission-track"
-                    className={getFieldClassName("ocr-notes-input", "track")}
-                    type="text"
-                    value={intakeState.track}
-                    onChange={(eventLike) => handleIntakeChange("track", eventLike.target.value)}
-                    placeholder="Prefilled from event when available"
-                  />
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label id="ocr-submission-driver-label" htmlFor="ocr-submission-driver">
-                    Driver
-                  </label>
-                  <Select value={intakeState.driver_id} onValueChange={(value) => handleIntakeChange("driver_id", value)}>
-                    <SelectTrigger
-                      id="ocr-submission-driver"
-                      data-testid="ocr-submission-driver"
-                      aria-labelledby="ocr-submission-driver-label"
-                      className={getFieldClassName("ocr-notes-select-trigger", "driver_id")}
-                    >
-                      <SelectValue placeholder="Optional driver" />
-                    </SelectTrigger>
-                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
-                      {driverOptions.map((driver) => (
-                        <SelectItem key={driver.id} value={driver.id} className="ocr-notes-select-item">
-                          {driver.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label id="ocr-submission-vehicle-label" htmlFor="ocr-submission-vehicle">
-                    Vehicle
-                  </label>
-                  <Select value={intakeState.vehicle_id} onValueChange={(value) => handleIntakeChange("vehicle_id", value)}>
-                    <SelectTrigger
-                      id="ocr-submission-vehicle"
-                      data-testid="ocr-submission-vehicle"
-                      aria-labelledby="ocr-submission-vehicle-label"
-                      className={getFieldClassName("ocr-notes-select-trigger", "vehicle_id")}
-                    >
-                      <SelectValue placeholder="Optional vehicle" />
-                    </SelectTrigger>
-                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
-                      {vehicleOptionsForDriver.map((vehicle) => (
-                        <SelectItem key={vehicle.id} value={vehicle.id} className="ocr-notes-select-item">
-                          {vehicle.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label id="ocr-submission-session-type-label" htmlFor="ocr-submission-session-type">
-                    Session Type
-                  </label>
-                  <Select value={intakeState.session_type} onValueChange={(value) => handleIntakeChange("session_type", value)}>
-                    <SelectTrigger
-                      id="ocr-submission-session-type"
-                      data-testid="ocr-submission-session-type"
-                      aria-labelledby="ocr-submission-session-type-label"
-                      className="ocr-notes-select-trigger"
-                    >
-                      <SelectValue placeholder="Select session type" />
-                    </SelectTrigger>
-                    <SelectContent position="popper" align="start" className="ocr-notes-select-content">
-                      {SESSION_TYPE_OPTIONS.map((option) => (
-                        <SelectItem key={option.id} value={option.id} className="ocr-notes-select-item">
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label htmlFor="ocr-submission-session-number">Session Number</label>
-                  <input
-                    id="ocr-submission-session-number"
-                    data-testid="ocr-submission-session-number"
-                    className="ocr-notes-input"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={intakeState.session_number}
-                    onChange={(eventLike) => handleIntakeChange("session_number", eventLike.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label htmlFor="ocr-submission-date">Date</label>
-                  <input
-                    id="ocr-submission-date"
-                    data-testid="ocr-submission-date"
-                    className="ocr-notes-input"
-                    type="date"
-                    value={intakeState.date}
-                    onChange={(eventLike) => handleIntakeChange("date", eventLike.target.value)}
-                  />
-                  <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label htmlFor="ocr-submission-time">Time</label>
-                  <input
-                    id="ocr-submission-time"
-                    data-testid="ocr-submission-time"
-                    className="ocr-notes-input"
-                    type="time"
-                    value={intakeState.time}
-                    onChange={(eventLike) => handleIntakeChange("time", eventLike.target.value)}
-                  />
-                  <p className="ocr-notes-field-hint">Optional context for extraction and generated session ID.</p>
-                </div>
-
-                <div className="ocr-notes-field">
-                  <label htmlFor="ocr-submission-duration">Duration (min)</label>
-                  <input
-                    id="ocr-submission-duration"
-                    data-testid="ocr-submission-duration"
-                    className="ocr-notes-input"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={intakeState.duration_min}
-                    onChange={(eventLike) => handleIntakeChange("duration_min", eventLike.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-
-                <div className="ocr-notes-field ocr-notes-field-wide">
-                  <label htmlFor="ocr-submission-notes">Short Context</label>
-                  <textarea
-                    id="ocr-submission-notes"
-                    data-testid="ocr-submission-notes"
-                    className="ocr-notes-textarea"
-                    rows={5}
-                    value={intakeState.notes}
-                    onChange={(eventLike) => handleIntakeChange("notes", eventLike.target.value)}
-                    placeholder="Optional callouts before extraction, like tire condition or handwriting notes."
-                  />
-                  <p className="ocr-notes-field-hint">
-                    Keep this brief. The OCR image remains the primary source and the extracted draft appears next.
-                  </p>
-                </div>
-              </div>
-            </div>
+            ) : null}
 
             <div className="ocr-notes-panel">
               <div className="ocr-notes-panel-head">
@@ -2294,10 +2400,7 @@ export default function OCRNotesPage() {
                 <PhotoCameraBackRoundedIcon className="ocr-notes-panel-icon" fontSize="inherit" />
               </div>
 
-              <p className="ocr-notes-panel-copy">
-                Upload one setup sheet or handwritten note image, extract the OCR draft, and then review the values on
-                this same screen before anything is submitted.
-              </p>
+              <p className="ocr-notes-panel-copy">{capturePanelCopy}</p>
 
               <div className="ocr-notes-upload-shell">
                 <label
@@ -2434,7 +2537,7 @@ export default function OCRNotesPage() {
             </div>
           </section>
 
-          {shouldShowManualCorrection ? (
+          {isReviewView && shouldShowManualCorrection ? (
             <section className="ocr-notes-review-workspace" data-testid="ocr-review-sections">
               <div className="ocr-notes-panel">
                 <div className="ocr-notes-panel-head">
@@ -3175,19 +3278,32 @@ export default function OCRNotesPage() {
 
           <footer className="ocr-notes-footer">
             <div className="ocr-notes-footer-copy">
-              <h3>Stage, save, or submit the OCR draft</h3>
-              <p>
-                The OCR flow now submits the image to Make.com first, then keeps the draft editable. Save it locally
-                if you need to pause, or submit the reviewed result for validation when it is ready.
-              </p>
+              <h3>{footerTitle}</h3>
+              <p>{footerCopy}</p>
             </div>
 
             <div className="ocr-notes-footer-actions">
-              <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(`/event/${routeEventId}`)}>
-                Back to Event
-              </button>
-              <button type="button" className="ocr-notes-button-secondary" onClick={resetForm} disabled={activeAsyncState}>
-                Reset Form
+              {isReviewView ? (
+                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(intakeRoute)}>
+                  Back to OCR Intake
+                </button>
+              ) : (
+                <button type="button" className="ocr-notes-button-secondary" onClick={() => router.push(`/event/${routeEventId}`)}>
+                  Back to Event
+                </button>
+              )}
+              <button
+                type="button"
+                className="ocr-notes-button-secondary"
+                onClick={() => {
+                  resetForm();
+                  if (isReviewView) {
+                    router.push(intakeRoute);
+                  }
+                }}
+                disabled={activeAsyncState}
+              >
+                {isReviewView ? "Start Over" : "Reset Form"}
               </button>
               <button
                 type="button"
@@ -3201,7 +3317,7 @@ export default function OCRNotesPage() {
               <button
                 type="button"
                 data-testid="ocr-extract-button"
-                className="ocr-notes-button-secondary"
+                className={isReviewView ? "ocr-notes-button-secondary" : "ocr-notes-button-primary"}
                 onClick={() => handleExtract({ rerun: hasExtractedDraft })}
                 disabled={activeAsyncState || !hasImage || !canSubmitOcr}
               >
@@ -3211,17 +3327,21 @@ export default function OCRNotesPage() {
                     ? "Resubmitting..."
                     : hasExtractedDraft
                       ? "Resubmit to Make.com"
-                      : "Submit to Make.com"}
+                      : isReviewView
+                        ? "Send to Make.com"
+                        : "Submit to Make.com"}
               </button>
-              <button
-                type="button"
-                data-testid="ocr-submit-review-button"
-                className="ocr-notes-button-primary"
-                onClick={handleSubmitForReview}
-                disabled={activeAsyncState || !hasExtractedDraft || !canSubmitOcr}
-              >
-                {workflowState === "submitting_review" ? "Submitting..." : "Submit for Review"}
-              </button>
+              {isReviewView ? (
+                <button
+                  type="button"
+                  data-testid="ocr-submit-review-button"
+                  className="ocr-notes-button-primary"
+                  onClick={handleSubmitForReview}
+                  disabled={activeAsyncState || !hasExtractedDraft || !canSubmitOcr}
+                >
+                  {workflowState === "submitting_review" ? "Submitting..." : "Submit for Review"}
+                </button>
+              ) : null}
             </div>
           </footer>
 
@@ -3284,4 +3404,8 @@ export default function OCRNotesPage() {
       </div>
     </ProtectedRoute>
   );
+}
+
+export default function OCRNotesPage() {
+  return <OCRWorkflowPage initialView="intake" />;
 }

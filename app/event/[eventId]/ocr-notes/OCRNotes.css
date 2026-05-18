@@ -383,6 +383,10 @@
   gap: 1rem;
 }
 
+.ocr-notes-main-grid.single-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .ocr-notes-panel,
 .ocr-notes-footer,
 .ocr-notes-success-panel {
