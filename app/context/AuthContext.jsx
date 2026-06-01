@@ -80,7 +80,7 @@ export function AuthProvider({ children }) {
   }
 
   const isOwner = useCallback(() => {
-    return normalizeRole(user?.role) === 'OWNER'
+    return ['OWNER', 'ADMIN'].includes(normalizeRole(user?.role))
   }, [user?.role])
 
   const isDriver = useCallback(() => {

@@ -55,7 +55,6 @@ axiosInstance.interceptors.response.use(
         typeof window !== "undefined" &&
         ![
           "/login",
-          "/admin/login",
           "/admin/signout",
           "/signup",
         ].includes(window.location.pathname)

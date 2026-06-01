@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+
 import { useAuth } from "../context/AuthContext";
-import { loginOwnerUser, loginUser } from "../utils/authApi";
+import { loginUser } from "../utils/authApi";
 import "./Login.css";
 
 const TELEMETRY_BACKGROUND =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663611619053/EBPeWtZXBpCFLD2Dqq5aDH/racing-telemetry-bg-TCNJDDSXNs3PoAhwXNBQab.webp";
 const CHECKERED_FLAG =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663611619053/EBPeWtZXBpCFLD2Dqq5aDH/checkered-flag-icon-BK4bojoYYoDd6y4gzs53PF.webp";
+
+const hasOwnerAccess = (role) => ["OWNER", "ADMIN"].includes(String(role || "").toUpperCase());
 
 const isHtmlLikeError = (value) => {
   if (typeof value !== "string") {
@@ -98,17 +101,9 @@ function BrandFlag() {
 
 function LoadingIcon() {
   return (
-    <svg
-      className="login-button__spinner"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className="login-button__spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle className="login-button__spinner-track" cx="12" cy="12" r="8.5" />
-      <path
-        className="login-button__spinner-path"
-        d="M20.5 12a8.5 8.5 0 0 1-8.5 8.5"
-      />
+      <path className="login-button__spinner-path" d="M20.5 12a8.5 8.5 0 0 1-8.5 8.5" />
     </svg>
   );
 }
@@ -162,28 +157,24 @@ function ArrowIcon() {
   );
 }
 
-export default function LoginContent({ mode = "standard" } = {}) {
+export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [successTitle, setSuccessTitle] = useState("");
-  const [portalNotice, setPortalNotice] = useState("");
+  const [accessNotice, setAccessNotice] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
-  const emailInputRef = useRef(null);
-  const passwordInputRef = useRef(null);
-  const isOwnerPortal = mode === "admin";
-  const portalTargetPath = isOwnerPortal ? "/login" : "/admin/login";
 
   const backgroundStyle = useMemo(
     () => ({
       backgroundImage: `url('${TELEMETRY_BACKGROUND}')`,
     }),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -204,44 +195,28 @@ export default function LoginContent({ mode = "standard" } = {}) {
       return () => window.clearTimeout(timer);
     }
 
-    if (isOwnerPortal && accessStatus === "denied") {
-      setPortalNotice("This portal requires an admin account.");
-      router.replace("/admin/login", { scroll: false });
+    if (accessStatus === "denied") {
+      setAccessNotice(
+        "That account doesn't have access to the page you tried to open. Sign in with the correct account if needed.",
+      );
+      router.replace("/login", { scroll: false });
       const timer = window.setTimeout(() => {
-        setPortalNotice("");
+        setAccessNotice("");
       }, 7000);
 
       return () => window.clearTimeout(timer);
     }
 
     return undefined;
-  }, [isOwnerPortal, searchParams, router]);
+  }, [searchParams, router]);
 
   useEffect(() => {
     if (!user) {
       return;
     }
 
-    const currentRole = String(user.role || "").toUpperCase();
-    const hasOwnerAccess = currentRole === "OWNER";
-
-    if (isOwnerPortal) {
-      if (hasOwnerAccess) {
-        router.replace("/admin/users");
-      }
-      return;
-    }
-
-    router.replace(hasOwnerAccess ? "/admin/users" : "/events");
-  }, [isOwnerPortal, router, user]);
-
-  const handlePortalSwitch = () => {
-    const destination = user
-      ? `/admin/signout?next=${encodeURIComponent(portalTargetPath)}`
-      : portalTargetPath;
-
-    router.push(destination);
-  };
+    router.replace(hasOwnerAccess(user.role) ? "/admin/users" : "/events");
+  }, [router, user]);
 
   const emailError = useMemo(() => {
     if (!error) return "";
@@ -259,70 +234,38 @@ export default function LoginContent({ mode = "standard" } = {}) {
     return "";
   }, [error]);
 
-  const syncCredentialInputs = useCallback(() => {
-    const nextEmail = emailInputRef.current?.value ?? "";
-    const nextPassword = passwordInputRef.current?.value ?? "";
-
-    setEmail((current) => (current === nextEmail ? current : nextEmail));
-    setPassword((current) => (current === nextPassword ? current : nextPassword));
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    syncCredentialInputs();
-
-    const frameId = window.requestAnimationFrame(syncCredentialInputs);
-    const timeoutId = window.setTimeout(syncCredentialInputs, 250);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.clearTimeout(timeoutId);
-    };
-  }, [syncCredentialInputs]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    syncCredentialInputs();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError("");
     setSuccess("");
     setSuccessTitle("");
-    setIsLoading(true);
 
-    const nextEmail = emailInputRef.current?.value ?? email;
-    const nextPassword = passwordInputRef.current?.value ?? password;
+    const formData = new FormData(event.currentTarget);
+    const nextEmail = String(formData.get("login-email") || email).trim();
+    const nextPassword = String(formData.get("login-password") || password);
 
     if (!nextEmail || !nextPassword) {
       setError("Please enter both email and password.");
-      setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
+
     try {
-      const loginAction = isOwnerPortal ? loginOwnerUser : loginUser;
-      const response = await loginAction({ email: nextEmail, password: nextPassword });
+      const response = await loginUser({ email: nextEmail, password: nextPassword });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
 
       if (userData) {
         login(userData, token);
-        const userRole = userData.role || userData.roleName;
-        const redirectPath = isOwnerPortal
-          ? "/admin/users"
-          : userRole === "OWNER"
-            ? "/admin/users"
-            : "/events";
-
-        router.replace(redirectPath);
+        router.replace(hasOwnerAccess(userData.role || userData.roleName) ? "/admin/users" : "/events");
         return;
       }
 
       setError(
         safeErrorMessage(response.message, "") ||
           safeErrorMessage(response.error, "") ||
-          "Login failed. Invalid response from server."
+          "Login failed. Invalid response from server.",
       );
     } catch (loginError) {
       console.error("Login error:", loginError);
@@ -371,29 +314,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
             <span className="login-brand__white">-2</span>
           </h1>
           <p className="login-hero__title">RACE CONTROL</p>
-          <p className="login-hero__subtitle">
-                {isOwnerPortal ? "Admin Portal Access" : "Race Operations Platform"}
-          </p>
-          <div className="login-portal-switch" role="group" aria-label="Switch login portal">
-            <button
-              type="button"
-              className={`login-portal-switch__button ${!isOwnerPortal ? "is-active" : ""}`}
-              onClick={handlePortalSwitch}
-              disabled={!isOwnerPortal}
-              aria-current={!isOwnerPortal ? "page" : undefined}
-            >
-              Driver Login
-            </button>
-            <button
-              type="button"
-              className={`login-portal-switch__button ${isOwnerPortal ? "is-active" : ""}`}
-              onClick={handlePortalSwitch}
-              disabled={isOwnerPortal}
-              aria-current={isOwnerPortal ? "page" : undefined}
-            >
-              Admin Login
-            </button>
-          </div>
+          <p className="login-hero__subtitle">Owner and Driver Access</p>
         </section>
 
         <section className="login-card" aria-label="Login form">
@@ -401,27 +322,19 @@ export default function LoginContent({ mode = "standard" } = {}) {
             {success ? (
               <div className="login-state">
                 <AlertIcon tone="success" />
-                <h2 className="login-state__title">
-                  {successTitle ||
-                    (isOwnerPortal
-                      ? "Admin authentication successful"
-                      : "Authentication successful")}
-                </h2>
+                <h2 className="login-state__title">{successTitle || "Authentication successful"}</h2>
                 <p className="login-state__text">
-                  {success ||
-                    (isOwnerPortal
-                      ? "Redirecting to the admin dashboard..."
-                      : "Redirecting to dashboard...")}
+                  {success || "Redirecting to your dashboard..."}
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="login-form">
-                {portalNotice && (
+              <form onSubmit={handleSubmit} className="login-form" autoComplete="on">
+                {accessNotice && (
                   <div className="login-alert" role="status">
                     <AlertIcon />
                     <div className="login-alert__copy">
-                      <p className="login-alert__title">Portal access required</p>
-                      <p className="login-alert__text">{portalNotice}</p>
+                      <p className="login-alert__title">Sign in required</p>
+                      <p className="login-alert__text">{accessNotice}</p>
                     </div>
                   </div>
                 )}
@@ -437,23 +350,23 @@ export default function LoginContent({ mode = "standard" } = {}) {
                 )}
 
                 <div className="login-field">
-                  <label htmlFor="email" className="login-field__label">
+                  <label htmlFor="login-email" className="login-field__label">
                     Email Address
                   </label>
                   <div className="login-field__control">
                     <LoginInputIcon type="mail" />
                     <input
-                      ref={emailInputRef}
                       type="email"
-                      id="email"
-                      name="email"
+                      id="login-email"
+                      name="login-email"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder={isOwnerPortal ? "admin@smracing.com" : "driver@smracing.com"}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="name@smracing.com"
                       className="login-input"
                       autoComplete="email"
                       autoCapitalize="none"
                       autoCorrect="off"
+                      inputMode="email"
                       spellCheck="false"
                       disabled={isLoading}
                       aria-invalid={Boolean(emailError)}
@@ -469,7 +382,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
 
                 <div className="login-field">
                   <div className="login-field__header">
-                    <label htmlFor="password" className="login-field__label">
+                    <label htmlFor="login-password" className="login-field__label">
                       Password
                     </label>
                     <span className="login-field__hint">Forgot?</span>
@@ -477,12 +390,11 @@ export default function LoginContent({ mode = "standard" } = {}) {
                   <div className="login-field__control login-field__control--password">
                     <LoginInputIcon type="lock" />
                     <input
-                      ref={passwordInputRef}
                       type={showPassword ? "text" : "password"}
-                      id="password"
-                      name="password"
+                      id="login-password"
+                      name="login-password"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(event) => setPassword(event.target.value)}
                       placeholder="Enter your password"
                       className="login-input login-input--password"
                       autoComplete="current-password"
@@ -494,14 +406,11 @@ export default function LoginContent({ mode = "standard" } = {}) {
                       type="button"
                       className="login-password-toggle"
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        syncCredentialInputs();
-                        setShowPassword((current) => !current);
-                      }}
+                      onClick={() => setShowPassword((current) => !current)}
                       disabled={isLoading}
                       aria-label={showPassword ? "Hide password" : "Show password"}
                       aria-pressed={showPassword}
-                      aria-controls="password"
+                      aria-controls="login-password"
                     >
                       <PasswordVisibilityIcon visible={showPassword} />
                     </button>
@@ -513,11 +422,7 @@ export default function LoginContent({ mode = "standard" } = {}) {
                   )}
                 </div>
 
-                <button
-                  type="submit"
-                  className="login-button"
-                  disabled={isLoading}
-                >
+                <button type="submit" className="login-button" disabled={isLoading}>
                   {isLoading ? (
                     <>
                       <LoadingIcon />
@@ -537,22 +442,16 @@ export default function LoginContent({ mode = "standard" } = {}) {
 
         {!success && (
           <section className="login-cta" aria-label="Signup link">
-            {isOwnerPortal ? (
+            {user ? (
               <p className="login-cta__text">
-                {user ? (
-                  <>
-                    Signed in as <strong>{user.name || user.email}</strong>.{" "}
-                    <button
-                      type="button"
-                    className="login-cta__link"
-                    onClick={() => router.push("/admin/signout?next=/login")}
-                  >
-                    Switch account
-                  </button>
-                  </>
-                ) : (
-                  "Admins can sign in here to reach the admin portal."
-                )}
+                Signed in as <strong>{user.name || user.email}</strong>.{" "}
+                <button
+                  type="button"
+                  className="login-cta__link"
+                  onClick={() => router.push("/admin/signout?next=/login")}
+                >
+                  Switch account
+                </button>
               </p>
             ) : (
               <p className="login-cta__text">
@@ -568,7 +467,6 @@ export default function LoginContent({ mode = "standard" } = {}) {
             )}
           </section>
         )}
-
       </main>
     </div>
   );

@@ -58,7 +58,6 @@ export default function Navbar() {
 
   const isAuthPage =
     pathname === "/login" ||
-    pathname === "/admin/login" ||
     pathname === "/admin/signout" ||
     pathname === "/signup"
   const isSubmissionReportPage = pathname.startsWith("/admin/submissions/report/")
@@ -91,7 +90,7 @@ export default function Navbar() {
 
   const handleLogout = async () => {
     if (isOwner()) {
-      router.push("/admin/signout?next=/admin/login")
+      router.push("/admin/signout?next=/login")
       return
     }
 

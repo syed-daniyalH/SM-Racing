@@ -19,20 +19,18 @@ export default function ProtectedRoute({
   useEffect(() => {
     if (loading) return;
 
-    const loginPath = ownerRequired ? "/admin/login" : "/login";
-
     if (!user) {
-      router.push(loginPath);
+      router.push("/login");
       return;
     }
 
     if (ownerRequired && !isOwner()) {
-      router.push("/admin/login?access=denied");
+      router.push("/login?access=denied");
       return;
     }
 
     if (driverRequired && !isDriver()) {
-      router.push("/login");
+      router.push("/login?access=denied");
       return;
     }
   }, [user, loading, ownerRequired, driverRequired, isOwner, isDriver, router]);

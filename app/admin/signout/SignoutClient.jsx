@@ -13,12 +13,16 @@ const CHECKERED_FLAG =
 
 const resolveNextPath = (value) => {
   if (typeof value !== "string") {
-    return "/admin/login";
+    return "/login";
   }
 
   const nextPath = value.trim();
   if (!nextPath.startsWith("/") || nextPath.startsWith("//")) {
-    return "/admin/login";
+    return "/login";
+  }
+
+  if (nextPath.startsWith("/admin/login")) {
+    return "/login";
   }
 
   return nextPath;
@@ -84,7 +88,7 @@ export default function SignoutClient() {
   const { logout, user } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(true);
   const [signoutMessage, setSignoutMessage] = useState("Ending the current portal session...");
-  const [nextPath, setNextPath] = useState("/admin/login");
+  const [nextPath, setNextPath] = useState("/login");
   const [sessionUser, setSessionUser] = useState(user);
   const startedRef = useRef(false);
 

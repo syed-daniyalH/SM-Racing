@@ -752,7 +752,7 @@ export default function UsersManagement() {
                 Events
               </button>
               <button
-                onClick={() => router.push("/admin/signout?next=/admin/login")}
+              onClick={() => router.push("/admin/signout?next=/login")}
                 className="fleet-btn fleet-btn-secondary"
                 type="button"
               >

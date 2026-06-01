@@ -17,7 +17,7 @@ export default function AdminPortalEntry() {
     const currentRole = String(user?.role || "").toUpperCase();
     const hasOwnerAccess = currentRole === "OWNER";
 
-    router.replace(hasOwnerAccess ? "/admin/users" : "/admin/login");
+    router.replace(hasOwnerAccess ? "/admin/users" : "/login");
   }, [loading, router, user]);
 
   return null;

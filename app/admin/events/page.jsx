@@ -519,7 +519,7 @@ export default function EventsManagementPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => router.push("/admin/signout?next=/admin/login")}
+                onClick={() => router.push("/admin/signout?next=/login")}
               >
                 Logout
               </button>

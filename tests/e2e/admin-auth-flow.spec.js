@@ -4,7 +4,7 @@ const ADMIN_USER = {
   id: "admin-1",
   name: "Admin One",
   email: "admin@smracing.com",
-  role: "ADMIN",
+  role: "OWNER",
   is_active: true,
   created_at: "2026-05-04T12:00:00.000Z",
   updated_at: "2026-05-04T12:00:00.000Z",
@@ -18,7 +18,7 @@ async function mockAdminAuthRoutes(page) {
     const { pathname } = new URL(request.url());
     const method = request.method();
 
-    if (pathname === "/api/v1/auth/admin-login" && method === "POST") {
+    if (pathname === "/api/v1/auth/login" && method === "POST") {
       return route.fulfill({
         json: {
           access_token: "admin-token",
@@ -57,7 +57,7 @@ async function mockAdminAuthRoutes(page) {
 }
 
 test.describe("admin auth flow", () => {
-  test("admin login authenticates and reaches the admin portal", async ({ page }) => {
+  test("owner login authenticates and reaches the admin portal", async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.removeItem("sm2_token");
       localStorage.removeItem("sm2_user");
@@ -65,12 +65,12 @@ test.describe("admin auth flow", () => {
 
     await mockAdminAuthRoutes(page);
 
-    await page.goto("/admin/login");
+    await page.goto("/login");
     await expect(page.getByText("RACE CONTROL")).toBeVisible();
-    await expect(page.getByText("Admin Portal Access")).toBeVisible();
+    await expect(page.getByText("Owner and Driver Access")).toBeVisible();
 
     await page.getByLabel("Email Address").fill("admin@smracing.com");
-    await page.getByLabel("Password").fill("password123");
+    await page.locator("#login-password").fill("password123");
     await page.getByRole("button", { name: "Login" }).click();
 
     await page.waitForURL("**/admin/users");
@@ -78,7 +78,7 @@ test.describe("admin auth flow", () => {
     await expect(page.getByRole("heading", { name: "User Management" })).toBeVisible();
   });
 
-  test("admin sign out revokes the token and returns to admin login", async ({ page }) => {
+  test("admin sign out revokes the token and returns to login", async ({ page }) => {
     await page.addInitScript((user) => {
       localStorage.setItem("sm2_token", "admin-token");
       localStorage.setItem("sm2_user", JSON.stringify(user));
@@ -86,14 +86,14 @@ test.describe("admin auth flow", () => {
 
     await mockAdminAuthRoutes(page);
 
-    await page.goto("/admin/signout?next=/admin/login");
+    await page.goto("/admin/signout?next=/login");
     await expect(page.getByText("RACE CONTROL")).toBeVisible();
-    await expect(page.getByText("Admin Portal Sign Out")).toBeVisible();
+    await expect(page.getByText("Owner Portal Sign Out")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Signed out successfully" })).toBeVisible();
     await expect(page.getByText("Session cleared and token revoked successfully.")).toBeVisible();
 
-    await page.waitForURL("**/admin/login");
-    await expect(page).toHaveURL(/\/admin\/login/);
+    await page.waitForURL("**/login");
+    await expect(page).toHaveURL(/\/login/);
     await expect.poll(() => page.evaluate(() => localStorage.getItem("sm2_token"))).toBeNull();
     await expect.poll(() => page.evaluate(() => localStorage.getItem("sm2_user"))).toBeNull();
   });
