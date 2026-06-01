@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,15 +30,17 @@ SEED_USERS = [
         "role": UserRole.DRIVER,
     },
     {
-        "name": "Driver",
-        "email": "driver@smracing.com",
-        "password": "123456",
+        "name": "Mechanic",
+        "email": "mec@smracing.com",
+        "password": "Mech@123",
         "role": UserRole.DRIVER,
     },
 ]
 
 LEGACY_OWNER_EMAIL = "owner@smracing.com"
 CANONICAL_OWNER_EMAIL = "admin@smracing.com"
+LEGACY_DRIVER_EMAIL = "driver@smracing.com"
+CANONICAL_DRIVER_EMAIL = "mec@smracing.com"
 
 
 def normalize_legacy_owner_account(db) -> None:
@@ -59,6 +61,32 @@ def normalize_legacy_owner_account(db) -> None:
     db.flush()
 
 
+def normalize_legacy_driver_account(db) -> None:
+    legacy_driver = db.scalar(select(User).where(User.email == LEGACY_DRIVER_EMAIL))
+    if legacy_driver is None:
+        return
+
+    canonical_driver = db.scalar(select(User).where(User.email == CANONICAL_DRIVER_EMAIL))
+    if canonical_driver is not None and canonical_driver.id != legacy_driver.id:
+        return
+
+    legacy_driver.email = CANONICAL_DRIVER_EMAIL
+    legacy_driver.name = "Mechanic"
+    legacy_driver.hashed_password = hash_password("Mech@123")
+    legacy_driver.role = UserRole.DRIVER
+    legacy_driver.approval_status = UserApprovalStatus.APPROVED
+    legacy_driver.is_active = True
+    db.flush()
+
+
+def normalize_role_aliases(db) -> None:
+    schema = User.__table__.schema or "public"
+    db.execute(
+        text(f"UPDATE {schema}.users SET role = 'DRIVER' WHERE role IN ('MECHANIC', 'WORKER')")
+    )
+    db.execute(text(f"UPDATE {schema}.users SET role = 'OWNER' WHERE role = 'ADMIN'"))
+
+
 def upsert_users() -> tuple[list[str], list[str]]:
     session_local = get_session_local()
     db = session_local()
@@ -66,7 +94,9 @@ def upsert_users() -> tuple[list[str], list[str]]:
     updated: list[str] = []
 
     try:
+        normalize_role_aliases(db)
         normalize_legacy_owner_account(db)
+        normalize_legacy_driver_account(db)
 
         for user_data in SEED_USERS:
             email = user_data["email"].lower()
