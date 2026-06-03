@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "../context/AuthContext";
@@ -169,6 +169,8 @@ export default function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
+  const usernameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
 
   const backgroundStyle = useMemo(
     () => ({
@@ -234,6 +236,35 @@ export default function LoginContent() {
     return "";
   }, [error]);
 
+  const clearAutofilledCredentials = useCallback(() => {
+    const usernameValue = usernameInputRef.current?.value ?? "";
+    const passwordValue = passwordInputRef.current?.value ?? "";
+
+    if (usernameValue && email === "") {
+      usernameInputRef.current.value = "";
+    }
+
+    if (passwordValue && password === "") {
+      passwordInputRef.current.value = "";
+    }
+  }, [email, password]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    clearAutofilledCredentials();
+
+    const frameId = window.requestAnimationFrame(clearAutofilledCredentials);
+    const timeoutId = window.setTimeout(clearAutofilledCredentials, 300);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [clearAutofilledCredentials]);
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
@@ -241,7 +272,7 @@ export default function LoginContent() {
     setSuccessTitle("");
 
     const formData = new FormData(event.currentTarget);
-    const nextEmail = String(formData.get("login-email") || email).trim();
+    const nextEmail = String(formData.get("login-username") || email).trim();
     const nextPassword = String(formData.get("login-password") || password);
 
     if (!nextEmail || !nextPassword) {
@@ -328,7 +359,7 @@ export default function LoginContent() {
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="login-form" autoComplete="on">
+              <form onSubmit={handleSubmit} className="login-form" autoComplete="off">
                 {accessNotice && (
                   <div className="login-alert" role="status">
                     <AlertIcon />
@@ -356,17 +387,18 @@ export default function LoginContent() {
                   <div className="login-field__control">
                     <LoginInputIcon type="mail" />
                     <input
-                      type="email"
+                      ref={usernameInputRef}
+                      type="text"
                       id="login-email"
-                      name="login-email"
+                      name="login-username"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
-                      placeholder="name@smracing.com"
+                      placeholder="Enter your username"
                       className="login-input"
-                      autoComplete="email"
+                      autoComplete="off"
                       autoCapitalize="none"
                       autoCorrect="off"
-                      inputMode="email"
+                      inputMode="text"
                       spellCheck="false"
                       disabled={isLoading}
                       aria-invalid={Boolean(emailError)}
@@ -390,6 +422,7 @@ export default function LoginContent() {
                   <div className="login-field__control login-field__control--password">
                     <LoginInputIcon type="lock" />
                     <input
+                      ref={passwordInputRef}
                       type={showPassword ? "text" : "password"}
                       id="login-password"
                       name="login-password"
@@ -397,7 +430,7 @@ export default function LoginContent() {
                       onChange={(event) => setPassword(event.target.value)}
                       placeholder="Enter your password"
                       className="login-input login-input--password"
-                      autoComplete="current-password"
+                      autoComplete="off"
                       disabled={isLoading}
                       aria-invalid={Boolean(passwordError)}
                       aria-describedby={passwordError ? "password-error" : undefined}
