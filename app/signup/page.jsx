@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { registerUser } from "../utils/authApi";
 import "../login/Login.css";
@@ -101,6 +101,12 @@ export default function Signup() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const firstNameInputRef = useRef(null);
+  const lastNameInputRef = useRef(null);
+  const emailInputRef = useRef(null);
+  const teamNameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const confirmPasswordInputRef = useRef(null);
 
   const fullName = useMemo(
     () => `${firstName} ${lastName}`.trim().replace(/\s+/g, " "),
@@ -124,6 +130,40 @@ export default function Signup() {
     ],
     [password]
   );
+
+  const clearAutofilledInputs = useCallback(() => {
+    const fields = [
+      [firstNameInputRef, firstName],
+      [lastNameInputRef, lastName],
+      [emailInputRef, email],
+      [teamNameInputRef, teamName],
+      [passwordInputRef, password],
+      [confirmPasswordInputRef, confirmPassword],
+    ];
+
+    fields.forEach(([ref, value]) => {
+      const element = ref.current;
+      if (element && !value && element.value) {
+        element.value = "";
+      }
+    });
+  }, [confirmPassword, email, firstName, lastName, password, teamName]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    clearAutofilledInputs();
+
+    const frameId = window.requestAnimationFrame(clearAutofilledInputs);
+    const timeoutId = window.setTimeout(clearAutofilledInputs, 300);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [clearAutofilledInputs]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -221,7 +261,7 @@ export default function Signup() {
 
         <section className="login-card signup-card" aria-label="Create account form">
           <div className="login-card__inner signup-card__inner">
-            <form onSubmit={handleSubmit} className="login-form signup-form">
+            <form onSubmit={handleSubmit} className="login-form signup-form" autoComplete="off">
               {error && (
                 <div className="login-alert" role="alert">
                   <svg
@@ -253,14 +293,15 @@ export default function Signup() {
                   <div className="login-field__control">
                     <SignupIcon type="user" />
                     <input
+                      ref={firstNameInputRef}
                       type="text"
                       id="firstName"
-                      name="firstName"
+                      name="signup-first-name"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="John"
+                      placeholder="Enter first name"
                       className="login-input"
-                      autoComplete="given-name"
+                      autoComplete="off"
                       disabled={isLoading}
                     />
                   </div>
@@ -273,14 +314,15 @@ export default function Signup() {
                   <div className="login-field__control">
                     <SignupIcon type="user" />
                     <input
+                      ref={lastNameInputRef}
                       type="text"
                       id="lastName"
-                      name="lastName"
+                      name="signup-last-name"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
-                      placeholder="Doe"
+                      placeholder="Enter last name"
                       className="login-input"
-                      autoComplete="family-name"
+                      autoComplete="off"
                       disabled={isLoading}
                     />
                   </div>
@@ -294,16 +336,18 @@ export default function Signup() {
                 <div className="login-field__control">
                   <SignupIcon type="mail" />
                   <input
+                    ref={emailInputRef}
                     type="email"
                     id="email"
-                    name="email"
+                    name="signup-email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="john@smracing.com"
+                    placeholder="Enter your email address"
                     className="login-input"
-                    autoComplete="email"
+                    autoComplete="off"
                     autoCapitalize="none"
                     autoCorrect="off"
+                    inputMode="email"
                     spellCheck="false"
                     disabled={isLoading}
                   />
@@ -317,13 +361,15 @@ export default function Signup() {
                 <div className="login-field__control">
                   <SignupIcon type="user" />
                   <input
+                    ref={teamNameInputRef}
                     type="text"
                     id="teamName"
-                    name="teamName"
+                    name="signup-team-name"
                     value={teamName}
                     onChange={(e) => setTeamName(e.target.value)}
-                    placeholder="Your Racing Team"
+                    placeholder="Enter team name"
                     className="login-input"
+                    autoComplete="off"
                     disabled={isLoading}
                   />
                 </div>
@@ -338,9 +384,10 @@ export default function Signup() {
                 <div className="login-field__control">
                   <SignupIcon type="lock" />
                   <input
+                    ref={passwordInputRef}
                     type="password"
                     id="password"
-                    name="password"
+                    name="signup-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
@@ -366,9 +413,10 @@ export default function Signup() {
                 <div className="login-field__control">
                   <SignupIcon type="lock" />
                   <input
+                    ref={confirmPasswordInputRef}
                     type="password"
                     id="confirmPassword"
-                    name="confirmPassword"
+                    name="signup-confirm-password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
