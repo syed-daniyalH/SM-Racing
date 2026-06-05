@@ -320,7 +320,8 @@ export default function LoginContent() {
     });
   }, []);
 
-  const submitLogin = useCallback(async (nextEmail, nextPassword) => {
+  const submitLogin = useCallback(async (nextEmail, nextPassword, options = {}) => {
+    const { reflectInForm = true } = options;
     setError("");
     setSuccess("");
     setSuccessTitle("");
@@ -329,8 +330,10 @@ export default function LoginContent() {
     const sanitizedEmail = String(nextEmail || "").trim();
     const sanitizedPassword = String(nextPassword || "");
 
-    setEmail(sanitizedEmail);
-    setPassword(sanitizedPassword);
+    if (reflectInForm) {
+      setEmail(sanitizedEmail);
+      setPassword(sanitizedPassword);
+    }
 
     if (!sanitizedEmail || !sanitizedPassword) {
       setError("Please enter both email and password.");
@@ -374,14 +377,28 @@ export default function LoginContent() {
         loginError?.response?.data?.message ||
         loginError?.response?.data?.error ||
         (typeof loginError === "string" ? loginError : "");
+      const normalizedRawCandidate =
+        typeof rawCandidate === "string" ? rawCandidate.trim().toLowerCase() : "";
+      const looksLikeConnectivityFailure =
+        normalizedRawCandidate.includes("network error") ||
+        normalizedRawCandidate.includes("service unavailable") ||
+        normalizedRawCandidate.includes("econnrefused") ||
+        normalizedRawCandidate.includes("failed to fetch") ||
+        normalizedRawCandidate.includes("connect") ||
+        normalizedRawCandidate.includes("socket hang up");
 
       if (status === 404) {
         errorMessage =
           "Authentication service unavailable. Please check the backend server and API URL.";
       } else if (status === 500) {
-        errorMessage = "Server error. Please try again later.";
+        errorMessage = looksLikeConnectivityFailure
+          ? "Authentication service unavailable. Please check the backend server and API URL."
+          : "Server error. Please try again later.";
       } else if (status === 401) {
         errorMessage = "Invalid email or password.";
+      } else if (!status && looksLikeConnectivityFailure) {
+        errorMessage =
+          "Authentication service unavailable. Please check the backend server and API URL.";
       } else {
         errorMessage = safeErrorMessage(rawCandidate, errorMessage);
       }
@@ -407,7 +424,9 @@ export default function LoginContent() {
     async (portalKey) => {
       const shortcutLogin = portalLogins[portalKey] || DEFAULT_PORTAL_LOGINS[portalKey];
       setShowPassword(false);
-      await submitLogin(shortcutLogin.email, shortcutLogin.password);
+      await submitLogin(shortcutLogin.email, shortcutLogin.password, {
+        reflectInForm: false,
+      });
     },
     [portalLogins, submitLogin],
   );
