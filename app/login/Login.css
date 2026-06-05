@@ -340,19 +340,19 @@
 
 .login-shortcut {
   position: relative;
-  min-height: 5.25rem;
+  min-height: 4.25rem;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.55rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
   padding: 0.9rem 0.95rem;
   border-radius: 0.9rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
     linear-gradient(180deg, rgba(26, 32, 45, 0.95) 0%, rgba(14, 18, 27, 0.98) 100%);
   color: var(--login-text);
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.22),
@@ -422,9 +422,7 @@
   opacity: 0.78;
 }
 
-.login-shortcut__label,
-.login-shortcut__meta,
-.login-shortcut__badge {
+.login-shortcut__label {
   position: relative;
   z-index: 1;
 }
@@ -434,26 +432,6 @@
   font-weight: 800;
   letter-spacing: 0.04em;
   color: #ffffff;
-}
-
-.login-shortcut__meta {
-  font-size: 0.82rem;
-  color: var(--login-text-muted);
-  word-break: break-word;
-}
-
-.login-shortcut__badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.5rem;
-  padding: 0.14rem 0.55rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #eef5ff;
 }
 
 .login-alert {

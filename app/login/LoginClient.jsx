@@ -485,8 +485,6 @@ export default function LoginContent() {
                           disabled={isLoading}
                         >
                           <span className="login-shortcut__label">{shortcutLogin.label}</span>
-                          <span className="login-shortcut__meta">{shortcutLogin.email}</span>
-                          <span className="login-shortcut__badge">Saved password</span>
                         </button>
                       );
                     })}
