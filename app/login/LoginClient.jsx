@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "../context/AuthContext";
@@ -11,8 +11,71 @@ const TELEMETRY_BACKGROUND =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663611619053/EBPeWtZXBpCFLD2Dqq5aDH/racing-telemetry-bg-TCNJDDSXNs3PoAhwXNBQab.webp";
 const CHECKERED_FLAG =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663611619053/EBPeWtZXBpCFLD2Dqq5aDH/checkered-flag-icon-BK4bojoYYoDd6y4gzs53PF.webp";
+const SAVED_PORTAL_LOGINS_KEY = "sm2_saved_portal_logins";
+const DEFAULT_PORTAL_LOGINS = {
+  admin: {
+    email: "admin@smracing.com",
+    password: "123456",
+    label: "Login as Admin",
+    route: "/admin/users",
+  },
+  driver: {
+    email: "alex@smracing.com",
+    password: "Alex@123",
+    label: "Login as Driver",
+    route: "/events",
+  },
+};
+const PORTAL_LOGIN_ORDER = ["admin", "driver"];
 
 const hasOwnerAccess = (role) => ["OWNER", "ADMIN"].includes(String(role || "").toUpperCase());
+const getPortalKeyForRole = (role) => (hasOwnerAccess(role) ? "admin" : "driver");
+
+const normalizePortalLogin = (portalKey, candidate = {}) => ({
+  ...DEFAULT_PORTAL_LOGINS[portalKey],
+  email:
+    typeof candidate.email === "string" && candidate.email.trim()
+      ? candidate.email.trim()
+      : DEFAULT_PORTAL_LOGINS[portalKey].email,
+  password:
+    typeof candidate.password === "string" && candidate.password
+      ? candidate.password
+      : DEFAULT_PORTAL_LOGINS[portalKey].password,
+});
+
+const mergePortalLogins = (candidate = {}) => ({
+  admin: normalizePortalLogin("admin", candidate.admin),
+  driver: normalizePortalLogin("driver", candidate.driver),
+});
+
+const readSavedPortalLogins = () => {
+  if (typeof window === "undefined") {
+    return mergePortalLogins();
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(SAVED_PORTAL_LOGINS_KEY);
+    if (!storedValue) {
+      return mergePortalLogins();
+    }
+
+    return mergePortalLogins(JSON.parse(storedValue));
+  } catch (error) {
+    console.warn("Failed to read saved portal logins:", error);
+    return mergePortalLogins();
+  }
+};
+
+const persistPortalLogins = (portalLogins) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(
+    SAVED_PORTAL_LOGINS_KEY,
+    JSON.stringify(mergePortalLogins(portalLogins)),
+  );
+};
 
 const isHtmlLikeError = (value) => {
   if (typeof value !== "string") {
@@ -160,6 +223,7 @@ function ArrowIcon() {
 export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [portalLogins, setPortalLogins] = useState(() => mergePortalLogins());
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -169,8 +233,6 @@ export default function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
-  const usernameInputRef = useRef(null);
-  const passwordInputRef = useRef(null);
 
   const backgroundStyle = useMemo(
     () => ({
@@ -220,6 +282,12 @@ export default function LoginContent() {
     router.replace(hasOwnerAccess(user.role) ? "/admin/users" : "/events");
   }, [router, user]);
 
+  useEffect(() => {
+    const savedPortalLogins = readSavedPortalLogins();
+    setPortalLogins(savedPortalLogins);
+    persistPortalLogins(savedPortalLogins);
+  }, []);
+
   const emailError = useMemo(() => {
     if (!error) return "";
     if (error.toLowerCase().includes("email")) {
@@ -236,61 +304,56 @@ export default function LoginContent() {
     return "";
   }, [error]);
 
-  const clearAutofilledCredentials = useCallback(() => {
-    const usernameValue = usernameInputRef.current?.value ?? "";
-    const passwordValue = passwordInputRef.current?.value ?? "";
+  const savePortalLogin = useCallback((portalKey, credentials) => {
+    setPortalLogins((currentLogins) => {
+      const nextLogins = mergePortalLogins({
+        ...currentLogins,
+        [portalKey]: {
+          ...currentLogins[portalKey],
+          email: credentials.email,
+          password: credentials.password,
+        },
+      });
 
-    if (usernameValue && email === "") {
-      usernameInputRef.current.value = "";
-    }
+      persistPortalLogins(nextLogins);
+      return nextLogins;
+    });
+  }, []);
 
-    if (passwordValue && password === "") {
-      passwordInputRef.current.value = "";
-    }
-  }, [email, password]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    clearAutofilledCredentials();
-
-    const frameId = window.requestAnimationFrame(clearAutofilledCredentials);
-    const timeoutId = window.setTimeout(clearAutofilledCredentials, 300);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.clearTimeout(timeoutId);
-    };
-  }, [clearAutofilledCredentials]);
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const submitLogin = useCallback(async (nextEmail, nextPassword) => {
     setError("");
     setSuccess("");
     setSuccessTitle("");
+    setAccessNotice("");
 
-    const formData = new FormData(event.currentTarget);
-    const nextEmail = String(formData.get("login-username") || email).trim();
-    const nextPassword = String(formData.get("login-password") || password);
+    const sanitizedEmail = String(nextEmail || "").trim();
+    const sanitizedPassword = String(nextPassword || "");
 
-    if (!nextEmail || !nextPassword) {
+    setEmail(sanitizedEmail);
+    setPassword(sanitizedPassword);
+
+    if (!sanitizedEmail || !sanitizedPassword) {
       setError("Please enter both email and password.");
-      return;
+      return false;
     }
 
     setIsLoading(true);
 
     try {
-      const response = await loginUser({ email: nextEmail, password: nextPassword });
+      const response = await loginUser({ email: sanitizedEmail, password: sanitizedPassword });
       const userData = response.user || response.data?.user || response;
       const token = response.token || response.data?.token || response.accessToken;
 
       if (userData) {
+        const portalKey = getPortalKeyForRole(userData.role || userData.roleName);
+
+        savePortalLogin(portalKey, {
+          email: sanitizedEmail,
+          password: sanitizedPassword,
+        });
         login(userData, token);
-        router.replace(hasOwnerAccess(userData.role || userData.roleName) ? "/admin/users" : "/events");
-        return;
+        router.replace(portalLogins[portalKey]?.route || DEFAULT_PORTAL_LOGINS[portalKey].route);
+        return true;
       }
 
       setError(
@@ -298,6 +361,7 @@ export default function LoginContent() {
           safeErrorMessage(response.error, "") ||
           "Login failed. Invalid response from server.",
       );
+      return false;
     } catch (loginError) {
       console.error("Login error:", loginError);
 
@@ -323,10 +387,30 @@ export default function LoginContent() {
       }
 
       setError(errorMessage);
+      return false;
     } finally {
       setIsLoading(false);
     }
+  }, [login, portalLogins, router, savePortalLogin]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    const formData = new FormData(event.currentTarget);
+    const nextEmail = String(formData.get("login-username") || email).trim();
+    const nextPassword = String(formData.get("login-password") || password);
+
+    await submitLogin(nextEmail, nextPassword);
   };
+
+  const handlePortalShortcut = useCallback(
+    async (portalKey) => {
+      const shortcutLogin = portalLogins[portalKey] || DEFAULT_PORTAL_LOGINS[portalKey];
+      setShowPassword(false);
+      await submitLogin(shortcutLogin.email, shortcutLogin.password);
+    },
+    [portalLogins, submitLogin],
+  );
 
   return (
     <div className="login-page">
@@ -359,7 +443,7 @@ export default function LoginContent() {
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="login-form" autoComplete="off">
+              <form onSubmit={handleSubmit} className="login-form" autoComplete="on">
                 {accessNotice && (
                   <div className="login-alert" role="status">
                     <AlertIcon />
@@ -380,6 +464,35 @@ export default function LoginContent() {
                   </div>
                 )}
 
+                <div className="login-shortcuts">
+                  <div className="login-shortcuts__header">
+                    <p className="login-shortcuts__eyebrow">Quick Access</p>
+                    <p className="login-shortcuts__copy">
+                      Saved portal passwords let Admin and Driver sign in with one click.
+                    </p>
+                  </div>
+
+                  <div className="login-shortcuts__grid">
+                    {PORTAL_LOGIN_ORDER.map((portalKey) => {
+                      const shortcutLogin = portalLogins[portalKey];
+
+                      return (
+                        <button
+                          key={portalKey}
+                          type="button"
+                          className={`login-shortcut login-shortcut--${portalKey}`}
+                          onClick={() => handlePortalShortcut(portalKey)}
+                          disabled={isLoading}
+                        >
+                          <span className="login-shortcut__label">{shortcutLogin.label}</span>
+                          <span className="login-shortcut__meta">{shortcutLogin.email}</span>
+                          <span className="login-shortcut__badge">Saved password</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="login-field">
                   <label htmlFor="login-email" className="login-field__label">
                     Email Address
@@ -387,18 +500,17 @@ export default function LoginContent() {
                   <div className="login-field__control">
                     <LoginInputIcon type="mail" />
                     <input
-                      ref={usernameInputRef}
-                      type="text"
+                      type="email"
                       id="login-email"
                       name="login-username"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
-                      placeholder="Enter your username"
+                      placeholder="Enter your email"
                       className="login-input"
-                      autoComplete="off"
+                      autoComplete="username"
                       autoCapitalize="none"
                       autoCorrect="off"
-                      inputMode="text"
+                      inputMode="email"
                       spellCheck="false"
                       disabled={isLoading}
                       aria-invalid={Boolean(emailError)}
@@ -422,7 +534,6 @@ export default function LoginContent() {
                   <div className="login-field__control login-field__control--password">
                     <LoginInputIcon type="lock" />
                     <input
-                      ref={passwordInputRef}
                       type={showPassword ? "text" : "password"}
                       id="login-password"
                       name="login-password"
@@ -430,7 +541,7 @@ export default function LoginContent() {
                       onChange={(event) => setPassword(event.target.value)}
                       placeholder="Enter your password"
                       className="login-input login-input--password"
-                      autoComplete="off"
+                      autoComplete="current-password"
                       disabled={isLoading}
                       aria-invalid={Boolean(passwordError)}
                       aria-describedby={passwordError ? "password-error" : undefined}
