@@ -152,7 +152,7 @@ export default function Navbar() {
     },
     {
       href: "/admin/submission-review-dashboard",
-      label: "Submission Review",
+      label: "Session Review",
       icon: FactCheckOutlinedIcon,
       active:
         pathname === "/admin/submissions" ||

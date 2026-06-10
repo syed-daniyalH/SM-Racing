@@ -99,7 +99,7 @@ export default function Footer() {
         { label: "Vehicle Management", href: "/admin/vehicles" },
         { label: "Track Management", href: "/admin/tracks" },
         { label: "Event Management", href: "/admin/events" },
-        { label: "Submission Review", href: "/admin/submissions" },
+        { label: "Session Review", href: "/admin/submissions" },
       ]
     : [
         { label: "Events", href: "/events" },

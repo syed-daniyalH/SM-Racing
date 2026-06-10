@@ -56,8 +56,8 @@ export default function SubmissionList({ section }) {
       getItemKey={(item) => item.reference}
       listTitle="Latest submissions"
       listSubtitle="Recent records in a compact queue, with the selected submission expanded on the right."
-      detailTitle="Submission review"
-      detailSubtitle="The selected row opens in the same review workspace style used across the owner portal."
+      detailTitle="Session Review"
+      detailSubtitle="The selected row opens in the same session review workspace style used across the owner portal."
       emptyTitle="No submissions"
       emptyMessage="No submission records were available for this response."
       renderRow={({ item, selected, onSelect }) => (

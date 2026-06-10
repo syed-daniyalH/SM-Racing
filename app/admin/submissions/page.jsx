@@ -556,7 +556,7 @@ export default function SubmissionReviewPage() {
               : "REVIEWED",
       reviewerId: user?.id || null,
       reviewerName: user?.name || user?.email || null,
-      note: "Validation re-run from Submission Review monitor.",
+      note: "Validation re-run from Session Review monitor.",
     });
 
     await persistAnalysisUpdate(
@@ -609,7 +609,7 @@ export default function SubmissionReviewPage() {
       reviewState: "ARCHIVED",
       reviewerId: user?.id || null,
       reviewerName: user?.name || user?.email || null,
-      note: "Archived from the Submission Review monitor.",
+      note: "Archived from the Session Review monitor.",
     });
 
     await persistAnalysisUpdate(
@@ -661,7 +661,7 @@ export default function SubmissionReviewPage() {
     }
   };
 
-  const handleExportRows = (rows, format = "csv", fileName = "submission-review") => {
+  const handleExportRows = (rows, format = "csv", fileName = "session-review") => {
     const headers = [
       "ID",
       "Date",
@@ -731,7 +731,7 @@ export default function SubmissionReviewPage() {
 
   const handleExportCsv = () => {
     const rows = buildSubmissionExportRows(filteredSubmissions);
-    handleExportRows(rows, "csv", "submission-review-dashboard");
+    handleExportRows(rows, "csv", "session-review-dashboard");
     setNotice({
       tone: "success",
       message: `Exported ${rows.length} submission${rows.length === 1 ? "" : "s"} to CSV.`,
@@ -740,7 +740,7 @@ export default function SubmissionReviewPage() {
 
   const handleExportExcel = () => {
     const rows = buildSubmissionExportRows(filteredSubmissions);
-    handleExportRows(rows, "excel", "submission-review-dashboard");
+    handleExportRows(rows, "excel", "session-review-dashboard");
     setNotice({
       tone: "success",
       message: `Exported ${rows.length} submission${rows.length === 1 ? "" : "s"} to Excel.`,
@@ -941,7 +941,7 @@ export default function SubmissionReviewPage() {
         <header className="submission-monitor-header">
           <div className="submission-monitor-copy">
             <p className="submission-monitor-eyebrow">Owner Operations</p>
-            <h1>Submission Review</h1>
+            <h1>Session Review</h1>
             <p className="submission-monitor-subtitle">
               Inspect Make.com bulk submissions in an Excel-style sheet, monitor system state, and open a polished right-side drawer for full detail.
             </p>
@@ -1345,7 +1345,7 @@ export default function SubmissionReviewPage() {
         title="Delete Submission"
         message={
           deleteTarget
-            ? `Delete ${deleteTarget.submissionId || deleteTarget.submission_ref || getSubmissionId(deleteTarget)}? This removes the submission review record and its normalized structured detail rows from the owner system.`
+            ? `Delete ${deleteTarget.submissionId || deleteTarget.submission_ref || getSubmissionId(deleteTarget)}? This removes the session review record and its normalized structured detail rows from the owner system.`
             : "Delete this submission?"
         }
         confirmLabel={busyAction === `delete:${deleteTarget?.id}` ? "Working..." : "Delete Submission"}

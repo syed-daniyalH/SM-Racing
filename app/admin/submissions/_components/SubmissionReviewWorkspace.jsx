@@ -557,7 +557,7 @@ export const buildWorkspaceFromRecord = (record) => {
 
   return {
     hero: {
-      eyebrow: "Submission Review",
+      eyebrow: "Session Review",
       title: submissionId,
       subtitle:
         "Inspect raw input, parsed session details, sync state, and system findings from the selected record.",
@@ -772,7 +772,7 @@ const buildWorkspaceFromItem = (item) => {
 
   return {
     hero: {
-      eyebrow: "Submission Review",
+      eyebrow: "Session Review",
       title: submissionRef,
       subtitle: subtitle,
       badges: heroBadges,
@@ -803,7 +803,7 @@ const buildWorkspaceFromItem = (item) => {
     },
     raw: {
       title: "Response Snapshot",
-      description: "The chatbot result is displayed with the same review-style framing as Submission Review.",
+      description: "The chatbot result is displayed with the same review-style framing as Session Review.",
       cards: rawCards,
     },
     parsedSections,
