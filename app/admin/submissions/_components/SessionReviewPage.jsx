@@ -38,7 +38,6 @@ import {
 import {
   getSessionEventTrackLabel,
   getSessionReportHref,
-  getSessionRunGroupLabel,
   getSessionSourceKey,
   getSessionSourceLabel,
   getSessionSourceSubtext,
@@ -65,7 +64,6 @@ const TABLE_COLUMNS = [
   { key: "driver", label: "Driver", width: "minmax(190px, 1.2fr)", sortable: true },
   { key: "vehicle", label: "Vehicle", width: "minmax(170px, 1.08fr)", sortable: true },
   { key: "eventTrack", label: "Event / Track", width: "minmax(220px, 1.35fr)", sortable: true },
-  { key: "runGroup", label: "Run Group", width: "minmax(130px, 0.86fr)", sortable: true },
   { key: "submittedVia", label: "Submitted Via", width: "minmax(140px, 0.88fr)", sortable: true },
   { key: "actions", label: "Actions", width: "minmax(360px, 1.65fr)", sortable: false },
 ];
@@ -117,8 +115,6 @@ const getRowSortValue = (record, key) => {
       return String(getSubmissionVehicleLabel(record) || "");
     case "eventTrack":
       return String(getSubmissionEventLabel(record) || "");
-    case "runGroup":
-      return String(getSessionRunGroupLabel(record) || "");
     case "submittedVia":
       return String(getSessionSourceLabel(record) || "");
     default:
@@ -524,8 +520,6 @@ export default function SessionReviewPage() {
     const dateTimeText = getSubmissionDateTimeText(submission);
     const driverLabel = getSubmissionDriverLabel(submission);
     const vehicleLabel = getSubmissionVehicleLabel(submission);
-    const runGroupLabel = getSessionRunGroupLabel(submission);
-
     switch (column.key) {
       case "submissionId":
         return (
@@ -570,13 +564,6 @@ export default function SessionReviewPage() {
           <div className="submission-cell-stack">
             <strong>{eventTrack.main}</strong>
             {eventTrack.sub ? <span className="submission-cell-subtext">{eventTrack.sub}</span> : null}
-          </div>
-        );
-      case "runGroup":
-        return (
-          <div className="submission-cell-stack">
-            <strong>{runGroupLabel}</strong>
-            <span className="submission-cell-subtext">Run Group</span>
           </div>
         );
       case "submittedVia":
