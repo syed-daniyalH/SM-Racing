@@ -6,10 +6,8 @@ import DatasetOutlinedIcon from "@mui/icons-material/DatasetOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import EventOutlinedIcon from "@mui/icons-material/EventOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
-import SourceOutlinedIcon from "@mui/icons-material/SourceOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import ArrowDownwardOutlinedIcon from "@mui/icons-material/ArrowDownwardOutlined";
@@ -597,22 +595,6 @@ export default function SessionReviewPage() {
               onClick={(event) => {
                 event.stopPropagation();
                 openDrawer(submission, "overview");
-              }}
-            />
-            <RowActionButton
-              label="Source Data"
-              icon={SourceOutlinedIcon}
-              onClick={(event) => {
-                event.stopPropagation();
-                openDrawer(submission, "source-data");
-              }}
-            />
-            <RowActionButton
-              label="History"
-              icon={HistoryOutlinedIcon}
-              onClick={(event) => {
-                event.stopPropagation();
-                openDrawer(submission, "history");
               }}
             />
           </div>
