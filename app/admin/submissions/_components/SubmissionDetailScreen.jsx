@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
+import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
@@ -13,8 +14,10 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ErrorOutlineOutlinedIcon from "@mui/icons-material/ErrorOutlineOutlined";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
 import NoteAltOutlinedIcon from "@mui/icons-material/NoteAltOutlined";
 import ReceiptLongOutlinedIcon from "@mui/icons-material/ReceiptLongOutlined";
+import RuleOutlinedIcon from "@mui/icons-material/RuleOutlined";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
 import TrackChangesOutlinedIcon from "@mui/icons-material/TrackChangesOutlined";
@@ -30,9 +33,9 @@ import {
   getApiErrorMessage,
 } from "../../fleet/_components/fleetManagementHelpers";
 import { updateSubmission } from "../../../utils/submissionApi";
+import { sendChatbotQuery } from "../../../utils/chatbotApi";
 import ProtectedAudioPlayer from "./ProtectedAudioPlayer";
 import {
-  buildReviewAnalysisPatch,
   buildSubmissionMonitorRecord,
   getSubmissionDriverLabel,
   getSubmissionEventLabel,
@@ -40,6 +43,21 @@ import {
   getSubmissionTrackLabel,
   getSubmissionVehicleLabel,
 } from "./submissionReviewHelpers";
+import {
+  getSessionDateTimeLabel,
+  getSessionEventTrackLabel,
+  getSessionLastUpdatedByLabel,
+  getSessionNotesSummary,
+  getSessionReportHref,
+  getSessionRunGroupLabel,
+  getSessionSourceAttachment,
+  getSessionSourceBody,
+  getSessionSourceKey,
+  getSessionSourceLabel,
+  getSessionSourceLabelHint,
+  getSessionSourceSubtext,
+  getSessionSourceTone,
+} from "./sessionReviewUiHelpers";
 
 const field = (label, path, options = {}) => ({ label, path, ...options });
 
@@ -277,6 +295,109 @@ const CATEGORY_SECTIONS = [
     groups: TIRE_INVENTORY_GROUPS,
   },
 ];
+
+const SOURCE_FIELDS = [
+  field("Driver Notes", ["raw_text"], {
+    type: "textarea",
+    span: 2,
+    rows: 5,
+    placeholder: "Driver notes, OCR text, or transcript summary.",
+  }),
+  field("Photo", ["image_url"], {
+    type: "text",
+    span: 2,
+    placeholder: "Source image or media URL",
+  }),
+];
+
+const SOURCE_SECTION = {
+  key: "source_notes",
+  title: "Source Notes",
+  groups: [
+    {
+      title: "Source Notes",
+      fields: SOURCE_FIELDS,
+    },
+  ],
+};
+
+const OVERVIEW_CONTEXT_FIELDS = [
+  field("Submission ID", ["submissionId"], { type: "text" }),
+  field("Driver", ["driver"], { type: "text" }),
+  field("Vehicle", ["vehicle"], { type: "text" }),
+  field("Event / Track", ["eventTrack"], { type: "text" }),
+  field("Run Group", ["runGroup"], { type: "text" }),
+  field("Submitted Via", ["source"], { type: "text" }),
+  field("Confidence", ["confidence"], { type: "text" }),
+  field("Created / Updated", ["timestamps"], { type: "text" }),
+  field("Last Updated By", ["lastUpdatedBy"], { type: "text" }),
+];
+
+const OVERVIEW_CONTEXT_SECTION = {
+  key: "overview_context",
+  title: "Session Context",
+  groups: [
+    {
+      title: "Session Context",
+      fields: OVERVIEW_CONTEXT_FIELDS,
+    },
+  ],
+};
+
+const OVERVIEW_SECTION = {
+  key: "overview",
+  title: "Overview",
+  groups: [
+    SEANCES_GROUPS[0],
+    {
+      title: "Source Notes",
+      fields: SOURCE_FIELDS,
+    },
+  ],
+};
+
+const SECTION_TITLES = {
+  pressures: "Tire Pressures",
+  suspensions: "Suspension",
+  alignment: "Alignment",
+  tire_temperatures: "Tire Temperatures",
+  tire_history: "Tire History",
+  tire_inventory: "Tire Inventory",
+};
+
+const FIELD_LABELS = {
+  date: "Date",
+  time: "Time",
+  track: "Track",
+  driver_id: "Driver",
+  vehicle_id: "Vehicle",
+  session_type: "Session Type",
+  session_number: "Session Number",
+  duration_min: "Duration",
+  laps: "Laps",
+  conditions: "Conditions",
+  feedback: "Feedback",
+  wheelbase_mm: "Wheelbase",
+  raw_text: "Driver Notes",
+  image_url: "Photo",
+  pressures: "Tire Pressures",
+  suspension: "Suspension",
+  alignment: "Alignment",
+  tire_temperatures: "Tire Temperatures",
+  tire_history: "Tire History",
+  tire_inventory: "Tire Inventory",
+  run_group: "Run Group",
+};
+
+const TAB_CONFIG = [
+  { key: "overview", label: "Overview", icon: ReceiptLongOutlinedIcon },
+  { key: "setup", label: "Setup Data", icon: TrackChangesOutlinedIcon },
+  { key: "source", label: "Source Data", icon: DescriptionOutlinedIcon },
+  { key: "validation", label: "Validation", icon: ErrorOutlineOutlinedIcon },
+  { key: "history", label: "History", icon: TimelineOutlinedIcon },
+];
+
+const SETUP_SECTIONS = CATEGORY_SECTIONS.filter((section) => section.key !== "seances");
 
 function HistoryIcon(props) {
   return <TimelineOutlinedIcon {...props} />;
@@ -614,6 +735,165 @@ const buildSubmissionCsv = ({ record, draftPayload, draftAnalysis, timeline, att
   return `${headers.map(csvEscape).join(",")}\n${values.join(",")}\n`;
 };
 
+const humanizeFieldKey = (value) => {
+  const key = String(value ?? "").trim();
+  if (!key) {
+    return "";
+  }
+
+  if (FIELD_LABELS[key]) {
+    return FIELD_LABELS[key];
+  }
+
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const formatFieldList = (fields = []) =>
+  fields
+    .map((fieldName) => humanizeFieldKey(fieldName))
+    .filter(Boolean)
+    .join(", ");
+
+const getSectionDisplayTitle = (sectionKey) => {
+  if (sectionKey === "seances") {
+    return "Overview";
+  }
+
+  return SECTION_TITLES[sectionKey] || humanizeFieldKey(sectionKey);
+};
+
+const normalizeComparableValue = (value) => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeComparableValue(item)).join("|");
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value).trim();
+};
+
+const hasValueChanged = (left, right) => normalizeComparableValue(left) !== normalizeComparableValue(right);
+
+const buildValidationIssueRows = (record) => {
+  const rows = [];
+  const missingFields = Array.isArray(record?.missingFields) ? record.missingFields : [];
+  const failedFields = Array.isArray(record?.failedFields) ? record.failedFields : [];
+  const structuredWarnings = Array.isArray(record?.structuredWarnings) ? record.structuredWarnings : [];
+
+  if (missingFields.length) {
+    rows.push({
+      key: "missing-fields",
+      issue: "Missing fields",
+      section: "Overview",
+      recommendedFix: `Fill in ${formatFieldList(missingFields)}.`,
+      statusLabel: "Needs attention",
+      tone: "warning",
+    });
+  }
+
+  if (failedFields.length) {
+    rows.push({
+      key: "failed-fields",
+      issue: "Failed fields",
+      section: "Validation",
+      recommendedFix: `Review ${formatFieldList(failedFields)} and save the corrected values.`,
+      statusLabel: "Invalid",
+      tone: "danger",
+    });
+  }
+
+  if (record?.duplicateDetection?.isDuplicate) {
+    rows.push({
+      key: "duplicate-detection",
+      issue: "Duplicate submission",
+      section: "Validation",
+      recommendedFix: record.duplicateDetection.message || "Confirm this session is not a duplicate before saving.",
+      statusLabel: "Needs attention",
+      tone: "warning",
+    });
+  }
+
+  if (record?.driverVehicleMismatch) {
+    rows.push({
+      key: "driver-vehicle",
+      issue: "Driver / vehicle mismatch",
+      section: "Overview",
+      recommendedFix: "Make sure the selected vehicle belongs to the selected driver.",
+      statusLabel: "Invalid",
+      tone: "danger",
+    });
+  }
+
+  if (record?.trackNormalizationWarning) {
+    rows.push({
+      key: "track-normalization",
+      issue: "Track normalization",
+      section: "Overview",
+      recommendedFix: "Verify the event track and confirm the session is linked to the correct circuit.",
+      statusLabel: "Partial",
+      tone: "warning",
+    });
+  }
+
+  if (record?.runGroupNormalizationWarning) {
+    rows.push({
+      key: "run-group-normalization",
+      issue: "Run group normalization",
+      section: "Overview",
+      recommendedFix: "Confirm the run group text from the event and save the normalized value.",
+      statusLabel: "Partial",
+      tone: "warning",
+    });
+  }
+
+  if (structuredWarnings.length) {
+    rows.push({
+      key: "structured-normalization",
+      issue: "Structured normalization",
+      section: "Source Data",
+      recommendedFix: "Review the structured ingest warnings before approving the final payload.",
+      statusLabel: "Partial",
+      tone: "warning",
+    });
+  }
+
+  if (record?.confidence !== null && record?.confidence !== undefined && record.confidence < 80) {
+    rows.push({
+      key: "confidence",
+      issue: "Confidence score",
+      section: "Source Data",
+      recommendedFix: `Confidence is ${record.confidenceLabel}. Recheck the raw source before saving.`,
+      statusLabel: "Needs attention",
+      tone: "warning",
+    });
+  }
+
+  if (!rows.length) {
+    rows.push({
+      key: "clean",
+      issue: "No blocking issues",
+      section: "Validation",
+      recommendedFix: "The current session data looks consistent.",
+      statusLabel: "Complete",
+      tone: "success",
+    });
+  }
+
+  return rows;
+};
+
 const DownloadLink = ({ attachment }) => {
   if (!attachment?.url || (attachment.kind === "audio" && attachment.voiceSessionId)) {
     return null;
@@ -632,144 +912,142 @@ const DownloadLink = ({ attachment }) => {
   );
 };
 
-const EditableField = ({ field, value, isEditing, onChange }) => {
-  const inputId = `submission-detail-${field.path.join("-")}`;
+const SectionHeader = ({ icon: Icon, eyebrow, title, description, meta }) => (
+  <div className="submission-detail-section-head">
+    <div className="submission-section-heading">
+      <span className="submission-section-eyebrow">
+        {Icon ? <Icon fontSize="inherit" /> : null}
+        {eyebrow}
+      </span>
+      <h3>{title}</h3>
+      {description ? <p>{description}</p> : null}
+    </div>
+
+    {meta ? <div className="submission-detail-section-meta">{meta}</div> : null}
+  </div>
+);
+
+const InputField = ({
+  field,
+  source,
+  isEditing,
+  onChange,
+  hideLabel = false,
+  ariaLabel = "",
+  className = "",
+}) => {
+  if (!field) {
+    return null;
+  }
+
+  const inputId = `submission-edit-${field.path.join("-")}`;
+  const value = getValueAtPath(source, field.path);
   const displayValue = formatDisplayValue(value, field.type);
-  const hasFullWidth = field.span === 2;
+  const fullWidth = field.span === 2;
+  const wrapperClass = hideLabel
+    ? `submission-edit-inline-cell${fullWidth ? " submission-detail-field-span-2" : ""}${className ? ` ${className}` : ""}`
+    : `submission-detail-field${fullWidth ? " submission-detail-field-span-2" : ""}${className ? ` ${className}` : ""}`;
+  const controlClass = hideLabel
+    ? "submission-detail-input submission-edit-input submission-edit-input-inline"
+    : "submission-detail-input submission-edit-input";
+  const textAreaClass = hideLabel
+    ? "submission-detail-input submission-detail-textarea submission-edit-input submission-edit-textarea"
+    : "submission-detail-input submission-detail-textarea submission-edit-input submission-edit-textarea";
+  const labelText = ariaLabel || field.label;
+
+  const control = isEditing ? (
+    field.type === "textarea" ? (
+      <textarea
+        id={inputId}
+        className={textAreaClass}
+        rows={field.rows || 3}
+        placeholder={field.placeholder || ""}
+        value={toInputValue(value)}
+        aria-label={hideLabel ? labelText : undefined}
+        onChange={(event) => onChange(field.path, event.target.value)}
+      />
+    ) : field.options ? (
+      <select
+        id={inputId}
+        className={controlClass}
+        value={toInputValue(value)}
+        aria-label={hideLabel ? labelText : undefined}
+        onChange={(event) => onChange(field.path, event.target.value)}
+      >
+        <option value="">Not set</option>
+        {field.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    ) : (
+      <input
+        id={inputId}
+        className={controlClass}
+        type={field.type || "text"}
+        inputMode={field.type === "number" ? "decimal" : undefined}
+        placeholder={field.placeholder || ""}
+        value={toInputValue(value)}
+        aria-label={hideLabel ? labelText : undefined}
+        onChange={(event) => onChange(field.path, event.target.value)}
+      />
+    )
+  ) : (
+    <div className={`submission-detail-field-value${field.type === "textarea" ? " submission-detail-field-value-block" : ""}`}>
+      {displayValue}
+    </div>
+  );
+
+  if (hideLabel) {
+    return <div className={wrapperClass}>{control}</div>;
+  }
 
   return (
-    <label className={`submission-detail-field${hasFullWidth ? " submission-detail-field-span-2" : ""}`} htmlFor={inputId}>
+    <label className={wrapperClass} htmlFor={inputId}>
       <span className="submission-detail-field-label">
         {field.label}
         {field.required ? <span className="required-marker">*</span> : null}
       </span>
-
-      {isEditing ? (
-        field.type === "textarea" ? (
-          <textarea
-            id={inputId}
-            className="submission-detail-input submission-detail-textarea"
-            rows={field.rows || 3}
-            placeholder={field.placeholder || ""}
-            value={toInputValue(value)}
-            onChange={(event) => onChange(field.path, event.target.value)}
-          />
-        ) : field.options ? (
-          <select
-            id={inputId}
-            className="submission-detail-input"
-            value={toInputValue(value)}
-            onChange={(event) => onChange(field.path, event.target.value)}
-          >
-            <option value="">Not set</option>
-            {field.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            id={inputId}
-            className="submission-detail-input"
-            type={field.type || "text"}
-            placeholder={field.placeholder || ""}
-            value={toInputValue(value)}
-            onChange={(event) => onChange(field.path, event.target.value)}
-          />
-        )
-      ) : (
-        <div className={`submission-detail-field-value${field.type === "textarea" ? " submission-detail-field-value-block" : ""}`}>
-          {displayValue}
-        </div>
-      )}
-
+      {control}
       {field.help ? <span className="submission-detail-field-help">{field.help}</span> : null}
     </label>
   );
 };
 
-const FieldGroup = ({ group, payload, isEditing, onChange, sectionStatus }) => {
-  const fields = group.fields || [];
-  const totalFields = fields.length;
-  const presentCount = fields.filter((item) => isFilled(getValueAtPath(payload, item.path))).length;
+const FieldGridCard = ({ section, source, isEditing, onChange, record, title, description, icon: Icon }) => {
+  if (!section) {
+    return null;
+  }
+
+  const sectionStatus = buildSectionStatus(section, source, record);
+  const fields = section.groups.flatMap((group) => group.fields || []);
+  const cardTitle = title || getSectionDisplayTitle(section.key);
+  const cardDescription = description || section.subtitle || "";
 
   return (
-    <article className="submission-detail-group-card">
-      <div className="submission-detail-group-header">
-        <div>
-          <h4 className="submission-detail-group-title">{group.title}</h4>
-          <p className="submission-detail-group-copy">
-            {presentCount}/{totalFields} fields populated
-          </p>
-        </div>
-        <StatusBadge
-          label={sectionStatus.label}
-          tone={sectionStatus.tone}
-          title={sectionStatus.helper}
-        />
-      </div>
+    <section className="submission-section submission-detail-section-card">
+      <SectionHeader
+        icon={Icon || section.icon}
+        eyebrow={cardTitle}
+        title={cardTitle}
+        description={cardDescription}
+        meta={
+          <>
+            <StatusBadge label={sectionStatus.label} tone={sectionStatus.tone} title={sectionStatus.helper} />
+            <span className="submission-detail-section-score">{sectionStatus.helper}</span>
+          </>
+        }
+      />
 
-      <div className="submission-detail-field-grid">
+      <div className="submission-detail-field-grid submission-detail-field-grid-overview">
         {fields.map((item) => (
-          <EditableField
-            key={item.path.join(".")}
+          <InputField
+            key={`${section.key}-${item.path.join(".")}`}
             field={item}
-            value={getValueAtPath(payload, item.path)}
+            source={source}
             isEditing={isEditing}
             onChange={onChange}
-          />
-        ))}
-      </div>
-    </article>
-  );
-};
-
-const SectionCard = ({
-  section,
-  payload,
-  isEditing,
-  onChange,
-  record,
-}) => {
-  const sectionStatus = buildSectionStatus(section, payload, record);
-  const Icon = section.icon;
-  const allFields = section.groups.flatMap((group) => group.fields);
-  const populated = allFields.filter((item) => isFilled(getValueAtPath(payload, item.path))).length;
-
-  return (
-    <section id={section.key} className="submission-section submission-detail-section-card">
-      <div className="submission-detail-section-head">
-        <div className="submission-section-heading">
-          <span className="submission-section-eyebrow">
-            {Icon ? <Icon fontSize="inherit" /> : null}
-            {section.title}
-          </span>
-          <h3>{section.subtitle}</h3>
-          <p>
-            {populated}/{allFields.length} recorded fields are currently populated.
-          </p>
-        </div>
-
-        <div className="submission-detail-section-meta">
-          <StatusBadge
-            label={sectionStatus.label}
-            tone={sectionStatus.tone}
-            title={sectionStatus.helper}
-          />
-          <span className="submission-detail-section-score">{sectionStatus.helper}</span>
-        </div>
-      </div>
-
-      <div className="submission-detail-group-stack">
-        {section.groups.map((group) => (
-          <FieldGroup
-            key={`${section.key}-${group.title}`}
-            group={group}
-            payload={payload}
-            isEditing={isEditing}
-            onChange={onChange}
-            sectionStatus={sectionStatus}
           />
         ))}
       </div>
@@ -777,8 +1055,161 @@ const SectionCard = ({
   );
 };
 
+const MatrixSectionCard = ({ section, source, isEditing, onChange, record }) => {
+  if (!section) {
+    return null;
+  }
+
+  const sectionStatus = buildSectionStatus(section, source, record);
+  const title = getSectionDisplayTitle(section.key);
+  const description = section.subtitle || "";
+
+  const renderFieldGrid = (fields = [], columns = 2) => {
+    if (!fields.length) {
+      return null;
+    }
+
+    return (
+      <div
+        className="submission-detail-field-grid submission-edit-inline-grid"
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+      >
+        {fields.map((item) => (
+          <InputField
+            key={`${section.key}-${item.path.join(".")}`}
+            field={item}
+            source={source}
+            isEditing={isEditing}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  let leadingFields = [];
+  let trailingFields = [];
+  let rows = [];
+  let columns = [];
+
+  if (section.key === "pressures") {
+    const coreFields = section.groups[0]?.fields || [];
+    const coldFields = section.groups[1]?.fields || [];
+    const hotFields = section.groups[2]?.fields || [];
+
+    leadingFields = coreFields;
+    columns = ["Cold", "Hot"];
+    rows = [
+      { label: "FL", fields: [coldFields[0], hotFields[0]] },
+      { label: "FR", fields: [coldFields[1], hotFields[1]] },
+      { label: "RL", fields: [coldFields[2], hotFields[2]] },
+      { label: "RR", fields: [coldFields[3], hotFields[3]] },
+    ];
+  } else if (section.key === "suspensions") {
+    const damperFields = section.groups[0]?.fields || [];
+    const platformFields = section.groups[1]?.fields || [];
+
+    columns = ["FL", "FR", "RL", "RR"];
+    rows = [
+      { label: "Rebound", fields: damperFields.slice(0, 4) },
+      { label: "Bump", fields: damperFields.slice(4, 8) },
+      { label: "Ride Height", fields: platformFields.slice(0, 4) },
+    ];
+    trailingFields = platformFields.slice(4);
+  } else if (section.key === "alignment") {
+    const camberFields = section.groups[0]?.fields || [];
+    const toeCasterFields = section.groups[1]?.fields || [];
+    const rideFields = section.groups[2]?.fields || [];
+
+    columns = ["FL", "FR", "RL", "RR"];
+    rows = [{ label: "Camber", fields: camberFields }];
+    trailingFields = [...toeCasterFields, ...rideFields];
+  } else if (section.key === "tire_temperatures") {
+    const frontLeft = section.groups[0]?.fields || [];
+    const frontRight = section.groups[1]?.fields || [];
+    const rearLeft = section.groups[2]?.fields || [];
+    const rearRight = section.groups[3]?.fields || [];
+
+    columns = ["Inner", "Middle", "Outer"];
+    rows = [
+      { label: "FL", fields: [frontLeft[2], frontLeft[1], frontLeft[0]] },
+      { label: "FR", fields: [frontRight[2], frontRight[1], frontRight[0]] },
+      { label: "RL", fields: [rearLeft[2], rearLeft[1], rearLeft[0]] },
+      { label: "RR", fields: [rearRight[2], rearRight[1], rearRight[0]] },
+    ];
+  }
+
+  return (
+    <section className="submission-section submission-detail-section-card">
+      <SectionHeader
+        icon={section.icon}
+        eyebrow={title}
+        title={title}
+        description={description}
+        meta={
+          <>
+            <StatusBadge label={sectionStatus.label} tone={sectionStatus.tone} title={sectionStatus.helper} />
+            <span className="submission-detail-section-score">{sectionStatus.helper}</span>
+          </>
+        }
+      />
+
+      {leadingFields.length ? renderFieldGrid(leadingFields, 2) : null}
+
+      <div className="submission-edit-table-wrap">
+        <table className="submission-edit-table">
+          <thead>
+            <tr>
+              <th scope="col">{section.key === "pressures" ? "Position" : "Setting"}</th>
+              {columns.map((column) => (
+                <th scope="col" key={`${section.key}-${column}`}>
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${section.key}-${row.label}`}>
+                <th scope="row">{row.label}</th>
+                {row.fields.map((fieldDef, index) => (
+                  <td key={`${section.key}-${row.label}-${fieldDef?.path?.join(".") || index}`}>
+                    {fieldDef ? (
+                      <InputField
+                        field={fieldDef}
+                        source={source}
+                        isEditing={isEditing}
+                        onChange={onChange}
+                        hideLabel
+                        ariaLabel={`${row.label} ${columns[index]}`}
+                      />
+                    ) : (
+                      <span className="submission-edit-table-value">Not set</span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {trailingFields.length ? renderFieldGrid(trailingFields, trailingFields.length > 2 ? 3 : 2) : null}
+    </section>
+  );
+};
+
 const TimelineItem = ({ item }) => {
-  const toneClass = item.tone || "neutral";
+  const toneClass =
+    item.tone === "success"
+      ? "success"
+      : item.tone === "danger"
+        ? "danger"
+        : item.tone === "info"
+          ? "info"
+          : item.tone === "accent"
+            ? "accent"
+            : "neutral";
 
   return (
     <li className={`submission-detail-timeline-item submission-detail-timeline-${toneClass}`}>
@@ -787,14 +1218,11 @@ const TimelineItem = ({ item }) => {
           <div className="submission-detail-timeline-action">{item.action}</div>
           <div className="submission-detail-timeline-note">{item.note || "No note available."}</div>
         </div>
-        <StatusBadge
-                    label={item.actor || "Owner"}
-          tone={toneClass === "danger" ? "danger" : toneClass === "success" ? "success" : toneClass === "info" ? "info" : toneClass === "accent" ? "accent" : "neutral"}
-        />
+        {item.timestamp ? (
+          <StatusBadge label={formatDateTime(item.timestamp)} tone="neutral" />
+        ) : null}
       </div>
-      <div className="submission-detail-timeline-meta">
-        {item.timestamp ? formatDateTime(item.timestamp) : "No timestamp"}
-      </div>
+      <div className="submission-detail-timeline-meta">{item.actor || "System"}</div>
     </li>
   );
 };
@@ -802,6 +1230,11 @@ const TimelineItem = ({ item }) => {
 const AttachmentCard = ({ attachment }) => {
   const isAudio = attachment.kind === "audio";
   const isImage = attachment.kind === "image";
+  const isVideo = attachment.kind === "video";
+
+  if (!attachment?.url) {
+    return null;
+  }
 
   return (
     <article className="submission-detail-attachment-card">
@@ -831,6 +1264,8 @@ const AttachmentCard = ({ attachment }) => {
           src={attachment.url}
           downloadName={attachment.name || "voice-note"}
         />
+      ) : isVideo ? (
+        <video className="submission-detail-media" controls src={attachment.url} />
       ) : (
         <div className="submission-detail-media-placeholder">
           <VisibilityOutlinedIcon fontSize="inherit" />
@@ -845,6 +1280,17 @@ const AttachmentCard = ({ attachment }) => {
   );
 };
 
+const CompletionRow = ({ label, status, detail }) => (
+  <div className="submission-edit-completeness-row">
+    <span className="submission-edit-completeness-label">{label}</span>
+    <div className={`submission-edit-completion submission-edit-completion-${status.tone}`}>
+      <span className="submission-edit-completion-dot" />
+      <span className="submission-edit-completion-value">{status.label}</span>
+      {detail ? <span className="submission-edit-completion-detail">{detail}</span> : null}
+    </div>
+  </div>
+);
+
 export default function SubmissionDetailScreen({
   submission,
   allSubmissions = [],
@@ -853,35 +1299,74 @@ export default function SubmissionDetailScreen({
   initialEditMode = false,
 }) {
   const router = useRouter();
-
   const { user } = useAuth();
+
   const [liveSubmission, setLiveSubmission] = useState(submission);
   const [isEditing, setIsEditing] = useState(Boolean(initialEditMode));
   const [isSaving, setIsSaving] = useState(false);
-  const [busyAction, setBusyAction] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [activeTab, setActiveTab] = useState("setup");
+  const [draftPayload, setDraftPayload] = useState(() =>
+    cloneJson(submission?.payload || submission?.data || {}),
+  );
+  const [draftSource, setDraftSource] = useState(() => ({
+    raw_text: submission?.raw_text || submission?.rawText || "",
+    image_url: submission?.image_url || submission?.imageUrl || "",
+  }));
+  const [draftAnalysis, setDraftAnalysis] = useState(() =>
+    cloneJson(submission?.analysis_result || submission?.analysisResult || {}),
+  );
+  const [draftComment, setDraftComment] = useState(() =>
+    submission?.analysis_result?.admin_comment ||
+    submission?.analysisResult?.admin_comment ||
+    submission?.analysis_result?.comments ||
+    submission?.analysisResult?.comments ||
+    "",
+  );
+  const [aiSummary, setAiSummary] = useState(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
 
   const record = useMemo(
     () => buildSubmissionMonitorRecord(liveSubmission, allSubmissions),
     [allSubmissions, liveSubmission],
   );
 
-  const [draftPayload, setDraftPayload] = useState(() => cloneJson(record?.data || liveSubmission?.payload || {}));
-  const [draftAnalysis, setDraftAnalysis] = useState(() => cloneJson(record?.analysisResult || liveSubmission?.analysis_result || {}));
-  const [draftComment, setDraftComment] = useState(
-    record?.analysisResult?.admin_comment ||
+  const basePayload = useMemo(
+    () => cloneJson(record?.data || record?.payload || liveSubmission?.payload || {}),
+    [liveSubmission?.payload, record],
+  );
+  const baseSource = useMemo(
+    () => ({
+      raw_text: record?.rawText || liveSubmission?.raw_text || liveSubmission?.rawText || "",
+      image_url: record?.imageUrl || liveSubmission?.image_url || liveSubmission?.imageUrl || "",
+    }),
+    [liveSubmission?.image_url, liveSubmission?.imageUrl, liveSubmission?.rawText, liveSubmission?.raw_text, record],
+  );
+  const baseAnalysis = useMemo(
+    () => cloneJson(record?.analysisResult || record?.analysis_result || liveSubmission?.analysis_result || {}),
+    [liveSubmission?.analysis_result, record],
+  );
+  const baseComment = useMemo(
+    () =>
+      record?.analysisResult?.admin_comment ||
       record?.analysisResult?.comments ||
       record?.analysis_result?.admin_comment ||
       record?.analysis_result?.comments ||
       "",
+    [record],
   );
 
   useEffect(() => {
-    if (!record) return;
+    if (!record) {
+      return;
+    }
 
-    setDraftPayload(cloneJson(record.data || record.payload || {}));
-    setDraftAnalysis(cloneJson(record.analysisResult || record.analysis_result || {}));
+    setDraftPayload(cloneJson(record.data || record.payload || liveSubmission?.payload || {}));
+    setDraftSource({
+      raw_text: record.rawText || liveSubmission?.raw_text || liveSubmission?.rawText || "",
+      image_url: record.imageUrl || liveSubmission?.image_url || liveSubmission?.imageUrl || "",
+    });
+    setDraftAnalysis(cloneJson(record.analysisResult || record.analysis_result || liveSubmission?.analysis_result || {}));
     setDraftComment(
       record.analysisResult?.admin_comment ||
         record.analysisResult?.comments ||
@@ -889,98 +1374,205 @@ export default function SubmissionDetailScreen({
         record.analysis_result?.comments ||
         "",
     );
-    setIsDirty(false);
+    setActiveTab("setup");
+    setAiSummary(null);
     setNotice(null);
-  }, [record]);
+  }, [liveSubmission?.payload, liveSubmission?.analysis_result, liveSubmission?.raw_text, liveSubmission?.image_url, liveSubmission?.rawText, liveSubmission?.imageUrl, record]);
+
+  const workingAnalysis = useMemo(
+    () => ({
+      ...draftAnalysis,
+      admin_comment: draftComment,
+      comments: draftComment,
+    }),
+    [draftAnalysis, draftComment],
+  );
+
+  const workingRecord = useMemo(
+    () => ({
+      ...record,
+      data: draftPayload,
+      payload: draftPayload,
+      rawText: draftSource.raw_text,
+      raw_text: draftSource.raw_text,
+      imageUrl: draftSource.image_url,
+      image_url: draftSource.image_url,
+      analysisResult: workingAnalysis,
+      analysis_result: workingAnalysis,
+    }),
+    [draftPayload, draftSource.image_url, draftSource.raw_text, record, workingAnalysis],
+  );
 
   const status = useMemo(() => normalizeStatus(record), [record]);
-  const attachmentList = useMemo(
-    () => buildAttachmentList(record, draftAnalysis),
-    [draftAnalysis, record],
-  );
-  const auditTimeline = useMemo(
-    () => buildAuditTimeline(record, draftAnalysis),
-    [draftAnalysis, record],
-  );
-
+  const sourceKey = getSessionSourceKey(workingRecord);
+  const sourceLabel = getSessionSourceLabel(workingRecord);
+  const sourceTone = getSessionSourceTone(workingRecord);
+  const sourceSubtext = getSessionSourceSubtext(workingRecord);
+  const sourceHint = getSessionSourceLabelHint(workingRecord);
+  const sourceBody = getSessionSourceBody(workingRecord);
+  const sourceAttachment = getSessionSourceAttachment(workingRecord);
+  const eventTrack = getSessionEventTrackLabel(workingRecord);
+  const driverName = getSubmissionDriverLabel(workingRecord || submission || {});
+  const vehicleName = getSubmissionVehicleLabel(workingRecord || submission || {});
   const submissionId = record?.submissionId || formatEntityId("SUB", record?.id);
-  const eventName = getSubmissionEventLabel(record || submission || {});
-  const driverName = getSubmissionDriverLabel(record || submission || {});
-  const trackName = getSubmissionTrackLabel(record || submission || {});
-
-  const vehicleYear = record?.vehicle?.year || record?.vehicle?.vehicle_year || null;
-  const sourceLabel = record?.sourceTypeLabel || "Unknown";
+  const runGroupLabel = getSessionRunGroupLabel(workingRecord);
+  const notesSummary = getSessionNotesSummary(workingRecord);
+  const lastUpdatedByLabel = getSessionLastUpdatedByLabel(workingRecord);
+  const lastUpdatedLabel = formatDateTime(record?.updatedAt || record?.createdAt || record?.submittedAt || null);
+  const createdLabel = formatDateTime(record?.createdAt || record?.submittedAt || null);
   const confidenceTone =
-    record?.confidence === null
+    record?.confidence === null || record?.confidence === undefined
       ? "neutral"
-      : record?.confidence >= 90
+      : record.confidence >= 90
         ? "success"
-        : record?.confidence >= 80
+        : record.confidence >= 80
           ? "warning"
           : "danger";
 
-  const updateDraftValue = (path, value) => {
+  const overviewSource = useMemo(
+    () => ({
+      ...draftPayload,
+      raw_text: draftSource.raw_text,
+      image_url: draftSource.image_url,
+    }),
+    [draftPayload, draftSource.image_url, draftSource.raw_text],
+  );
+
+  const overviewContextSource = useMemo(
+    () => ({
+      submissionId,
+      driver: driverName,
+      vehicle: vehicleName,
+      eventTrack: [eventTrack.main, eventTrack.sub].filter(Boolean).join(" • "),
+      runGroup: runGroupLabel,
+      source: sourceLabel,
+      confidence: record?.confidenceLabel || "Not available",
+      timestamps: `${createdLabel || "Not available"} · ${lastUpdatedLabel || "Not available"}`,
+      lastUpdatedBy: lastUpdatedByLabel,
+    }),
+    [
+      createdLabel,
+      driverName,
+      eventTrack.main,
+      eventTrack.sub,
+      lastUpdatedByLabel,
+      lastUpdatedLabel,
+      record?.confidenceLabel,
+      runGroupLabel,
+      sourceLabel,
+      submissionId,
+      vehicleName,
+    ],
+  );
+
+  const overviewStatus = useMemo(() => buildSectionStatus(OVERVIEW_SECTION, overviewSource, record), [overviewSource, record]);
+
+  const setupSections = useMemo(() => SETUP_SECTIONS, []);
+  const setupSummarySections = useMemo(
+    () => setupSections.map((section) => ({ section, status: buildSectionStatus(section, draftPayload, record) })),
+    [draftPayload, record, setupSections],
+  );
+
+  const trackedChangeCount = useMemo(() => {
+    const overviewFields = [...SEANCES_GROUPS[0].fields, ...SOURCE_FIELDS];
+    const setupFields = setupSections.flatMap((section) => section.groups.flatMap((group) => group.fields || []));
+
+    const payloadChanges = [...overviewFields, ...setupFields].reduce(
+      (count, item) =>
+        count +
+        (hasValueChanged(
+          getValueAtPath(item.path[0] === "raw_text" || item.path[0] === "image_url" ? baseSource : basePayload, item.path),
+          getValueAtPath(item.path[0] === "raw_text" || item.path[0] === "image_url" ? draftSource : draftPayload, item.path),
+        )
+          ? 1
+          : 0),
+      0,
+    );
+
+    const commentChanged = hasValueChanged(baseComment, draftComment) ? 1 : 0;
+    return payloadChanges + commentChanged;
+  }, [baseComment, basePayload, baseSource, draftComment, draftPayload, draftSource, setupSections]);
+
+  const isDirty = trackedChangeCount > 0;
+  const attachmentList = useMemo(
+    () => buildAttachmentList(workingRecord, workingAnalysis),
+    [workingAnalysis, workingRecord],
+  );
+  const auditTimeline = useMemo(
+    () => buildAuditTimeline(workingRecord, workingAnalysis),
+    [workingAnalysis, workingRecord],
+  );
+  const validationRows = useMemo(() => buildValidationIssueRows(record), [record]);
+  const setupSummaryCards = useMemo(
+    () =>
+      setupSummarySections.map(({ section, status: sectionStatus }) => ({
+        key: section.key,
+        label: getSectionDisplayTitle(section.key),
+        status: sectionStatus,
+      })),
+    [setupSummarySections],
+  );
+
+  const handleUpdatePayload = (path, value) => {
     setDraftPayload((current) => setValueAtPath(current, path, value));
-    setIsDirty(true);
   };
 
-  const setFeedback = (value) => {
-    setDraftComment(value);
-    setIsDirty(true);
+  const handleUpdateSource = (path, value) => {
+    setDraftSource((current) => setValueAtPath(current, path, value));
   };
 
-  const appendAuditEntry = (analysisResult, action, note, tone = "neutral") => {
-    const entries = Array.isArray(analysisResult.audit_log) ? [...analysisResult.audit_log] : [];
-    entries.push({
-      id: `${action}-${Date.now()}`,
-      action,
-      note,
-      actor: user?.name || user?.email || "Owner",
-      timestamp: new Date().toISOString(),
-      tone,
-    });
-    return entries;
+  const resetDraftState = () => {
+    setDraftPayload(cloneJson(basePayload));
+    setDraftSource(cloneJson(baseSource));
+    setDraftAnalysis(cloneJson(baseAnalysis));
+    setDraftComment(baseComment);
+    setAiSummary(null);
+    setNotice(null);
+    setActiveTab("setup");
   };
 
-  const persistUpdate = async (nextSubmission, message, tone = "success") => {
-    setBusyAction("saving");
+  const persistUpdate = async (updatePayload, successMessage, tone = "success") => {
     setIsSaving(true);
 
     try {
-      const response = await updateSubmission(nextSubmission.id || nextSubmission._id || nextSubmission.submissionId, nextSubmission.updatePayload);
+      const response = await updateSubmission(
+        updatePayload.id || updatePayload._id || updatePayload.submissionId,
+        updatePayload.updatePayload,
+      );
       const updatedSubmission = response.submission || response.data || response;
 
       if (updatedSubmission) {
         setLiveSubmission(updatedSubmission);
-        setNotice({ tone, message });
+        setNotice({ tone, message: successMessage });
         setIsEditing(false);
-        setIsDirty(false);
       } else {
-        setNotice({ tone: "warning", message });
+        setNotice({ tone: "warning", message: successMessage });
       }
     } catch (error) {
       setNotice({
         tone: "error",
-        message: getApiErrorMessage(error, "Unable to save submission changes."),
+        message: getApiErrorMessage(error, "Unable to save session changes."),
       });
     } finally {
-      setBusyAction("");
       setIsSaving(false);
     }
   };
 
   const handleSaveDraft = async () => {
-    if (!record) return;
+    if (!record) {
+      return;
+    }
 
-    const nextAnalysis = cloneJson(draftAnalysis);
-    nextAnalysis.admin_comment = draftComment;
-    nextAnalysis.comments = draftComment;
-    nextAnalysis.audit_log = appendAuditEntry(
-      nextAnalysis,
-      "Edited",
-      "Manual corrections and feedback were saved from the detailed owner view.",
-      "info",
-    );
+    const nextAnalysis = cloneJson(workingAnalysis);
+    nextAnalysis.audit_log = Array.isArray(nextAnalysis.audit_log) ? [...nextAnalysis.audit_log] : [];
+    nextAnalysis.audit_log.push({
+      id: `edited-${Date.now()}`,
+      action: "Edited",
+      note: "Session details were updated from the admin edit workspace.",
+      actor: user?.name || user?.email || "Owner",
+      timestamp: new Date().toISOString(),
+      tone: "info",
+    });
     nextAnalysis.last_edited_at = new Date().toISOString();
     nextAnalysis.last_edited_by = user?.name || user?.email || "Owner";
 
@@ -991,66 +1583,28 @@ export default function SubmissionDetailScreen({
         submissionId: record.submissionId,
         updatePayload: {
           payload: draftPayload,
+          raw_text: typeof draftSource.raw_text === "string" && draftSource.raw_text.trim() ? draftSource.raw_text.trim() : null,
+          image_url: typeof draftSource.image_url === "string" && draftSource.image_url.trim() ? draftSource.image_url.trim() : null,
           analysis_result: nextAnalysis,
         },
       },
-      "Submission data and owner notes were saved.",
+      "Session changes were saved.",
     );
   };
-
-  const handleReviewAction = async (reviewState, note, successMessage) => {
-    if (!record) return;
-
-    const patch = buildReviewAnalysisPatch({
-      submission: liveSubmission,
-      allSubmissions,
-      reviewState,
-      reviewerId: user?.id || null,
-      reviewerName: user?.name || user?.email || null,
-      note,
-    });
-
-    const nextAnalysis = cloneJson(patch.analysis_result);
-    nextAnalysis.admin_comment = draftComment;
-    nextAnalysis.comments = draftComment;
-    nextAnalysis.audit_log = appendAuditEntry(
-      nextAnalysis,
-      reviewState === "APPROVED"
-        ? "Approved"
-        : reviewState === "FLAGGED"
-          ? "Rejected"
-          : "Reviewed",
-      note,
-      reviewState === "APPROVED" ? "success" : reviewState === "FLAGGED" ? "danger" : "neutral",
-    );
-
-    await persistUpdate(
-      {
-        id: record.id,
-        _id: record._id,
-        submissionId: record.submissionId,
-        updatePayload: {
-          analysis_result: nextAnalysis,
-        },
-      },
-      successMessage,
-      reviewState === "APPROVED" ? "success" : reviewState === "FLAGGED" ? "danger" : "warning",
-    );
-  };
-
-  const handleApprove = () =>
-    handleReviewAction("APPROVED", "Approved from the detailed owner view.", "Submission approved.");
-
-  const handleReject = () =>
-    handleReviewAction("FLAGGED", "Rejected from the detailed owner view.", "Submission flagged for correction.");
 
   const handleExport = () => {
-    if (!record) return;
+    if (!record) {
+      return;
+    }
 
     const csv = buildSubmissionCsv({
-      record,
-      draftPayload: isEditing ? draftPayload : record.data || {},
-      draftAnalysis: isEditing ? draftAnalysis : record.analysisResult || {},
+      record: {
+        ...workingRecord,
+        rawText: draftSource.raw_text,
+        imageUrl: draftSource.image_url,
+      },
+      draftPayload,
+      draftAnalysis: workingAnalysis,
       timeline: auditTimeline,
       attachments: attachmentList,
     });
@@ -1062,7 +1616,73 @@ export default function SubmissionDetailScreen({
     link.download = `${submissionId || "submission"}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
-    setNotice({ tone: "success", message: "Submission exported as CSV." });
+    setNotice({ tone: "success", message: "Session exported as CSV." });
+  };
+
+  const handleBackToReview = () => {
+    router.push("/admin/submission-review-dashboard");
+  };
+
+  const handleOpenSession = () => {
+    if (!record) {
+      return;
+    }
+
+    router.push(getSessionReportHref(record));
+  };
+
+  const handleEnterEditMode = () => {
+    if (!record) {
+      return;
+    }
+
+    setIsEditing(true);
+    router.replace(getSessionReportHref(record, { edit: true }));
+  };
+
+  const handleCancelChanges = () => {
+    resetDraftState();
+    setIsEditing(false);
+    if (record) {
+      router.replace(getSessionReportHref(record));
+    }
+  };
+
+  const handleAiSummary = async () => {
+    if (!record) {
+      return;
+    }
+
+    setAiSummaryLoading(true);
+
+    try {
+      const response = await sendChatbotQuery({
+        message: "Summarize this session for the admin editor.",
+        session_id: String(record.submissionId || record.id || getSubmissionId(record) || ""),
+        event_id: record.event?.id || record.event_id || record.eventId || null,
+        driver_id: record.driver?.driver_id || record.driver_id || null,
+        vehicle_id: record.vehicle?.vehicle_id || record.vehicle_id || null,
+        car_number: record.vehicle?.registrationNumber || record.vehicle?.registration_number || record.vehicle_id || null,
+        limit: 5,
+      });
+
+      const payload = response.response || response;
+      setAiSummary({
+        title: payload.title || "AI Summary",
+        summary: payload.summary || payload.answer || "No summary returned.",
+        answer: payload.answer || payload.summary || "",
+        dataSource: payload.data_source || payload.source_label || "AI Race Assistant",
+        generatedAt: payload.generated_at || new Date().toISOString(),
+      });
+      setNotice({ tone: "success", message: "AI summary generated for this session." });
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        message: getApiErrorMessage(error, "Unable to generate an AI summary right now."),
+      });
+    } finally {
+      setAiSummaryLoading(false);
+    }
   };
 
   if (!record) {
@@ -1077,62 +1697,26 @@ export default function SubmissionDetailScreen({
     );
   }
 
+  const overviewCardFields = SEANCES_GROUPS[0].fields || [];
+  const setupSectionsToRender = setupSections;
+
   return (
-    <div className="submission-detail-page">
+    <div className="submission-detail-page submission-edit-page">
       <div className="submission-detail-orb submission-detail-orb-one" />
       <div className="submission-detail-orb submission-detail-orb-two" />
 
-      <div className="submission-detail-shell">
-        <header className="submission-detail-hero">
-          <div className="submission-detail-hero-copy">
-          <p className="submission-detail-eyebrow">Owner Detailed View</p>
-            <h1>{submissionId}</h1>
-            <p className="submission-detail-subtitle">
-              Review raw submission data, validate stored payloads, and manage approval or correction workflows from one screen.
-            </p>
-
-            <div className="submission-detail-badge-row">
-              <StatusBadge label={status.label} tone={status.tone} title="Submission status" />
-              <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} title="Validation status" />
-              <StatusBadge label={record.syncStateLabel} tone={record.syncStateTone} title="Sync status" />
-              <StatusBadge
-                label={record.structuredStatusLabel}
-                tone={record.structuredStatusTone}
-                title="Structured normalization status"
-              />
-              <StatusBadge label={record.sourceTypeLabel} tone={record.sourceTypeTone} title="Source type" />
-              <span className={`submission-confidence-chip tone-${confidenceTone}`}>Confidence {record.confidenceLabel}</span>
-              {previewMessage ? <StatusBadge label="Preview Mode" tone={previewTone} title={previewMessage} /> : null}
-            </div>
-
-            <div className="submission-detail-anchor-row">
-              <a href="#overview">Overview</a>
-              <a href="#validation">Validation</a>
-              <a href="#raw">Raw</a>
-              <a href="#parsed">Parsed</a>
-              <a href="#audit">Audit</a>
-              <a href="#attachments">Attachments</a>
-            </div>
-          </div>
-
-          <div className="submission-detail-hero-actions">
+      <div className="submission-detail-shell submission-edit-shell">
+        <header className="submission-detail-hero submission-edit-hero">
+          <div className="submission-edit-hero-top">
             <button
               type="button"
               className="fleet-btn fleet-btn-secondary"
-              onClick={() => router.push("/admin/submissions")}
+              onClick={handleBackToReview}
             >
               <ArrowBackOutlinedIcon fontSize="inherit" />
-              Back
+              Back to Session Review
             </button>
-            <button
-              type="button"
-              className="fleet-btn fleet-btn-secondary"
-              onClick={() => setIsEditing((current) => !current)}
-              disabled={isSaving}
-            >
-              {isEditing ? <CancelOutlinedIcon fontSize="inherit" /> : <EditOutlinedIcon fontSize="inherit" />}
-              {isEditing ? "Cancel Edits" : "Edit"}
-            </button>
+
             <button
               type="button"
               className="fleet-btn fleet-btn-primary"
@@ -1142,6 +1726,44 @@ export default function SubmissionDetailScreen({
               Export
             </button>
           </div>
+
+          <div className="submission-detail-hero-copy">
+            <p className="submission-detail-eyebrow">{isEditing ? "Edit Session" : "Session Details"}</p>
+            <h1>{submissionId}</h1>
+            <p className="submission-detail-subtitle submission-edit-identity-line">
+              {[driverName, vehicleName, eventTrack.main || trackName || runGroupLabel].filter(Boolean).join(" • ")}
+            </p>
+            {eventTrack.sub && eventTrack.sub !== eventTrack.main ? (
+              <p className="submission-edit-subline">{eventTrack.sub}</p>
+            ) : null}
+
+            <div className="submission-detail-badge-row">
+              <StatusBadge label={sourceLabel} tone={sourceTone} title={sourceHint} />
+              <StatusBadge label={lastUpdatedLabel || "Unknown"} tone="neutral" title="Last updated" />
+              {record.confidenceLabel ? (
+                <StatusBadge label={record.confidenceLabel} tone={confidenceTone} title="Confidence" />
+              ) : null}
+            </div>
+          </div>
+
+          <nav className="submission-edit-tabs" aria-label="Edit session sections">
+            {TAB_CONFIG.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.key;
+
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`submission-edit-tab${isActive ? " submission-edit-tab-active" : ""}`}
+                  onClick={() => setActiveTab(tab.key)}
+                >
+                  <Icon fontSize="inherit" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
         </header>
 
         {notice ? (
@@ -1156,561 +1778,636 @@ export default function SubmissionDetailScreen({
           </div>
         ) : null}
 
-        <div className="submission-detail-layout">
-          <main className="submission-detail-main">
-            <section id="overview" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <ReceiptLongOutlinedIcon fontSize="inherit" />
-                    Overview
-                  </span>
-                  <h3>Submission and Relationship Details</h3>
-                  <p>
-                    Confirm the core submission record, linked driver and vehicle, and the event context stored with the payload.
-                  </p>
-                </div>
+        <div className="submission-detail-layout submission-edit-layout">
+          <main className="submission-detail-main submission-edit-main">
+            {activeTab === "overview" ? (
+              <div className="submission-edit-tab-stack">
+                <FieldGridCard
+                  section={OVERVIEW_SECTION}
+                  title="Session Details"
+                  description="Basic session metadata and editable setup details."
+                  source={overviewSource}
+                  record={record}
+                  isEditing={isEditing}
+                  onChange={handleUpdatePayload}
+                  fields={overviewCardFields}
+                  icon={ReceiptLongOutlinedIcon}
+                />
 
-                <div className="submission-detail-section-meta">
-                  <StatusBadge label={status.label} tone={status.tone} />
-                  <span className="submission-detail-section-score">
-                    {record.validationSeverityLabel || "Review state"}
-                  </span>
-                </div>
-              </div>
+                <FieldGridCard
+                  section={SOURCE_SECTION}
+                  title="Driver Notes & Photo"
+                  description="Keep the original submission notes and the source image link together."
+                  source={draftSource}
+                  record={record}
+                  isEditing={isEditing}
+                  onChange={handleUpdateSource}
+                  icon={DescriptionOutlinedIcon}
+                />
 
-              <div className="submission-detail-field-grid submission-detail-field-grid-overview">
-                <EditableField
-                  field={field("Submission ID", ["submissionId"], { type: "text" })}
-                  value={submissionId}
+                <FieldGridCard
+                  section={OVERVIEW_CONTEXT_SECTION}
+                  title="Session Context"
+                  description="Read-only context pulled from the current submission and event record."
+                  source={overviewContextSource}
+                  record={record}
                   isEditing={false}
                   onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Submission Reference", ["submission_ref"], { type: "text" })}
-                  value={record.submission_ref}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Driver ID", ["driver", "driver_id"], { type: "text" })}
-                  value={record.driver?.driver_id || record.driver_id || record.driver?.id}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Vehicle ID", ["vehicle", "vehicle_id"], { type: "text" })}
-                  value={record.vehicle?.vehicle_id || record.vehicle_id || record.vehicle?.id}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Event ID", ["event", "id"], { type: "text" })}
-                  value={record.event?.id || record.event_id || record.eventId}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Track ID", ["event", "track"], { type: "text" })}
-                  value={record.event?.track || record.event?.track_name || record.event?.trackName}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Driver", ["driver"], { type: "text" })}
-                  value={driverName}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Vehicle", ["vehicle"], { type: "text" })}
-                  value={`${record.vehicle?.make || "-"} ${record.vehicle?.model || ""}${vehicleYear ? ` ${vehicleYear}` : ""}`.trim()}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Event", ["event"], { type: "text" })}
-                  value={eventName}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Track", ["track"], { type: "text" })}
-                  value={trackName}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Source", ["analysis_result", "source_type"], { type: "text" })}
-                  value={sourceLabel}
-                  isEditing={false}
-                  onChange={() => {}}
-                />
-                <EditableField
-                  field={field("Created / Updated", ["timestamps"], { type: "text" })}
-                  value={`${formatDateTime(record.createdAt || record.submittedAt)} | ${formatDateTime(record.updatedAt || record.submittedAt)}`}
-                  isEditing={false}
-                  onChange={() => {}}
+                  icon={InfoOutlinedIcon}
                 />
               </div>
-            </section>
+            ) : null}
 
-            <section id="validation" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <ErrorOutlineOutlinedIcon fontSize="inherit" />
-                    Validation & Issues
-                  </span>
-                  <h3>Validation Status and Correction Tracker</h3>
-                  <p>
-                    Review missing fields, mismatch warnings, and manual notes before approving or rejecting the submission.
-                  </p>
-                </div>
+            {activeTab === "setup" ? (
+              <div className="submission-edit-tab-stack">
+                {setupSectionsToRender.map((section) => {
+                  if (section.key === "tire_history" || section.key === "tire_inventory") {
+                    return (
+                      <FieldGridCard
+                        key={section.key}
+                        section={section}
+                        title={getSectionDisplayTitle(section.key)}
+                        description={section.subtitle}
+                        source={draftPayload}
+                        record={record}
+                        isEditing={isEditing}
+                        onChange={handleUpdatePayload}
+                        icon={section.icon}
+                      />
+                    );
+                  }
 
-                <div className="submission-detail-section-meta">
-                  <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} />
-                  <StatusBadge label={record.reviewStateLabel} tone="neutral" />
-                  <StatusBadge label={record.structuredStatusLabel} tone={record.structuredStatusTone} />
-                </div>
-              </div>
-
-              <div className={`submission-alert submission-alert-${record.validationStateTone}`}>
-                <div className="submission-alert-title">
-                  {record.validationMessages.length ? (
-                    <ErrorOutlineOutlinedIcon fontSize="small" />
-                  ) : (
-                    <CheckCircleOutlineOutlinedIcon fontSize="small" />
-                  )}
-                  {record.validationMessages.length ? "Issues detected" : "No blocking validation errors"}
-                </div>
-
-                {record.validationMessages.length ? (
-                  <ul className="submission-alert-list">
-                    {record.validationMessages.map((message) => (
-                      <li key={message}>{message}</li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                <p className="submission-alert-copy">{record.recommendation}</p>
-              </div>
-
-              <div className="submission-detail-issue-grid">
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Missing Fields</p>
-                  <p className="submission-issue-value">
-                    {record.missingFields.length ? record.missingFields.join(", ") : "None"}
-                  </p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Failed Fields</p>
-                  <p className="submission-issue-value">
-                    {record.failedFields.length ? record.failedFields.join(", ") : "None"}
-                  </p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Duplicate Detection</p>
-                  <p className="submission-issue-value">{record.duplicateDetection.message}</p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Driver / Vehicle</p>
-                  <p className="submission-issue-value">
-                    {record.driverVehicleMismatch ? "Mismatch detected" : "Aligned"}
-                  </p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Track Normalization</p>
-                  <p className="submission-issue-value">
-                    {record.trackNormalizationWarning ? "Needs review" : "Aligned"}
-                  </p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Run Group Normalization</p>
-                  <p className="submission-issue-value">
-                    {record.runGroupNormalizationWarning ? "Needs review" : "Aligned"}
-                  </p>
-                </div>
-                <div className="submission-issue-card">
-                  <p className="submission-issue-label">Structured Normalization</p>
-                  <p className="submission-issue-value">
-                    {record.structuredStatusLabel}
-                    {record.structuredWarningCount
-                      ? ` (${record.structuredWarningCount} warning${record.structuredWarningCount === 1 ? "" : "s"})`
-                      : ""}
-                  </p>
-                </div>
-              </div>
-
-              {record.structuredWarnings.length ? (
-                <div className="submission-detail-admin-note" style={{ marginTop: "1rem" }}>
-                  <div className="submission-detail-admin-note-header">
-                    <div>
-                      <div className="submission-detail-group-title">Structured Ingest Warnings</div>
-                      <p className="submission-detail-group-copy">
-                        The canonical note saved successfully, but some normalized table updates were partial or skipped.
-                      </p>
-                    </div>
-                    <StatusBadge
-                      label={record.structuredStatusLabel}
-                      tone={record.structuredStatusTone}
+                  return (
+                    <MatrixSectionCard
+                      key={section.key}
+                      section={section}
+                      source={draftPayload}
+                      isEditing={isEditing}
+                      onChange={handleUpdatePayload}
+                      record={record}
                     />
-                  </div>
-                  <ul className="submission-alert-list">
-                    {record.structuredWarnings.map((warning, index) => (
-                      <li key={`${warning.code || "structured-warning"}-${index}`}>
-                        {warning.field ? `${warning.field}: ` : ""}
-                        {warning.message}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              <div className="submission-detail-admin-note">
-                <div className="submission-detail-admin-note-header">
-                  <div>
-                    <div className="submission-detail-group-title">Owner Feedback</div>
-                    <p className="submission-detail-group-copy">
-                      Add correction notes, validation remarks, or follow-up instructions.
-                    </p>
-                  </div>
-                  <StatusBadge
-                    label={isEditing ? "Editing Enabled" : "Read Only"}
-                    tone={isEditing ? "info" : "neutral"}
-                  />
-                </div>
-
-                {isEditing ? (
-                  <textarea
-                    className="submission-detail-input submission-detail-textarea submission-detail-admin-textarea"
-                    rows={5}
-                    value={draftComment}
-                    onChange={(event) => setFeedback(event.target.value)}
-                    placeholder="Leave correction notes for the driver or the next reviewer."
-                  />
-                ) : (
-                  <div className="submission-detail-admin-note-readonly">
-                    {draftComment ? draftComment : "No owner feedback saved yet."}
-                  </div>
-                )}
+                  );
+                })}
               </div>
-            </section>
+            ) : null}
 
-            <section id="raw" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <DescriptionOutlinedIcon fontSize="inherit" />
-                    Raw Submission
-                  </span>
-                  <h3>Exact Raw Content and Media</h3>
-                  <p>
-                    Review the exact text or media submitted by the driver. Raw content is preserved as submitted while owner notes remain editable.
-                  </p>
-                </div>
+            {activeTab === "source" ? (
+              <div className="submission-edit-tab-stack">
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={DescriptionOutlinedIcon}
+                    eyebrow="Source Data"
+                    title="Source Context"
+                    description="Reference information from the original submission source."
+                    meta={
+                      <>
+                        <StatusBadge label={sourceLabel} tone={sourceTone} title={sourceHint} />
+                        {record.confidenceLabel ? (
+                          <StatusBadge label={record.confidenceLabel} tone={confidenceTone} title="Confidence" />
+                        ) : null}
+                      </>
+                    }
+                  />
 
-                <div className="submission-detail-section-meta">
-                  <StatusBadge label={record.sourceTypeLabel} tone={record.sourceTypeTone} />
-                  <StatusBadge label={record.confidenceLabel || "-"} tone={confidenceTone} />
-                </div>
-              </div>
+                  <div className="submission-detail-admin-note">
+                    <div className="submission-detail-admin-note-header">
+                      <div>
+                        <div className="submission-detail-group-title">{sourceSubtext}</div>
+                        <p className="submission-detail-group-copy">{sourceHint}</p>
+                      </div>
+                      {sourceAttachment ? (
+                        <a
+                          className="fleet-btn fleet-btn-secondary"
+                          href={sourceAttachment.href}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <OpenInNewOutlinedIcon fontSize="inherit" />
+                          {sourceAttachment.label}
+                        </a>
+                      ) : null}
+                    </div>
 
-              <div className="submission-detail-raw-layout">
-                <div className="submission-raw-card">
-                  <div className="submission-raw-card-title">raw_submission</div>
-                  <pre className="submission-code-block submission-detail-raw-code">
-                    {record.rawText || "No raw note was submitted."}
-                  </pre>
+                    <pre className="submission-code-block submission-detail-raw-code submission-edit-source-code">
+                      {sourceBody || "No source content is available for this session."}
+                    </pre>
+                  </div>
+                </section>
 
-                  {record.voiceSession ? (
-                    <div className="submission-detail-voice-transcript-card">
-                      <div className="submission-raw-card-title">voice_transcript</div>
-                      <pre className="submission-code-block submission-detail-raw-code">
-                        {record.voiceTranscript || record.rawText || "No transcript available."}
-                      </pre>
-                      <div className="submission-detail-voice-meta">
-                        <StatusBadge
-                          label={record.voiceStatus || "Voice"}
-                          tone={
-                            record.voiceStatus === "TRANSCRIPTION_FAILED"
-                              ? "danger"
-                              : record.voiceValidationStatus === "REVIEW_REQUIRED"
-                                ? "warning"
-                                : "info"
-                          }
-                        />
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={ImageOutlinedIcon}
+                    eyebrow="Source Media"
+                    title="Media Preview"
+                    description="Original photo or voice media captured with the submission."
+                    meta={
+                      <>
+                        {record.voiceStatus ? (
+                          <StatusBadge label={record.voiceStatus} tone={record.voiceStatus === "TRANSCRIPTION_FAILED" ? "danger" : "info"} />
+                        ) : null}
                         {record.voiceAudioDurationLabel ? (
                           <StatusBadge label={record.voiceAudioDurationLabel} tone="neutral" />
                         ) : null}
-                        {record.voiceTranscriptConfidence !== null && record.voiceTranscriptConfidence !== undefined ? (
-                          <StatusBadge
-                            label={`Confidence ${
-                              Math.round(
-                                ((record.voiceTranscriptConfidence <= 1
-                                  ? record.voiceTranscriptConfidence * 100
-                                  : record.voiceTranscriptConfidence) * 10) / 10,
-                              )
-                            }%`}
-                            tone="neutral"
-                          />
-                        ) : null}
-                      </div>
+                      </>
+                    }
+                  />
+
+                  {record.voiceSession ? (
+                    <ProtectedAudioPlayer
+                      className="submission-detail-audio-player"
+                      voiceSessionId={record.voiceSessionId || record.voiceSession?.id || null}
+                      src={record.voiceAudioDownloadUrl || record.voiceSession?.audioDownloadUrl || null}
+                      downloadName={record.voiceAudioFileName || "voice-note"}
+                    />
+                  ) : draftSource.image_url ? (
+                    <Image
+                      className="submission-proof-image submission-detail-preview-image"
+                      src={draftSource.image_url}
+                      alt="Submission source image"
+                      width={1200}
+                      height={800}
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="submission-image-empty">
+                      <ImageOutlinedIcon fontSize="inherit" />
+                      <span>No source image or audio preview available.</span>
                     </div>
-                  ) : null}
+                  )}
+                </section>
 
-                  <div className="submission-detail-quick-verdict">
-                    <button
-                      type="button"
-                      className="fleet-btn fleet-btn-primary"
-                      onClick={handleApprove}
-                      disabled={busyAction || isSaving || isEditing}
-                    >
-                      <CheckCircleOutlineOutlinedIcon fontSize="inherit" />
-                      Mark Valid
-                    </button>
-                    <button
-                      type="button"
-                      className="fleet-btn fleet-btn-danger"
-                      onClick={handleReject}
-                      disabled={busyAction || isSaving || isEditing}
-                    >
-                      <CancelOutlinedIcon fontSize="inherit" />
-                      Mark Invalid
-                    </button>
-                  </div>
-                </div>
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={InfoOutlinedIcon}
+                    eyebrow="Source Metadata"
+                    title="Technical Details"
+                    description="Metadata retained for tracing and troubleshooting the original source."
+                  />
 
-                <div className="submission-detail-sidebar-stack">
-                  <div className="submission-raw-card">
-                    <div className="submission-raw-card-title">Owner Comment</div>
-                    <div className="submission-detail-raw-comment">
-                      {isEditing ? (
-                        <textarea
-                          className="submission-detail-input submission-detail-textarea"
-                          rows={5}
-                          value={draftComment}
-                          onChange={(event) => setFeedback(event.target.value)}
-                          placeholder="Add a note or correction summary."
-                        />
-                      ) : (
-                        <div className="submission-detail-admin-note-readonly">
-                          {draftComment ? draftComment : "No feedback entered yet."}
-                        </div>
-                      )}
+                  <div className="submission-detail-storage-grid">
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Source Type</p>
+                      <p className="submission-kv-value">{sourceLabel}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Source Channel</p>
+                      <p className="submission-kv-value">{workingRecord.sourceChannel || sourceLabel}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Parser Version</p>
+                      <p className="submission-kv-value">{workingRecord.parserVersion || "Not available"}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Submitted</p>
+                      <p className="submission-kv-value">
+                        {formatDateTime(workingRecord.submittedAt || workingRecord.createdAt || workingRecord.updatedAt)}
+                      </p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Last Updated By</p>
+                      <p className="submission-kv-value">{lastUpdatedByLabel}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Notes Preview</p>
+                      <p className="submission-kv-value">{notesSummary}</p>
                     </div>
                   </div>
-
-                  <div className="submission-raw-card submission-raw-image-card">
-                    <div className="submission-raw-card-title">media_preview</div>
-                    {record.imageUrl ? (
-                      <Image
-                        className="submission-proof-image submission-detail-preview-image"
-                        src={record.imageUrl}
-                        alt="Submission media preview"
-                        width={1200}
-                        height={800}
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="submission-image-empty">
-                        <ImageOutlinedIcon fontSize="inherit" />
-                        <span>No image uploaded.</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                </section>
               </div>
-            </section>
+            ) : null}
 
-            <section id="parsed" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <InfoOutlinedIcon fontSize="inherit" />
-                    Parsed Data
-                  </span>
-                  <h3>Structured Sheet Categories</h3>
-                  <p>
-                    Validate the parsed submission fields against the raw note and correct any missing or incorrect data directly on screen.
+            {activeTab === "validation" ? (
+              <div className="submission-edit-tab-stack">
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={ErrorOutlineOutlinedIcon}
+                    eyebrow="Validation"
+                    title="Validation Summary"
+                    description="Review the key issues before saving or handing the session off."
+                    meta={
+                      <>
+                        <StatusBadge label={record.validationStateLabel} tone={record.validationStateTone} />
+                        <StatusBadge label={record.syncStateLabel} tone={record.syncStateTone} />
+                        <StatusBadge label={record.structuredStatusLabel} tone={record.structuredStatusTone} />
+                      </>
+                    }
+                  />
+
+                  <div className={`submission-alert submission-alert-${record.validationStateTone}`}>
+                    <div className="submission-alert-title">
+                      {record.validationMessages.length ? (
+                        <ErrorOutlineOutlinedIcon fontSize="small" />
+                      ) : (
+                        <CheckCircleOutlineOutlinedIcon fontSize="small" />
+                      )}
+                      {record.validationMessages.length ? "Needs attention" : "Complete"}
+                    </div>
+
+                    {record.validationMessages.length ? (
+                      <ul className="submission-alert-list">
+                        {record.validationMessages.map((message) => (
+                          <li key={message}>{message}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    <p className="submission-alert-copy">{record.recommendation}</p>
+                  </div>
+
+                  <div className="submission-detail-issue-grid">
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Missing Fields</p>
+                      <p className="submission-issue-value">
+                        {record.missingFields.length ? formatFieldList(record.missingFields) : "None"}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Failed Fields</p>
+                      <p className="submission-issue-value">
+                        {record.failedFields.length ? formatFieldList(record.failedFields) : "None"}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Duplicate Detection</p>
+                      <p className="submission-issue-value">
+                        {record.duplicateDetection.message || "No duplicate detected."}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Driver / Vehicle</p>
+                      <p className="submission-issue-value">
+                        {record.driverVehicleMismatch ? "Mismatch detected" : "Aligned"}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Track Normalization</p>
+                      <p className="submission-issue-value">
+                        {record.trackNormalizationWarning ? "Needs review" : "Aligned"}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Run Group Normalization</p>
+                      <p className="submission-issue-value">
+                        {record.runGroupNormalizationWarning ? "Needs review" : "Aligned"}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Structured Normalization</p>
+                      <p className="submission-issue-value">
+                        {record.structuredStatusLabel}
+                        {record.structuredWarningCount
+                          ? ` (${record.structuredWarningCount} warning${record.structuredWarningCount === 1 ? "" : "s"})`
+                          : ""}
+                      </p>
+                    </div>
+                    <div className="submission-issue-card">
+                      <p className="submission-issue-label">Confidence</p>
+                      <p className="submission-issue-value">{record.confidenceLabel || "Not available"}</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={RuleOutlinedIcon}
+                    eyebrow="Issue Table"
+                    title="Recommended Fixes"
+                    description="A simple checklist of what should be reviewed before the session is finalized."
+                  />
+
+                  <div className="submission-edit-issue-table-wrap">
+                    <table className="submission-edit-issue-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Issue</th>
+                          <th scope="col">Section</th>
+                          <th scope="col">Recommended Fix</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {validationRows.map((row) => (
+                          <tr key={row.key}>
+                            <td>
+                              <div className="submission-edit-issue-cell">
+                                <StatusBadge label={row.statusLabel} tone={row.tone} />
+                                <span>{row.issue}</span>
+                              </div>
+                            </td>
+                            <td>{row.section}</td>
+                            <td>{row.recommendedFix}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={EditOutlinedIcon}
+                    eyebrow="Owner Feedback"
+                    title="Review Notes"
+                    description="Add correction notes, validation remarks, or follow-up instructions."
+                    meta={
+                      <StatusBadge label={isEditing ? "Editing Enabled" : "Read Only"} tone={isEditing ? "info" : "neutral"} />
+                    }
+                  />
+
+                  {isEditing ? (
+                    <textarea
+                      className="submission-detail-input submission-detail-textarea submission-detail-admin-textarea"
+                      rows={5}
+                      value={draftComment}
+                      onChange={(event) => setDraftComment(event.target.value)}
+                      placeholder="Leave correction notes for the driver or the next reviewer."
+                    />
+                  ) : (
+                    <div className="submission-detail-admin-note-readonly">
+                      {draftComment ? draftComment : "No owner feedback saved yet."}
+                    </div>
+                  )}
+                </section>
+              </div>
+            ) : null}
+
+            {activeTab === "history" ? (
+              <div className="submission-edit-tab-stack">
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={TimelineOutlinedIcon}
+                    eyebrow="History"
+                    title="Audit Trail"
+                    description="Track when the record was created, processed, edited, approved, or archived."
+                  />
+
+                  <ul className="submission-detail-timeline">
+                    {auditTimeline.length ? (
+                      auditTimeline.map((item) => <TimelineItem key={item.id} item={item} />)
+                    ) : (
+                      <li className="submission-detail-timeline-empty">No audit entries available yet.</li>
+                    )}
+                  </ul>
+                </section>
+
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={AttachFileOutlinedIcon}
+                    eyebrow="Attachments"
+                    title="Media and Downloads"
+                    description="Images and audio files uploaded with the submission."
+                  />
+
+                  {attachmentList.length ? (
+                    <div className="submission-detail-attachment-grid">
+                      {attachmentList.map((attachment) => (
+                        <AttachmentCard key={attachment.id} attachment={attachment} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="submission-image-empty">
+                      <AttachFileOutlinedIcon fontSize="inherit" />
+                      <span>No attachments stored for this submission.</span>
+                    </div>
+                  )}
+                </section>
+
+                <section className="submission-section submission-detail-section-card">
+                  <SectionHeader
+                    icon={InfoOutlinedIcon}
+                    eyebrow="Storage Snapshot"
+                    title="Backend Record Preview"
+                    description="Confirm the metadata currently held by the API."
+                  />
+
+                  <div className="submission-detail-storage-grid">
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Created At</p>
+                      <p className="submission-kv-value">{formatDateTime(record.createdAt || record.submittedAt)}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Updated At</p>
+                      <p className="submission-kv-value">{formatDateTime(record.updatedAt || record.submittedAt)}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Status</p>
+                      <p className="submission-kv-value">{status.label}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Review</p>
+                      <p className="submission-kv-value">{record.reviewStateLabel}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Structured Status</p>
+                      <p className="submission-kv-value">{record.structuredStatusLabel}</p>
+                    </div>
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Structured Warnings</p>
+                      <p className="submission-kv-value">{record.structuredWarningCount || 0}</p>
+                    </div>
+                    {record.voiceStatus ? (
+                      <div className="submission-kv-card">
+                        <p className="submission-kv-label">Voice Status</p>
+                        <p className="submission-kv-value">{record.voiceStatus}</p>
+                      </div>
+                    ) : null}
+                    {record.voiceValidationStatus ? (
+                      <div className="submission-kv-card">
+                        <p className="submission-kv-label">Voice Review</p>
+                        <p className="submission-kv-value">{record.voiceValidationStatus}</p>
+                      </div>
+                    ) : null}
+                    {record.confidenceLabel ? (
+                      <div className="submission-kv-card">
+                        <p className="submission-kv-label">Voice Confidence</p>
+                        <p className="submission-kv-value">{record.confidenceLabel}</p>
+                      </div>
+                    ) : null}
+                    {record.voiceAudioDurationLabel ? (
+                      <div className="submission-kv-card">
+                        <p className="submission-kv-label">Voice Duration</p>
+                        <p className="submission-kv-value">{record.voiceAudioDurationLabel}</p>
+                      </div>
+                    ) : null}
+                    <div className="submission-kv-card">
+                      <p className="submission-kv-label">Last Updated By</p>
+                      <p className="submission-kv-value">{lastUpdatedByLabel}</p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+          </main>
+
+          <aside className="submission-detail-sidebar submission-edit-sidebar">
+            <section className="submission-section submission-detail-section-card submission-edit-summary-card">
+              <SectionHeader
+                icon={InfoOutlinedIcon}
+                eyebrow="Session Summary"
+                title="Session Summary"
+                description="A quick read on the current session and the areas that still need attention."
+                meta={<StatusBadge label={status.label} tone={status.tone} />}
+              />
+
+              <div className="submission-detail-storage-grid submission-edit-summary-grid">
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Driver</p>
+                  <p className="submission-kv-value">{driverName}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Vehicle</p>
+                  <p className="submission-kv-value">{vehicleName}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Event / Track</p>
+                  <p className="submission-kv-value">
+                    {[eventTrack.main, eventTrack.sub].filter(Boolean).join(" • ") || "Not available"}
                   </p>
                 </div>
-
-                <div className="submission-detail-section-meta">
-                  <StatusBadge label={isEditing ? "Editing" : "Read Only"} tone={isEditing ? "info" : "neutral"} />
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Run Group</p>
+                  <p className="submission-kv-value">{runGroupLabel}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Submitted Via</p>
+                  <p className="submission-kv-value">{sourceLabel}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Last Updated</p>
+                  <p className="submission-kv-value">{lastUpdatedLabel || "Not available"}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Confidence</p>
+                  <p className="submission-kv-value">{record.confidenceLabel || "Not available"}</p>
+                </div>
+                <div className="submission-kv-card">
+                  <p className="submission-kv-label">Notes</p>
+                  <p className="submission-kv-value">{notesSummary}</p>
                 </div>
               </div>
 
-              <div className="submission-detail-category-grid">
-                {CATEGORY_SECTIONS.map((section) => (
-                  <SectionCard
-                    key={section.key}
-                    section={section}
-                    payload={draftPayload}
-                    isEditing={isEditing}
-                    onChange={updateDraftValue}
-                    record={record}
+              <div className="submission-edit-completeness-list">
+                <CompletionRow label="Overview" status={overviewStatus} detail={overviewStatus.helper} />
+                {setupSummaryCards.map((item) => (
+                  <CompletionRow
+                    key={item.key}
+                    label={item.label}
+                    status={item.status}
+                    detail={item.status.helper}
                   />
                 ))}
               </div>
             </section>
-          </main>
 
-          <aside className="submission-detail-sidebar">
-            <section id="audit" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <TimelineOutlinedIcon fontSize="inherit" />
-                    Audit Log
-                  </span>
-                  <h3>History and Review Trail</h3>
-                  <p>
-                    Track when the record was created, processed, edited, approved, rejected, or archived.
-                  </p>
-                </div>
-              </div>
+            <section className="submission-section submission-detail-section-card submission-edit-actions-card">
+              <SectionHeader
+                icon={OpenInNewOutlinedIcon}
+                eyebrow="Actions"
+                title="Quick Actions"
+                description="Open, summarize, save, or cancel the current edit session."
+                meta={
+                  isDirty ? (
+                    <span className="submission-edit-unsaved-chip">Unsaved: {trackedChangeCount}</span>
+                  ) : null
+                }
+              />
 
-              <ul className="submission-detail-timeline">
-                {auditTimeline.length ? (
-                  auditTimeline.map((item) => <TimelineItem key={item.id} item={item} />)
-                ) : (
-                  <li className="submission-detail-timeline-empty">
-                    No audit entries available yet.
-                  </li>
-                )}
-              </ul>
-            </section>
+              <div className="submission-edit-actions-grid">
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-secondary"
+                  onClick={handleOpenSession}
+                >
+                  <OpenInNewOutlinedIcon fontSize="inherit" />
+                  Open Session
+                </button>
 
-            <section id="attachments" className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <AttachFileOutlinedIcon fontSize="inherit" />
-                    Attachments
-                  </span>
-                  <h3>Media Preview and Downloads</h3>
-                  <p>
-                    View or download images and audio files that were uploaded with the submission.
-                  </p>
-                </div>
-              </div>
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-secondary"
+                  onClick={handleAiSummary}
+                  disabled={aiSummaryLoading}
+                >
+                  <AutoAwesomeOutlinedIcon fontSize="inherit" />
+                  {aiSummaryLoading ? "Generating..." : "AI Summary"}
+                </button>
 
-              {attachmentList.length ? (
-                <div className="submission-detail-attachment-grid">
-                  {attachmentList.map((attachment) => (
-                    <AttachmentCard key={attachment.id} attachment={attachment} />
-                  ))}
-                </div>
-              ) : (
-                <div className="submission-image-empty">
-                  <AttachFileOutlinedIcon fontSize="inherit" />
-                  <span>No attachments stored for this submission.</span>
-                </div>
-              )}
-            </section>
-
-            <section className="submission-section submission-detail-section-card">
-              <div className="submission-detail-section-head">
-                <div className="submission-section-heading">
-                  <span className="submission-section-eyebrow">
-                    <VisibilityOutlinedIcon fontSize="inherit" />
-                    Storage Snapshot
-                  </span>
-                  <h3>Backend Record Preview</h3>
-                  <p>
-                    Confirm the stored payload, review state, and metadata currently held by the API.
-                  </p>
-                </div>
-              </div>
-
-              <div className="submission-detail-storage-grid">
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Created At</p>
-                  <p className="submission-kv-value">{formatDateTime(record.createdAt || record.submittedAt)}</p>
-                </div>
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Updated At</p>
-                  <p className="submission-kv-value">{formatDateTime(record.updatedAt || record.submittedAt)}</p>
-                </div>
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Status</p>
-                  <p className="submission-kv-value">{status.label}</p>
-                </div>
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Review</p>
-                  <p className="submission-kv-value">{record.reviewStateLabel}</p>
-                </div>
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Structured Status</p>
-                  <p className="submission-kv-value">{record.structuredStatusLabel}</p>
-                </div>
-                <div className="submission-kv-card">
-                  <p className="submission-kv-label">Structured Warnings</p>
-                  <p className="submission-kv-value">{record.structuredWarningCount || 0}</p>
-                </div>
-                {record.voiceStatus ? (
-                  <div className="submission-kv-card">
-                    <p className="submission-kv-label">Voice Status</p>
-                    <p className="submission-kv-value">{record.voiceStatus}</p>
-                  </div>
+                {!isEditing ? (
+                  <button
+                    type="button"
+                    className="fleet-btn fleet-btn-secondary"
+                    onClick={handleEnterEditMode}
+                  >
+                    <EditOutlinedIcon fontSize="inherit" />
+                    Edit Session
+                  </button>
                 ) : null}
-                {record.voiceValidationStatus ? (
-                  <div className="submission-kv-card">
-                    <p className="submission-kv-label">Voice Review</p>
-                    <p className="submission-kv-value">{record.voiceValidationStatus}</p>
-                  </div>
-                ) : null}
-                {record.confidenceLabel ? (
-                  <div className="submission-kv-card">
-                    <p className="submission-kv-label">Voice Confidence</p>
-                    <p className="submission-kv-value">{record.confidenceLabel}</p>
-                  </div>
-                ) : null}
-                {record.voiceAudioDurationLabel ? (
-                  <div className="submission-kv-card">
-                    <p className="submission-kv-label">Voice Duration</p>
-                    <p className="submission-kv-value">{record.voiceAudioDurationLabel}</p>
-                  </div>
-                ) : null}
+
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-primary"
+                  onClick={handleSaveDraft}
+                  disabled={isSaving || !isEditing || !isDirty}
+                >
+                  <SaveOutlinedIcon fontSize="inherit" />
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </button>
+
+                <button
+                  type="button"
+                  className="fleet-btn fleet-btn-secondary"
+                  onClick={handleCancelChanges}
+                >
+                  <CancelOutlinedIcon fontSize="inherit" />
+                  Cancel
+                </button>
               </div>
             </section>
+
+            {aiSummary ? (
+              <section className="submission-section submission-detail-section-card submission-edit-ai-card">
+                <SectionHeader
+                  icon={AutoAwesomeOutlinedIcon}
+                  eyebrow="AI Summary"
+                  title={aiSummary.title || "AI Summary"}
+                  description={`Generated by ${aiSummary.dataSource || "AI Race Assistant"}`}
+                />
+
+                <div className="submission-detail-admin-note-readonly submission-edit-ai-summary">
+                  {aiSummary.summary}
+                </div>
+              </section>
+            ) : null}
           </aside>
         </div>
+      </div>
 
-        <footer className="submission-detail-footer">
-          <button
-            type="button"
-            className="fleet-btn fleet-btn-secondary"
-            onClick={() => setIsEditing((current) => !current)}
-            disabled={isSaving}
+      {isDirty ? (
+        <div className="submission-edit-savebar">
+          <div className="submission-edit-savebar-copy">
+            <strong>{trackedChangeCount} unsaved changes</strong>
+            <span>Don’t forget to save your updates.</span>
+          </div>
+
+          <div className="submission-edit-savebar-actions">
+            <button
+              type="button"
+              className="fleet-btn fleet-btn-secondary"
+              onClick={handleCancelChanges}
             >
-              {isEditing ? <CancelOutlinedIcon fontSize="inherit" /> : <EditOutlinedIcon fontSize="inherit" />}
-              {isEditing ? "Cancel Edits" : "Edit"}
+              Cancel Changes
             </button>
-
-          {isEditing ? (
             <button
               type="button"
               className="fleet-btn fleet-btn-primary"
               onClick={handleSaveDraft}
-              disabled={isSaving || !isDirty}
+              disabled={isSaving}
             >
               <SaveOutlinedIcon fontSize="inherit" />
               {isSaving ? "Saving..." : "Save Changes"}
             </button>
-          ) : null}
-
-          <button
-            type="button"
-            className="fleet-btn fleet-btn-secondary"
-            onClick={handleExport}
-          >
-            <DownloadOutlinedIcon fontSize="inherit" />
-            Export
-          </button>
-        </footer>
-      </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

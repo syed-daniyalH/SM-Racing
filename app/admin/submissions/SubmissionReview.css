@@ -2592,3 +2592,409 @@
     align-self: flex-start;
   }
 }
+
+.submission-edit-page {
+  padding: 0.85rem 0.85rem 1.35rem;
+}
+
+.submission-edit-shell {
+  width: min(1560px, 100%);
+  gap: 0.8rem;
+}
+
+.submission-edit-hero {
+  padding: 1rem 1.05rem 0.95rem;
+}
+
+.submission-edit-hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.submission-edit-identity-line {
+  margin: 0;
+  color: #ffcfb5;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.submission-edit-subline {
+  margin: 0.22rem 0 0;
+  color: #9caac0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.submission-edit-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+  scrollbar-width: none;
+}
+
+.submission-edit-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.submission-edit-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 34px;
+  padding: 0.45rem 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #d7dee8;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.submission-edit-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 107, 53, 0.32);
+  background: rgba(255, 107, 53, 0.08);
+  color: #ffffff;
+}
+
+.submission-edit-tab-active {
+  border-color: rgba(255, 107, 53, 0.5);
+  background: linear-gradient(180deg, rgba(255, 107, 53, 0.18), rgba(255, 107, 53, 0.08));
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(255, 107, 53, 0.12);
+}
+
+.submission-edit-layout {
+  grid-template-columns: minmax(0, 1.9fr) minmax(360px, 0.98fr);
+  gap: 0.85rem;
+}
+
+.submission-edit-main,
+.submission-edit-sidebar {
+  gap: 0.85rem;
+}
+
+.submission-edit-sidebar {
+  position: sticky;
+  top: 0.95rem;
+  align-self: start;
+}
+
+.submission-edit-tab-stack {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.submission-edit-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.submission-edit-actions-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.submission-edit-actions-grid .fleet-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.submission-edit-unsaved-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 107, 53, 0.3);
+  background: rgba(255, 107, 53, 0.1);
+  color: #ffbf9f;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.submission-edit-ai-summary {
+  white-space: pre-wrap;
+}
+
+.submission-edit-inline-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.submission-edit-inline-cell {
+  display: grid;
+  gap: 0.28rem;
+  align-content: start;
+}
+
+.submission-edit-input-inline {
+  min-height: 34px;
+  padding: 0.38rem 0.55rem;
+}
+
+.submission-edit-textarea {
+  min-height: 102px;
+}
+
+.submission-edit-source-code {
+  max-height: 340px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.submission-edit-table-wrap,
+.submission-edit-issue-table-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(8, 10, 18, 0.62);
+}
+
+.submission-edit-table,
+.submission-edit-issue-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.submission-edit-table thead th,
+.submission-edit-issue-table thead th {
+  padding: 0.78rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 107, 53, 0.12), rgba(255, 255, 255, 0.02));
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.submission-edit-table tbody th,
+.submission-edit-table td,
+.submission-edit-issue-table tbody th,
+.submission-edit-issue-table td {
+  padding: 0.72rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+
+.submission-edit-table tbody tr:last-child th,
+.submission-edit-table tbody tr:last-child td,
+.submission-edit-issue-table tbody tr:last-child th,
+.submission-edit-issue-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.submission-edit-table tbody th {
+  width: 18%;
+  color: #d8e1ee;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.submission-edit-table td {
+  color: #bcc5d3;
+}
+
+.submission-edit-table-value {
+  color: #7f8897;
+  font-size: 0.78rem;
+}
+
+.submission-edit-issue-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.submission-edit-completeness-list {
+  display: grid;
+  gap: 0.48rem;
+}
+
+.submission-edit-completeness-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.submission-edit-completeness-label {
+  color: #9aa8bd;
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.submission-edit-completion {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-height: 36px;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #d5d8de;
+}
+
+.submission-edit-completion-success {
+  border-color: rgba(16, 185, 129, 0.24);
+  background: rgba(16, 185, 129, 0.08);
+  color: #b8f1d6;
+}
+
+.submission-edit-completion-warning {
+  border-color: rgba(255, 149, 0, 0.24);
+  background: rgba(255, 149, 0, 0.08);
+  color: #ffd498;
+}
+
+.submission-edit-completion-danger {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(239, 68, 68, 0.08);
+  color: #ffb0b0;
+}
+
+.submission-edit-completion-info {
+  border-color: rgba(0, 122, 255, 0.24);
+  background: rgba(0, 122, 255, 0.08);
+  color: #9fd0ff;
+}
+
+.submission-edit-completion-neutral {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #d5d8de;
+}
+
+.submission-edit-completion-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
+}
+
+.submission-edit-completion-value {
+  font-size: 0.73rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.submission-edit-completion-detail {
+  color: inherit;
+  font-size: 0.72rem;
+  opacity: 0.82;
+}
+
+.submission-edit-savebar {
+  position: sticky;
+  bottom: 0.85rem;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(18, 22, 32, 0.96), rgba(12, 14, 22, 0.96));
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(14px);
+}
+
+.submission-edit-savebar-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.submission-edit-savebar-copy strong {
+  color: #ffffff;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.submission-edit-savebar-copy span {
+  color: #b7bcc7;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.submission-edit-savebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1199px) {
+  .submission-edit-page {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .submission-edit-shell {
+    width: 100%;
+  }
+
+  .submission-edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .submission-edit-sidebar,
+  .submission-edit-summary-card {
+    position: static;
+    top: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .submission-edit-hero-top,
+  .submission-edit-savebar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .submission-edit-summary-grid,
+  .submission-edit-completeness-row {
+    grid-template-columns: 1fr;
+  }
+
+  .submission-edit-table,
+  .submission-edit-issue-table {
+    min-width: 680px;
+  }
+
+  .submission-edit-savebar-actions {
+    width: 100%;
+  }
+
+  .submission-edit-savebar-actions .fleet-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
