@@ -2,15 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import CameraAltOutlinedIcon from "@mui/icons-material/CameraAltOutlined";
 import DatasetOutlinedIcon from "@mui/icons-material/DatasetOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import EventOutlinedIcon from "@mui/icons-material/EventOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import MicOutlinedIcon from "@mui/icons-material/MicOutlined";
-import NoteAltOutlinedIcon from "@mui/icons-material/NoteAltOutlined";
-import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import SourceOutlinedIcon from "@mui/icons-material/SourceOutlined";
@@ -22,10 +18,7 @@ import ArrowUpwardOutlinedIcon from "@mui/icons-material/ArrowUpwardOutlined";
 import ProtectedRoute from "../../../components/ProtectedRoute";
 import Loader from "../../../components/Common/Loader";
 import StatusBadge from "../../../components/Common/StatusBadge";
-import {
-  EmptyStatePanel,
-  MetricCard,
-} from "../../fleet/_components/ManagementUi";
+import { EmptyStatePanel } from "../../fleet/_components/ManagementUi";
 import {
   formatDate,
   formatDateTime,
@@ -290,37 +283,6 @@ export default function SessionReviewPage() {
     () => submissions.map((submission) => buildSubmissionMonitorRecord(submission, submissions)).filter(Boolean),
     [submissions],
   );
-
-  const summaryStats = useMemo(() => {
-    const uniqueDrivers = new Set();
-    const uniqueEvents = new Set();
-    let ocrCount = 0;
-    let voiceCount = 0;
-    let notesCount = 0;
-
-    submissionRecords.forEach((record) => {
-      uniqueDrivers.add(getSubmissionDriverLabel(record) || record.driverCode || "Unknown Driver");
-      uniqueEvents.add(getSubmissionEventLabel(record) || record.event?.id || "Unknown Event");
-
-      const sourceKey = getSessionSourceKey(record);
-      if (sourceKey === "ocr") {
-        ocrCount += 1;
-      } else if (sourceKey === "voice") {
-        voiceCount += 1;
-      } else {
-        notesCount += 1;
-      }
-    });
-
-    return {
-      total: submissionRecords.length,
-      uniqueDrivers: uniqueDrivers.size,
-      uniqueEvents: uniqueEvents.size,
-      ocrCount,
-      voiceCount,
-      notesCount,
-    };
-  }, [submissionRecords]);
 
   const driverOptions = useMemo(
     () =>
@@ -674,44 +636,6 @@ export default function SessionReviewPage() {
     }
   };
 
-  const summaryCards = [
-    {
-      icon: DatasetOutlinedIcon,
-      label: "Total Submissions",
-      value: summaryStats.total,
-      helper: "Every loaded session row in the admin view.",
-      tone: "accent",
-    },
-    {
-      icon: PeopleAltOutlinedIcon,
-      label: "Unique Drivers",
-      value: summaryStats.uniqueDrivers,
-      helper: "Distinct drivers represented in the current result set.",
-      tone: "info",
-    },
-    {
-      icon: CameraAltOutlinedIcon,
-      label: "OCR Submissions",
-      value: summaryStats.ocrCount,
-      helper: "Rows submitted through OCR or photo capture.",
-      tone: "warning",
-    },
-    {
-      icon: MicOutlinedIcon,
-      label: "Voice Submissions",
-      value: summaryStats.voiceCount,
-      helper: "Rows submitted through the voice flow.",
-      tone: "success",
-    },
-    {
-      icon: NoteAltOutlinedIcon,
-      label: "Notes Submissions",
-      value: summaryStats.notesCount,
-      helper: "Rows captured from notes or manual entry.",
-      tone: "neutral",
-    },
-  ];
-
   const emptyState = getEmptyStateCopy(hasFilters);
 
   return (
@@ -722,12 +646,7 @@ export default function SessionReviewPage() {
 
         <header className="submission-monitor-header">
           <div className="submission-monitor-copy">
-            <p className="submission-monitor-eyebrow">Driver Session Submissions</p>
             <h1>Session Review</h1>
-            <p className="submission-monitor-subtitle">
-              Review driver-submitted sessions in a row-based table, use source badges to understand how a session
-              arrived, and open the selected record when you need to update it.
-            </p>
           </div>
 
           <div className="submission-monitor-header-actions">
@@ -745,20 +664,6 @@ export default function SessionReviewPage() {
             </button>
           </div>
         </header>
-
-        <div className="submission-monitor-summary-grid">
-          {summaryCards.map((card) => (
-            <MetricCard
-              key={card.label}
-              icon={card.icon}
-              label={card.label}
-              value={card.value}
-              helper={card.helper}
-              tone={card.tone}
-            />
-          ))}
-        </div>
-
         <section className="submission-monitor-filter-panel">
           <div className="submission-monitor-filter-grid">
             <div className="fleet-field submission-filter-search">
@@ -889,16 +794,6 @@ export default function SessionReviewPage() {
         {pageError ? <div className="submission-monitor-error">{pageError}</div> : null}
 
         <section className="submission-table-section">
-          <div className="submission-table-heading">
-            <div>
-              <h2 className="submission-table-title">Driver Session Submissions</h2>
-              <p className="submission-table-subtitle">
-                Select a row to open the session detail panel, then use the action buttons to view or update the
-                full record.
-              </p>
-            </div>
-          </div>
-
           {loading ? (
             <Loader label="Loading submissions" sublabel="Fetching the latest session data." fullHeight />
           ) : filteredSubmissions.length ? (
