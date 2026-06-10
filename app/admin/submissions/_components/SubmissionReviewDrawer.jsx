@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import LaunchOutlinedIcon from "@mui/icons-material/LaunchOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import NotesOutlinedIcon from "@mui/icons-material/NotesOutlined";
 import SourceOutlinedIcon from "@mui/icons-material/SourceOutlined";
@@ -59,6 +60,7 @@ export default function SubmissionReviewDrawer({
   allSubmissions = [],
   focusSection = "overview",
   onClose,
+  onRequestExport = null,
 }) {
   const record = useMemo(() => {
     if (!submission) return null;
@@ -185,10 +187,30 @@ export default function SubmissionReviewDrawer({
                 event.preventDefault();
               }
             }}
-          >
-            <EditOutlinedIcon fontSize="inherit" />
-            Update Session
-          </a>
+            >
+              <EditOutlinedIcon fontSize="inherit" />
+              Update Session
+            </a>
+          {onRequestExport ? (
+            <>
+              <button
+                type="button"
+                className="fleet-btn fleet-btn-secondary"
+                onClick={() => onRequestExport("csv")}
+              >
+                <DownloadOutlinedIcon fontSize="inherit" />
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="fleet-btn fleet-btn-primary"
+                onClick={() => onRequestExport("excel")}
+              >
+                <DownloadOutlinedIcon fontSize="inherit" />
+                Export Excel
+              </button>
+            </>
+          ) : null}
         </div>
       }
     >

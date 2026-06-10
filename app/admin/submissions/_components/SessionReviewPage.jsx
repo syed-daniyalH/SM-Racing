@@ -12,6 +12,7 @@ import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import ArrowDownwardOutlinedIcon from "@mui/icons-material/ArrowDownwardOutlined";
 import ArrowUpwardOutlinedIcon from "@mui/icons-material/ArrowUpwardOutlined";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import ProtectedRoute from "../../../components/ProtectedRoute";
 import Loader from "../../../components/Common/Loader";
@@ -185,6 +186,70 @@ const getEmptyStateCopy = (hasFilters) =>
         description: "Incoming driver submissions will appear here as row-based sessions once they arrive.",
       };
 
+const ExportScopeDialog = ({
+  open,
+  formatLabel,
+  currentSessionLabel,
+  hasCurrentSession,
+  onOpenChange,
+  onExportCurrent,
+  onExportAll,
+}) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="submission-export-dialog" showCloseButton={false}>
+      <DialogHeader className="submission-export-dialog-header">
+        <DialogTitle>Choose {formatLabel} export scope</DialogTitle>
+        <DialogDescription>
+          Pick whether to export the session open in the drawer or the full filtered session list. The columns and formatting stay unchanged.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="submission-export-dialog-body">
+        <button
+          type="button"
+          className="submission-export-option submission-export-option-current"
+          onClick={onExportCurrent}
+          disabled={!hasCurrentSession}
+        >
+          <span className="submission-export-option-icon" aria-hidden="true">
+            <VisibilityOutlinedIcon fontSize="inherit" />
+          </span>
+          <span className="submission-export-option-copy">
+            <span className="submission-export-option-title">Export selected/current session only</span>
+            <span className="submission-export-option-description">
+              {hasCurrentSession
+                ? `Export ${currentSessionLabel} as a ${formatLabel} file.`
+                : "No session is currently selected in the drawer. Open one to enable this option."}
+            </span>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className="submission-export-option submission-export-option-all"
+          onClick={onExportAll}
+        >
+          <span className="submission-export-option-icon" aria-hidden="true">
+            <DatasetOutlinedIcon fontSize="inherit" />
+          </span>
+          <span className="submission-export-option-copy">
+            <span className="submission-export-option-title">Export all sessions</span>
+            <span className="submission-export-option-description">
+              Export every session in the current filtered list as a {formatLabel} file.
+            </span>
+          </span>
+        </button>
+      </div>
+
+      <div className="submission-export-dialog-footer">
+        <button type="button" className="fleet-btn fleet-btn-secondary" onClick={() => onOpenChange(false)}>
+          Cancel
+        </button>
+      </div>
+    </DialogContent>
+  </Dialog>
+);
+
 export default function SessionReviewPage() {
   const router = useRouter();
 
@@ -203,6 +268,8 @@ export default function SessionReviewPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null);
   const [drawerFocus, setDrawerFocus] = useState("overview");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState("csv");
 
   const showDemoSubmission = useCallback((message) => {
     if (!mockSubmissions.length) return;
@@ -377,6 +444,11 @@ export default function SessionReviewPage() {
     () => submissionRecords.find((record) => String(getSubmissionId(record)) === String(selectedSubmissionId)) || null,
     [selectedSubmissionId, submissionRecords],
   );
+  const currentExportSubmission = drawerOpen ? selectedSubmission : null;
+  const currentExportSubmissionLabel = currentExportSubmission
+    ? currentExportSubmission.submissionId || getSubmissionId(currentExportSubmission) || "selected session"
+    : "";
+  const exportFormatLabel = exportFormat === "excel" ? "Excel" : "CSV";
 
   const hasFilters =
     Boolean(searchQuery.trim()) ||
@@ -410,6 +482,11 @@ export default function SessionReviewPage() {
   const closeDrawer = () => {
     setDrawerOpen(false);
     setDrawerFocus("overview");
+  };
+
+  const openExportDialog = (format) => {
+    setExportFormat(format);
+    setExportDialogOpen(true);
   };
 
   const handleExportRows = (rows, format = "csv", fileName = "submission-review") => {
@@ -456,22 +533,23 @@ export default function SessionReviewPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportCsv = () => {
-    const rows = buildSubmissionExportRows(filteredSubmissions);
-    handleExportRows(rows, "csv", "submission-review-dashboard");
-    setNotice({
-      tone: "success",
-      message: `Exported ${rows.length} session${rows.length === 1 ? "" : "s"} to CSV.`,
-    });
-  };
+  const handleExportSelection = (scope) => {
+    if (scope === "current" && !currentExportSubmission) {
+      setNotice({
+        tone: "warning",
+        message: "No session is selected in the drawer. Open a session before exporting the selected session only.",
+      });
+      return;
+    }
 
-  const handleExportExcel = () => {
-    const rows = buildSubmissionExportRows(filteredSubmissions);
-    handleExportRows(rows, "excel", "submission-review-dashboard");
+    const exportSubmissions = scope === "current" ? [currentExportSubmission] : filteredSubmissions;
+    const rows = buildSubmissionExportRows(exportSubmissions);
+    handleExportRows(rows, exportFormat, "submission-review-dashboard");
     setNotice({
       tone: "success",
-      message: `Exported ${rows.length} session${rows.length === 1 ? "" : "s"} to Excel.`,
+      message: `Exported ${rows.length} session${rows.length === 1 ? "" : "s"} to ${exportFormatLabel}.`,
     });
+    setExportDialogOpen(false);
   };
 
   const clearFilters = () => {
@@ -623,14 +701,18 @@ export default function SessionReviewPage() {
               <RefreshOutlinedIcon fontSize="inherit" />
               Refresh Monitor
             </button>
-            <button type="button" className="fleet-btn fleet-btn-secondary" onClick={handleExportCsv}>
-              <DownloadOutlinedIcon fontSize="inherit" />
-              Export CSV
-            </button>
-            <button type="button" className="fleet-btn fleet-btn-primary" onClick={handleExportExcel}>
-              <DownloadOutlinedIcon fontSize="inherit" />
-              Export Excel
-            </button>
+            {!drawerOpen ? (
+              <>
+                <button type="button" className="fleet-btn fleet-btn-secondary" onClick={() => openExportDialog("csv")}>
+                  <DownloadOutlinedIcon fontSize="inherit" />
+                  Export CSV
+                </button>
+                <button type="button" className="fleet-btn fleet-btn-primary" onClick={() => openExportDialog("excel")}>
+                  <DownloadOutlinedIcon fontSize="inherit" />
+                  Export Excel
+                </button>
+              </>
+            ) : null}
           </div>
         </header>
         <section className="submission-monitor-filter-panel">
@@ -836,6 +918,17 @@ export default function SessionReviewPage() {
         allSubmissions={submissionRecords}
         focusSection={drawerFocus}
         onClose={closeDrawer}
+        onRequestExport={openExportDialog}
+      />
+
+      <ExportScopeDialog
+        open={exportDialogOpen}
+        formatLabel={exportFormatLabel}
+        currentSessionLabel={currentExportSubmissionLabel}
+        hasCurrentSession={Boolean(currentExportSubmission)}
+        onOpenChange={setExportDialogOpen}
+        onExportCurrent={() => handleExportSelection("current")}
+        onExportAll={() => handleExportSelection("all")}
       />
     </ProtectedRoute>
   );
