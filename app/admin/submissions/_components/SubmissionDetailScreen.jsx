@@ -850,12 +850,13 @@ export default function SubmissionDetailScreen({
   allSubmissions = [],
   previewMessage = "",
   previewTone = "warning",
+  initialEditMode = false,
 }) {
   const router = useRouter();
 
   const { user } = useAuth();
   const [liveSubmission, setLiveSubmission] = useState(submission);
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(Boolean(initialEditMode));
   const [isSaving, setIsSaving] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -888,7 +889,6 @@ export default function SubmissionDetailScreen({
         record.analysis_result?.comments ||
         "",
     );
-    setIsEditing(false);
     setIsDirty(false);
     setNotice(null);
   }, [record]);

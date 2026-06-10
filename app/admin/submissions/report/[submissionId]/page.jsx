@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 
 import ProtectedRoute from "../../../../components/ProtectedRoute";
@@ -22,6 +22,7 @@ const findSubmissionById = (items = [], submissionId) =>
 export default function SubmissionDetailReportPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const resolvedSubmissionId = useMemo(() => {
     const rawId = params?.submissionId;
     const idValue = Array.isArray(rawId) ? rawId[0] || null : rawId || null;
@@ -33,6 +34,12 @@ export default function SubmissionDetailReportPage() {
       return idValue;
     }
   }, [params?.submissionId]);
+
+  const startInEditMode = useMemo(() => {
+    const editParam = searchParams?.get("edit");
+    const modeParam = searchParams?.get("mode");
+    return editParam === "1" || editParam === "true" || modeParam === "edit";
+  }, [searchParams]);
 
   const [submission, setSubmission] = useState(null);
   const [allSubmissions, setAllSubmissions] = useState([]);
@@ -146,6 +153,7 @@ export default function SubmissionDetailReportPage() {
           allSubmissions={allSubmissions}
           previewMessage={previewMessage}
           previewTone={previewTone}
+          initialEditMode={startInEditMode}
         />
       )}
     </ProtectedRoute>

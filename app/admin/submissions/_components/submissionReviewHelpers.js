@@ -61,6 +61,101 @@ const formatShortDateLabel = (value) => {
   }).format(date);
 };
 
+const isUsableLabel = (value) => {
+  const text = normalizeText(value);
+  return Boolean(text && text !== "-");
+};
+
+const getSubmissionExportDateTimeLabel = (record) => {
+  const sessionDate = normalizeText(record?.sessionDateLabel || "");
+  const sessionTime = normalizeText(record?.sessionTimeLabel || "");
+
+  if (sessionDate && sessionTime) {
+    return `${sessionDate} · ${sessionTime}`;
+  }
+
+  if (isUsableLabel(record?.submittedAtLabel)) {
+    return normalizeText(record.submittedAtLabel);
+  }
+
+  if (isUsableLabel(record?.dateLabel)) {
+    return normalizeText(record.dateLabel);
+  }
+
+  const fallback = formatDateTimeLabel(record?.submittedAt || record?.createdAt || record?.updatedAt);
+  return fallback === "-" ? "Not available" : fallback;
+};
+
+const getSubmissionExportRunGroupLabel = (record) =>
+  normalizeText(
+    record?.run_group?.label ||
+      record?.run_group?.displayName ||
+      record?.run_group?.name ||
+      record?.run_group?.normalized ||
+      record?.run_group?.rawText ||
+      record?.runGroup ||
+      record?.data?.run_group_label ||
+      record?.data?.run_group ||
+      record?.data?.runGroup ||
+      "Not assigned",
+  ) || "Not assigned";
+
+const getSubmissionExportSourceLabel = (record) => {
+  const sourceHint = normalizeLower(
+    [
+      record?.sourceTypeKey,
+      record?.sourceTypeLabel,
+      record?.sourceChannel,
+      record?.analysisResult?.source_type,
+      record?.analysisResult?.sourceType,
+      record?.analysisResult?.submission_mode,
+      record?.analysisResult?.submissionMode,
+      record?.analysisResult?.raw_input_mode,
+      record?.analysisResult?.rawInputMode,
+    ]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  if (
+    record?.voiceSession ||
+    record?.voiceSessionId ||
+    record?.voiceTranscript ||
+    record?.voiceAudioDownloadUrl ||
+    record?.voiceAudioFileName ||
+    record?.voiceTranscriptConfidence !== null && record?.voiceTranscriptConfidence !== undefined ||
+    SOURCE_VOICE_PATTERN.test(sourceHint)
+  ) {
+    return "Voice";
+  }
+
+  if (
+    record?.ocrText ||
+    record?.imageUrl ||
+    record?.image ||
+    record?.analysisResult?.ocr_text ||
+    record?.analysisResult?.ocrText ||
+    record?.analysisResult?.ocr_result ||
+    record?.analysisResult?.ocrResult ||
+    SOURCE_OCR_PATTERN.test(sourceHint)
+  ) {
+    return "OCR";
+  }
+
+  if (
+    record?.notesLabel ||
+    record?.rawText ||
+    record?.data?.notes ||
+    record?.data?.feedback ||
+    SOURCE_NOTES_PATTERN.test(sourceHint)
+  ) {
+    return "Notes";
+  }
+
+  return "Unknown";
+};
+
 const sourceTypeCatalog = {
   quick: { label: "Quick Submission", tone: "accent" },
   detail: { label: "Detailed Submission", tone: "info" },
@@ -68,6 +163,10 @@ const sourceTypeCatalog = {
   ocr: { label: "OCR Submission", tone: "warning" },
   photo: { label: "Photo Submission", tone: "success" },
 };
+
+const VOICE_SOURCE_PATTERN = /(voice|audio|transcript|speech|dictat|mic)/i;
+const OCR_SOURCE_PATTERN = /(ocr|photo|image|scan|screenshot|setup[\s_-]?sheet)/i;
+const NOTES_SOURCE_PATTERN = /(notes|manual|text|typed|quick|detail|raw)/i;
 
 const reviewStateCatalog = {
   pending_review: { label: "Pending Processing", tone: "warning" },
@@ -115,16 +214,16 @@ const parseSourceTypeKey = (submission, data, analysisResult) => {
   );
 
   if (explicit) {
-    if (explicit.includes("voice")) return "voice";
-    if (explicit.includes("ocr")) return "ocr";
-    if (explicit.includes("photo")) return "photo";
-    if (explicit.includes("detail")) return "detail";
-    if (explicit.includes("quick")) return "quick";
+    if (VOICE_SOURCE_PATTERN.test(explicit)) return "voice";
+    if (OCR_SOURCE_PATTERN.test(explicit)) return "photo";
+    if (NOTES_SOURCE_PATTERN.test(explicit)) {
+      return explicit.includes("detail") ? "detail" : "quick";
+    }
   }
 
   if (
     analysisResult.voice_session_id ||
-    analysisResult.voiceSessionId ||
+      analysisResult.voiceSessionId ||
     analysisResult.voice_input_used ||
     analysisResult.voiceInputUsed ||
     analysisResult.raw_input_mode === "voice" ||
@@ -853,30 +952,18 @@ export const buildReviewAnalysisPatch = ({
 export const buildSubmissionExportRows = (submissions = []) =>
   submissions.map((submission) => {
     const record = buildSubmissionMonitorRecord(submission, submissions) || submission;
+    const eventLabel = normalizeText(getSubmissionEventLabel(record)) || "Unknown Event";
+    const trackLabel = normalizeText(getSubmissionTrackLabel(record));
 
     return {
-      submissionId: formatEntityId("SUB", getSubmissionId(record)),
-      date: record.sessionDateLabel || "-",
-      time: record.sessionTimeLabel || "-",
-      track: getSubmissionTrackLabel(record),
-      driverName: getSubmissionDriverLabel(record),
-      driverId: record.driverCode || record.data?.driver_id || record.driver_id || "-",
-      vehicleId: record.vehicleCode || record.data?.vehicle_id || record.vehicle_id || "-",
-      sessionType: record.sessionTypeLabel || "-",
-      sessionNumber: record.sessionNumberLabel || "-",
-      durationMin: record.durationLabel || "-",
-      tireSet: record.tireSetLabel || "-",
-      notes: record.notesLabel || "",
-      createdBy: record.createdByLabel || "-",
-      createdAt: record.submittedAtLabel,
-      reviewStatus: record.validationStateLabel,
-      syncStatus: record.syncStateLabel,
-      confidence: record.confidenceLabel,
-      status: record.validationStateKey?.toUpperCase() || "PENDING",
-      rawText: record.rawText || "",
-      sourceType: record.sourceTypeLabel,
-      validationMessages: (record.validationMessages || []).join(" | "),
-      reviewedAt: formatDateTimeLabel(record.analysisResult?.reviewed_at || record.processedAt || record.updatedAt),
+      submissionId: record.submissionId || getSubmissionId(record) || "Not available",
+      dateTime: getSubmissionExportDateTimeLabel(record),
+      driver: getSubmissionDriverLabel(record) || "Unknown driver",
+      vehicle: getSubmissionVehicleLabel(record) || "Unknown vehicle",
+      event: eventLabel,
+      track: trackLabel && trackLabel !== "Unknown Track" ? trackLabel : "No track selected",
+      runGroup: getSubmissionExportRunGroupLabel(record),
+      submittedVia: getSubmissionExportSourceLabel(record),
     };
   });
 

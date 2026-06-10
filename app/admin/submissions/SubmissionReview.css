@@ -123,7 +123,7 @@
 
 .submission-monitor-filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.9rem;
   align-items: end;
 }
@@ -341,7 +341,7 @@
 }
 
 .submission-sheet-table {
-  min-width: 1180px;
+  min-width: 1480px;
 }
 
 .submission-table-row {
@@ -423,6 +423,246 @@
   flex-wrap: wrap;
   gap: 0.45rem;
   width: 100%;
+}
+
+.submission-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.submission-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 34px;
+  padding: 0.55rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    background 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.submission-row-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(255, 107, 53, 0.35);
+  background: rgba(255, 107, 53, 0.08);
+}
+
+.submission-row-action.is-primary {
+  border-color: rgba(255, 107, 53, 0.45);
+  background: #ff6b35;
+  box-shadow: 0 8px 20px rgba(255, 107, 53, 0.22);
+}
+
+.submission-row-action.is-primary:hover:not(:disabled) {
+  background: #ff8c42;
+  border-color: rgba(255, 140, 66, 0.85);
+}
+
+.submission-row-action.tone-neutral {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.submission-row-action.tone-accent {
+  border-color: rgba(255, 107, 53, 0.28);
+}
+
+.submission-row-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.submission-source-stack {
+  display: grid;
+  gap: 0.35rem;
+  align-items: start;
+}
+
+.submission-session-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0.34rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d8d8d8;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.submission-session-drawer {
+  display: grid;
+  gap: 1rem;
+}
+
+.submission-session-section {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.05rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent),
+    linear-gradient(160deg, rgba(26, 26, 26, 0.98), rgba(12, 12, 12, 0.98));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26);
+}
+
+.submission-session-grid {
+  gap: 0.75rem;
+}
+
+.submission-session-notes-card,
+.submission-session-source-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 14, 39, 0.9);
+}
+
+.submission-session-source-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.submission-session-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #ffbf9f;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.submission-session-notes-card p {
+  margin: 0;
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.submission-session-source-body {
+  margin: 0;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0a0e27;
+  color: #ffcfbf;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.submission-session-source-link {
+  justify-self: start;
+}
+
+.submission-session-timeline {
+  display: grid;
+  gap: 0.7rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.submission-session-timeline-item {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 14, 39, 0.9);
+}
+
+.submission-session-timeline-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.submission-session-timeline-action {
+  color: #ffffff;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.submission-session-timeline-note {
+  color: #b8bcc4;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.submission-session-timeline-meta {
+  color: #7a8090;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.submission-session-time-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d8d8d8;
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.submission-session-timeline-item.tone-accent {
+  border-color: rgba(255, 107, 53, 0.22);
+}
+
+.submission-session-timeline-item.tone-info {
+  border-color: rgba(0, 122, 255, 0.22);
+}
+
+.submission-session-timeline-item.tone-neutral {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.submission-drawer-actions .fleet-btn {
+  text-decoration: none;
+}
+
+.submission-drawer-actions .fleet-btn.is-disabled {
+  pointer-events: none;
+  opacity: 0.55;
 }
 
 .submission-sheet-card .fleet-table-scroll {
@@ -997,6 +1237,21 @@
   .submission-action-grid .fleet-action-icon-button {
     width: 2.5rem;
     height: 2.5rem;
+  }
+
+  .submission-row-actions {
+    gap: 0.35rem;
+  }
+
+  .submission-row-action {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .submission-session-timeline-top,
+  .submission-monitor-filter-actions {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
