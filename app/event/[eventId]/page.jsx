@@ -77,9 +77,9 @@ const EVENT_ACTIONS = [
     className: "primary",
     iconClassName: "",
     label: "Primary",
-    title: "Submit Notes",
-    description: "Open the driver note flow for this event.",
-    hrefBuilder: (eventId) => `/event/${eventId}/notes`,
+    title: "Detailed Submission",
+    description: "Open the structured driver note flow for this event.",
+    hrefBuilder: (eventId) => `/event/${eventId}/notes?tab=detail`,
     icon: NoteAltRoundedIcon,
   },
   {

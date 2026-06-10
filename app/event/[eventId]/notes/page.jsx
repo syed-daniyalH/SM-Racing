@@ -554,7 +554,9 @@ export default function NotesSubmission() {
   const submissionIdParam = String(searchParams?.get("submissionId") || "").trim();
   const submissionTabParam = String(searchParams?.get("tab") || "").trim().toLowerCase();
   const [event, setEvent] = useState(null);
-  const [activeTab, setActiveTab] = useState("quick"); // 'quick' | 'detail'
+  const [activeTab, setActiveTab] = useState(
+    submissionTabParam === "detail" ? "detail" : "quick",
+  ); // 'quick' | 'detail'
   const [eventRunGroup, setEventRunGroup] = useState("");
   const [trackSelection, setTrackSelection] = useState(""); // dropdown value; '__OTHER__' => manual entry
   const [trackCatalog, setTrackCatalog] = useState([]);
@@ -1728,6 +1730,7 @@ export default function NotesSubmission() {
   };
 
   const isQuickTab = activeTab === "quick";
+  const pageTitle = isQuickTab ? "Submit Notes" : "Detailed Submission";
   const formState = isQuickTab ? quickForm : detailForm;
   const setFormFn = isQuickTab ? setQuickForm : setDetailForm;
   const updateFormFn = isQuickTab ? updateQuickForm : updateDetailForm;
@@ -1972,7 +1975,7 @@ export default function NotesSubmission() {
         <div className="page-header">
           <div className="header-content">
             <ScreenBackButton fallbackHref={`/event/${eventId}`} label="Back" />
-            <h1 className="page-title">Submit Notes</h1>
+            <h1 className="page-title">{pageTitle}</h1>
           </div>
         </div>
 
@@ -1997,7 +2000,7 @@ export default function NotesSubmission() {
               className={`tab-button ${!isQuickTab ? "active" : ""}`}
               onClick={() => setActiveTab("detail")}
             >
-              Detail Submission
+              Detailed Submission
             </button>
           </div>
 
