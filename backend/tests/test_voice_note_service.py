@@ -8,14 +8,17 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.enums import VoiceNoteStatus
-from app.models.voice_note import VoiceNoteSession
+from app.models.voice_note import VoiceNoteAudio, VoiceNoteSession
 from app.schemas.submission import SubmissionCreate
+from app.services import voice_note_service
 from app.services.voice_note_service import (
     _validate_event_submission_window,
     ensure_voice_session_mutable,
     ensure_voice_transcription_allowed,
+    load_voice_audio_payload,
     prepare_voice_submission_create,
     require_explicit_review_before_finalize,
+    store_voice_audio,
 )
 
 
@@ -38,6 +41,26 @@ def _voice_session(
         transcript_edited_text=transcript_edited_text,
         audio_storage_key=audio_storage_key,
     )
+
+
+class DummySession:
+    def __init__(self, audio_record: VoiceNoteAudio | None = None) -> None:
+        self.audio_record = audio_record
+        self.added: list[object] = []
+        self.flushed = 0
+        self.get_calls: list[tuple[type, object]] = []
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        self.flushed += 1
+
+    def get(self, model, key):
+        self.get_calls.append((model, key))
+        if model is VoiceNoteAudio and self.audio_record is not None and key == self.audio_record.voice_session_id:
+            return self.audio_record
+        return None
 
 
 def test_validate_event_submission_window_treats_midnight_end_as_full_day_open() -> None:
@@ -166,3 +189,84 @@ def test_prepare_voice_submission_create_rejects_empty_transcript() -> None:
 
     assert exc_info.value.status_code == 400
     assert "Transcript cannot be empty" in str(exc_info.value.detail)
+
+
+def test_store_voice_audio_saves_database_blob_and_local_fallback(tmp_path, monkeypatch) -> None:
+    session = _voice_session()
+    db = DummySession()
+    audio_bytes = b"fake-webm-audio"
+
+    monkeypatch.setattr(voice_note_service, "_audit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(voice_note_service, "_audio_storage_root", lambda: tmp_path)
+
+    stored = store_voice_audio(
+        db,
+        voice_session=session,
+        audio_bytes=audio_bytes,
+        content_type="audio/webm;codecs=opus",
+        file_name="driver-note.webm",
+        duration_ms=1234,
+        audio_language="en",
+    )
+
+    audio_record = next(obj for obj in db.added if isinstance(obj, VoiceNoteAudio))
+
+    assert stored is session
+    assert session.audio_record is audio_record
+    assert session.audio_storage_key == f"{session.event_id}/{session.id}/recording.webm"
+    assert session.audio_file_name == "driver-note.webm"
+    assert session.audio_content_type == "audio/webm"
+    assert session.audio_size_bytes == len(audio_bytes)
+    assert session.audio_checksum is not None
+    assert session.audio_language == "en"
+    assert session.audio_download_url == f"/api/v1/submissions/voice-sessions/{session.id}/audio"
+    assert session.status == VoiceNoteStatus.UPLOADED
+    assert session.validation_status == "PENDING"
+    assert audio_record.audio_blob == audio_bytes
+    assert audio_record.mime_type == "audio/webm"
+    assert audio_record.file_extension == "webm"
+    assert audio_record.size_bytes == len(audio_bytes)
+    assert audio_record.original_filename == "driver-note.webm"
+    assert audio_record.created_at is not None
+    assert (tmp_path / str(session.event_id) / str(session.id) / "recording.webm").read_bytes() == audio_bytes
+
+
+def test_load_voice_audio_payload_prefers_database_blob(tmp_path, monkeypatch) -> None:
+    session = _voice_session(audio_storage_key="event/session/recording.webm")
+    audio_record = VoiceNoteAudio(
+        voice_session_id=session.id,
+        audio_blob=b"database-bytes",
+        mime_type="audio/ogg",
+        file_extension="ogg",
+        size_bytes=14,
+        original_filename="database-note.ogg",
+        created_at=datetime.now(timezone.utc),
+    )
+    db = DummySession(audio_record=audio_record)
+
+    local_path = tmp_path / "event" / "session" / "recording.webm"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_bytes(b"local-bytes")
+
+    monkeypatch.setattr(voice_note_service, "_audio_storage_root", lambda: tmp_path)
+
+    payload = load_voice_audio_payload(db, voice_session=session)
+
+    assert payload == (b"database-bytes", "audio/ogg", "database-note.ogg", "database")
+
+
+def test_load_voice_audio_payload_falls_back_to_local_file(tmp_path, monkeypatch) -> None:
+    session = _voice_session(audio_storage_key="event/session/recording.webm")
+    session.audio_file_name = "driver-note.webm"
+    session.audio_content_type = "audio/webm"
+    db = DummySession()
+
+    local_path = tmp_path / "event" / "session" / "recording.webm"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_bytes(b"local-bytes")
+
+    monkeypatch.setattr(voice_note_service, "_audio_storage_root", lambda: tmp_path)
+
+    payload = load_voice_audio_payload(db, voice_session=session)
+
+    assert payload == (b"local-bytes", "audio/webm", "driver-note.webm", "disk")

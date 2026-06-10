@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, DB_SCHEMA
@@ -60,6 +60,13 @@ class VoiceNoteSession(Base, TimestampMixin):
     event = relationship("Event")
     run_group = relationship("RunGroup")
     created_by_user = relationship("User")
+    audio_record = relationship(
+        "VoiceNoteAudio",
+        back_populates="voice_session",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
     submission = relationship(
         "Submission",
         foreign_keys=[submission_id],
@@ -76,7 +83,29 @@ class VoiceNoteSession(Base, TimestampMixin):
     def audio_download_url(self) -> str | None:
         if not self.audio_storage_key:
             return None
-        return f"/submissions/voice-sessions/{self.id}/audio"
+        return f"/api/v1/submissions/voice-sessions/{self.id}/audio"
+
+
+class VoiceNoteAudio(Base):
+    __tablename__ = "voice_note_audio"
+    __table_args__ = {"schema": DB_SCHEMA}
+
+    voice_session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(f"{DB_SCHEMA}.voice_note_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    audio_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    file_extension: Mapped[str] = mapped_column(String(16), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    voice_session = relationship("VoiceNoteSession", back_populates="audio_record")
 
 
 class VoiceNoteTranscriptionAttempt(Base, TimestampMixin):

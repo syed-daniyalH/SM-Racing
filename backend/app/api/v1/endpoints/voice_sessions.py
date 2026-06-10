@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
@@ -31,10 +32,10 @@ from app.services.voice_note_service import (
     prepare_voice_submission_create,
     process_voice_transcription_task,
     require_explicit_review_before_finalize,
+    load_voice_audio_payload,
     store_voice_audio,
     _audit,
     _ensure_voice_session_event_context,
-    _voice_audio_path,
 )
 from app.api.v1.endpoints.submissions import create_submission
 
@@ -58,6 +59,11 @@ def _voice_session_summary(session: VoiceNoteSession) -> dict[str, object]:
         "audio_duration_ms": session.audio_duration_ms,
         "transcript_confidence": session.transcript_confidence,
     }
+
+
+def _voice_audio_content_disposition(file_name: str | None) -> str:
+    safe_name = Path(file_name or "voice-note.webm").name.replace("\r", "").replace("\n", "").replace('"', "")
+    return f'inline; filename="{safe_name or "voice-note.webm"}"'
 
 
 @router.post("/voice-sessions", response_model=VoiceNoteSessionRead, status_code=status.HTTP_201_CREATED)
@@ -263,14 +269,19 @@ def read_voice_audio_endpoint(
         current_user=current_user,
         load_attempts=False,
     )
-    audio_path = _voice_audio_path(voice_session)
-    if not audio_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice audio not found")
+    audio_bytes, mime_type, file_name, _audio_source = load_voice_audio_payload(
+        db,
+        voice_session=voice_session,
+    )
 
-    return FileResponse(
-        str(audio_path),
-        media_type=voice_session.audio_content_type or "application/octet-stream",
-        filename=voice_session.audio_file_name or audio_path.name,
+    return Response(
+        content=audio_bytes,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": _voice_audio_content_disposition(file_name),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

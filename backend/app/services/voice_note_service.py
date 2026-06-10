@@ -19,7 +19,7 @@ from app.models.event import Event
 from app.models.run_group import RunGroup
 from app.models.submission import Submission
 from app.models.user import User
-from app.models.voice_note import VoiceNoteSession, VoiceNoteTranscriptionAttempt
+from app.models.voice_note import VoiceNoteAudio, VoiceNoteSession, VoiceNoteTranscriptionAttempt
 from app.schemas.submission import SubmissionCreate
 from app.services.deepgram_service import (
     DeepgramTranscriptionError,
@@ -222,6 +222,64 @@ def _voice_storage_key(path: Path) -> str:
         return str(path.name)
 
 
+def _voice_audio_filename(
+    voice_session: VoiceNoteSession,
+    *,
+    audio_record: VoiceNoteAudio | None = None,
+    fallback_path: Path | None = None,
+) -> str:
+    original_filename = normalize_optional_text(audio_record.original_filename if audio_record else None)
+    if original_filename:
+        return Path(original_filename).name
+
+    session_filename = normalize_optional_text(voice_session.audio_file_name)
+    if session_filename:
+        return Path(session_filename).name
+
+    if audio_record is not None:
+        file_extension = normalize_optional_text(audio_record.file_extension)
+        if file_extension:
+            normalized_extension = file_extension.lstrip(".")
+            return f"recording.{normalized_extension}"
+
+    if fallback_path is not None:
+        return fallback_path.name
+
+    return "voice-note.webm"
+
+
+def load_voice_audio_payload(
+    db: Session,
+    *,
+    voice_session: VoiceNoteSession,
+) -> tuple[bytes, str, str, str]:
+    audio_record = db.get(VoiceNoteAudio, voice_session.id)
+    if audio_record is not None and audio_record.audio_blob:
+        mime_type = (
+            normalize_optional_text(audio_record.mime_type)
+            or normalize_optional_text(voice_session.audio_content_type)
+            or "application/octet-stream"
+        )
+        return (
+            bytes(audio_record.audio_blob),
+            mime_type,
+            _voice_audio_filename(voice_session, audio_record=audio_record),
+            "database",
+        )
+
+    audio_path = _voice_audio_path(voice_session)
+    if not audio_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice audio file not found")
+
+    mime_type = normalize_optional_text(voice_session.audio_content_type) or "application/octet-stream"
+    return (
+        audio_path.read_bytes(),
+        mime_type,
+        _voice_audio_filename(voice_session, fallback_path=audio_path),
+        "disk",
+    )
+
+
 def create_voice_session(
     db: Session,
     *,
@@ -297,17 +355,30 @@ def store_voice_audio(
                 detail="Audio duration exceeds the allowed limit",
             )
 
-    extension = _audio_extension(normalized_content_type, file_name)
+    extension = _audio_extension(normalized_content_type, file_name).lstrip(".") or "webm"
     storage_directory = _voice_storage_directory(voice_session)
-    storage_directory.mkdir(parents=True, exist_ok=True)
-    storage_path = storage_directory / f"recording{extension}"
+    storage_path = storage_directory / f"recording.{extension}"
 
     checksum = hashlib.sha256(audio_bytes).hexdigest()
-    storage_path.write_bytes(audio_bytes)
 
+    audio_record = db.get(VoiceNoteAudio, voice_session.id)
+    if audio_record is None:
+        audio_record = VoiceNoteAudio(
+            voice_session_id=voice_session.id,
+            created_at=datetime.now(timezone.utc),
+        )
+    if audio_record.created_at is None:
+        audio_record.created_at = datetime.now(timezone.utc)
+    audio_record.audio_blob = audio_bytes
+    audio_record.mime_type = normalized_content_type or "application/octet-stream"
+    audio_record.file_extension = extension
+    audio_record.size_bytes = len(audio_bytes)
+    audio_record.original_filename = normalize_optional_text(file_name) or storage_path.name
+
+    voice_session.audio_record = audio_record
     voice_session.audio_storage_key = _voice_storage_key(storage_path)
-    voice_session.audio_file_name = normalize_optional_text(file_name) or storage_path.name
-    voice_session.audio_content_type = normalized_content_type or "application/octet-stream"
+    voice_session.audio_file_name = audio_record.original_filename
+    voice_session.audio_content_type = audio_record.mime_type
     voice_session.audio_size_bytes = len(audio_bytes)
     voice_session.audio_duration_ms = int(duration_ms) if duration_ms is not None else None
     voice_session.audio_checksum = checksum
@@ -320,8 +391,19 @@ def store_voice_audio(
     voice_session.last_error_code = None
     voice_session.last_error_message = None
 
+    db.add(audio_record)
     db.add(voice_session)
     db.flush()
+
+    try:
+        storage_directory.mkdir(parents=True, exist_ok=True)
+        storage_path.write_bytes(audio_bytes)
+    except OSError:
+        logger.warning(
+            "Unable to write local fallback audio for voice session %s",
+            voice_session.id,
+            exc_info=True,
+        )
 
     _audit(
         db,
@@ -436,9 +518,10 @@ def process_voice_transcription(
     voice_session: VoiceNoteSession,
     attempt: VoiceNoteTranscriptionAttempt,
 ) -> VoiceNoteSession:
-    audio_path = _voice_audio_path(voice_session)
-    if not audio_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice audio file not found")
+    audio_bytes, audio_content_type, audio_file_name, audio_source = load_voice_audio_payload(
+        db,
+        voice_session=voice_session,
+    )
 
     voice_session.status = VoiceNoteStatus.TRANSCRIBING
     voice_session.last_error_code = None
@@ -446,14 +529,14 @@ def process_voice_transcription(
     db.add(voice_session)
     db.flush()
 
-    audio_bytes = audio_path.read_bytes()
     request_json = {
         "audio_storage_key": voice_session.audio_storage_key,
-        "audio_file_name": voice_session.audio_file_name,
-        "audio_content_type": voice_session.audio_content_type,
+        "audio_file_name": audio_file_name,
+        "audio_content_type": audio_content_type,
         "audio_size_bytes": voice_session.audio_size_bytes,
         "audio_duration_ms": voice_session.audio_duration_ms,
         "audio_language": voice_session.audio_language,
+        "audio_source": audio_source,
         "voice_session_id": str(voice_session.id),
         "attempt_number": attempt.attempt_number,
     }
@@ -461,7 +544,7 @@ def process_voice_transcription(
     try:
         deepgram_response, deepgram_request = transcribe_audio_bytes(
             audio_bytes,
-            content_type=voice_session.audio_content_type or "audio/webm",
+            content_type=audio_content_type or "audio/webm",
             audio_language=voice_session.audio_language,
             session_id=str(voice_session.id),
         )
