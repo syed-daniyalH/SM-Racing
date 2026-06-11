@@ -196,11 +196,11 @@ const ExportScopeDialog = ({
   onExportAll,
 }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="submission-export-dialog" showCloseButton={false}>
+    <DialogContent className="submission-export-dialog" overlayClassName="pointer-events-none" showCloseButton={false}>
       <DialogHeader className="submission-export-dialog-header">
         <DialogTitle>Choose {formatLabel} export scope</DialogTitle>
         <DialogDescription>
-          Pick whether to export the session open in the drawer or the full filtered session list. The columns and formatting stay unchanged.
+          Pick whether to export the session open in the drawer or the full filtered session list. You can keep this open and click a session row behind it if you need to select one first.
         </DialogDescription>
       </DialogHeader>
 
