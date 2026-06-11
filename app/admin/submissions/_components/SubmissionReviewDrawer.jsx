@@ -60,7 +60,7 @@ export default function SubmissionReviewDrawer({
   allSubmissions = [],
   focusSection = "overview",
   onClose,
-  onRequestExport = null,
+  onExportCurrent = null,
 }) {
   const record = useMemo(() => {
     if (!submission) return null;
@@ -191,8 +191,8 @@ export default function SubmissionReviewDrawer({
               <EditOutlinedIcon fontSize="inherit" />
               Update Session
             </a>
-          {onRequestExport ? (
-            <button type="button" className="fleet-btn fleet-btn-primary" onClick={onRequestExport}>
+          {onExportCurrent ? (
+            <button type="button" className="fleet-btn fleet-btn-primary" onClick={onExportCurrent}>
               <DownloadOutlinedIcon fontSize="inherit" />
               Export Excel
             </button>

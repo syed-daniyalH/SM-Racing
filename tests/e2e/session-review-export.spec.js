@@ -194,49 +194,55 @@ async function openSessionReviewPage(page) {
 }
 
 test.describe("session review exports", () => {
-  test("asks for scope before Excel export and respects the current session selection", async ({ page }) => {
+  test("exports all sessions from the header and the selected session from the drawer", async ({ page }) => {
     await mockSessionReviewRoutes(page);
 
     await openSessionReviewPage(page);
     await expect(page.getByRole("heading", { name: "Session Review" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open session SUB-A" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Export Excel" }).click();
+    const headerExportButton = page.locator(".submission-monitor-header-actions").getByRole("button", {
+      name: "Export Excel",
+    });
+    const allDownloadPromise = page.waitForEvent("download");
+    await headerExportButton.click();
+    const allDownload = await allDownloadPromise;
 
-    const excelDialog = page.getByRole("dialog", { name: /Choose Excel export scope/i });
-    await expect(excelDialog).toBeVisible();
-    await expect(excelDialog.getByRole("button", { name: /Export selected\/current session only/i })).toBeDisabled();
-    await expect(excelDialog.getByText(/No session is currently selected in the drawer/i)).toBeVisible();
+    expect(allDownload.suggestedFilename()).toMatch(/\.xls$/);
+    const allExcelText = await readDownloadText(allDownload);
+    const allExcelLines = allExcelText.split(/\r?\n/);
 
-    await page.keyboard.press("Escape");
-    await expect(excelDialog).toBeHidden();
+    expect(allExcelLines[0]).toBe("Submission ID\tDate / Time\tDriver\tVehicle\tEvent\tTrack\tRun Group\tSubmitted Via");
+    expect(allExcelLines).toHaveLength(3);
+
+    const firstAllRow = allExcelLines[1].split("\t");
+    const secondAllRow = allExcelLines[2].split("\t");
+    expect(firstAllRow[0]).toBe("SUB-B");
+    expect(secondAllRow[0]).toBe("SUB-A");
 
     await page.getByRole("button", { name: "Open session SUB-A" }).click();
     await expect(page.getByRole("heading", { name: "Session Details" })).toBeVisible();
 
     const drawer = page.getByRole("dialog", { name: "Session Details" });
+    const currentDownloadPromise = page.waitForEvent("download");
     await drawer.getByRole("button", { name: "Export Excel" }).click();
-    await expect(excelDialog).toBeVisible();
+    const currentDownload = await currentDownloadPromise;
 
-    const excelDownloadPromise = page.waitForEvent("download");
-    await excelDialog.getByRole("button", { name: /Export selected\/current session only/i }).click();
-    const excelDownload = await excelDownloadPromise;
+    expect(currentDownload.suggestedFilename()).toMatch(/\.xls$/);
+    const currentExcelText = await readDownloadText(currentDownload);
+    const currentExcelLines = currentExcelText.split(/\r?\n/);
 
-    expect(excelDownload.suggestedFilename()).toMatch(/\.xls$/);
-    const excelText = await readDownloadText(excelDownload);
-    const excelLines = excelText.split(/\r?\n/);
+    expect(currentExcelLines[0]).toBe("Submission ID\tDate / Time\tDriver\tVehicle\tEvent\tTrack\tRun Group\tSubmitted Via");
+    expect(currentExcelLines).toHaveLength(2);
 
-    expect(excelLines[0]).toBe("Submission ID\tDate / Time\tDriver\tVehicle\tEvent\tTrack\tRun Group\tSubmitted Via");
-    expect(excelLines).toHaveLength(2);
-
-    const excelRow = excelLines[1].split("\t");
-    expect(excelRow).toHaveLength(8);
-    expect(excelRow[0]).toBe("SUB-A");
-    expect(excelRow[2]).toBe("Alex Stone");
-    expect(excelRow[3]).toBe("Apex GT4");
-    expect(excelRow[4]).toBe("Alpha Event");
-    expect(excelRow[5]).toBe("Alpha Circuit");
-    expect(excelRow[6]).toBe("A");
+    const currentExcelRow = currentExcelLines[1].split("\t");
+    expect(currentExcelRow).toHaveLength(8);
+    expect(currentExcelRow[0]).toBe("SUB-A");
+    expect(currentExcelRow[2]).toBe("Alex Stone");
+    expect(currentExcelRow[3]).toBe("Apex GT4");
+    expect(currentExcelRow[4]).toBe("Alpha Event");
+    expect(currentExcelRow[5]).toBe("Alpha Circuit");
+    expect(currentExcelRow[6]).toBe("A");
   });
 
   test("exports the filtered session list as Excel", async ({ page }) => {
@@ -248,13 +254,11 @@ test.describe("session review exports", () => {
     await page.getByLabel("Search").fill("Blake");
     await expect(page.getByRole("button", { name: "Open session SUB-B" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Export Excel" }).click();
-
-    const excelDialog = page.getByRole("dialog", { name: /Choose Excel export scope/i });
-    await expect(excelDialog).toBeVisible();
-
+    const headerExportButton = page.locator(".submission-monitor-header-actions").getByRole("button", {
+      name: "Export Excel",
+    });
     const excelDownloadPromise = page.waitForEvent("download");
-    await excelDialog.getByRole("button", { name: /Export all sessions/i }).click();
+    await headerExportButton.click();
     const excelDownload = await excelDownloadPromise;
 
     expect(excelDownload.suggestedFilename()).toMatch(/\.xls$/);
