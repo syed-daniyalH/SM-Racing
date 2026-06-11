@@ -145,11 +145,21 @@ async function mockSessionReviewRoutes(page) {
       });
     }
 
-    if (method === "GET" && pathname.endsWith("/submissions")) {
+    if (method === "GET" && pathname === "/api/v1/submissions") {
       return route.fulfill({
         json: {
           submissions: SUBMISSIONS,
         },
+      });
+    }
+
+    const submissionMatch = pathname.match(/^\/api\/v1\/submissions\/([^/]+)$/);
+    if (method === "GET" && submissionMatch && submissionMatch[1] !== "ocr-intake") {
+      const submissionId = decodeURIComponent(submissionMatch[1]);
+      const submission = SUBMISSIONS.find((item) => String(item.id) === submissionId || String(item.submission_ref) === submissionId);
+
+      return route.fulfill({
+        json: submission || {},
       });
     }
 
@@ -276,5 +286,33 @@ test.describe("session review exports", () => {
     expect(excelRow[4]).toBe("Bravo Event");
     expect(excelRow[5]).toBe("Bravo Raceway");
     expect(excelRow[6]).toBe("B");
+  });
+
+  test("exports the detailed report page as Excel", async ({ page }) => {
+    await mockSessionReviewRoutes(page);
+
+    await page.goto("/admin/submissions/report/SUB-A", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Session Details" })).toBeVisible();
+
+    const exportButton = page.getByRole("button", { name: "Export Excel" });
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    const download = await downloadPromise;
+
+    expect(download.suggestedFilename()).toMatch(/\.xls$/);
+    const excelText = await readDownloadText(download);
+    const excelLines = excelText.split(/\r?\n/);
+
+    expect(excelLines[0]).toBe(
+      "Submission ID\tSubmission Status\tReview State\tValidation State\tSource Type\tVoice Status\tVoice Review\tVoice Session ID\tDeepgram Request ID\tVoice Transcript\tVoice Confidence\tVoice Audio File\tVoice Audio Duration\tDriver\tVehicle\tEvent\tTrack\tRawText\tComments\tPayload\tAnalysis\tAuditLog\tAttachments\tCreatedAt\tUpdatedAt",
+    );
+    expect(excelLines).toHaveLength(2);
+
+    const excelRow = excelLines[1].split("\t");
+    expect(excelRow).toContain("SUB-A");
+    expect(excelRow).toContain("Alex Stone");
+    expect(excelRow).toContain("Apex GT4");
+    expect(excelRow).toContain("Alpha Event");
+    expect(excelRow).toContain("Alpha Circuit");
   });
 });

@@ -1668,7 +1668,9 @@ export default function SubmissionDetailScreen({
     const link = document.createElement("a");
     link.href = url;
     link.download = `${submissionId || "submission"}.xls`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
     setNotice({ tone: "success", message: "Session exported as Excel." });
   };
