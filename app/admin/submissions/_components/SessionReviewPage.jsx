@@ -552,6 +552,16 @@ export default function SessionReviewPage() {
     setExportDialogOpen(false);
   };
 
+  const handleExportSubmissionExcel = (submission) => {
+    const submissionId = getSubmissionId(submission) || "session";
+    const rows = buildSubmissionExportRows([submission]);
+    handleExportRows(rows, "excel", `submission-${submissionId}`);
+    setNotice({
+      tone: "success",
+      message: `Exported ${submissionId} to Excel.`,
+    });
+  };
+
   const clearFilters = () => {
     setSearchQuery("");
     setDriverFilter("all");
@@ -673,6 +683,14 @@ export default function SessionReviewPage() {
               onClick={(event) => {
                 event.stopPropagation();
                 openDrawer(submission, "overview");
+              }}
+            />
+            <RowActionButton
+              label="Export Excel"
+              icon={DownloadOutlinedIcon}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleExportSubmissionExcel(submission);
               }}
             />
           </div>
