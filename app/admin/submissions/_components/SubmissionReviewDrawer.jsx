@@ -192,24 +192,10 @@ export default function SubmissionReviewDrawer({
               Update Session
             </a>
           {onRequestExport ? (
-            <>
-              <button
-                type="button"
-                className="fleet-btn fleet-btn-secondary"
-                onClick={() => onRequestExport("csv")}
-              >
-                <DownloadOutlinedIcon fontSize="inherit" />
-                Export CSV
-              </button>
-              <button
-                type="button"
-                className="fleet-btn fleet-btn-primary"
-                onClick={() => onRequestExport("excel")}
-              >
-                <DownloadOutlinedIcon fontSize="inherit" />
-                Export Excel
-              </button>
-            </>
+            <button type="button" className="fleet-btn fleet-btn-primary" onClick={onRequestExport}>
+              <DownloadOutlinedIcon fontSize="inherit" />
+              Export Excel
+            </button>
           ) : null}
         </div>
       }

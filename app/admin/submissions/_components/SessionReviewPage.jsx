@@ -69,9 +69,6 @@ const TABLE_COLUMNS = [
 
 const TABLE_GRID_TEMPLATE = TABLE_COLUMNS.map((column) => column.width).join(" ");
 
-const escapeCsvValue = (value) =>
-  `"${String(value ?? "").replace(/"/g, '""').replace(/\n/g, " ")}"`;
-
 const escapeTsvValue = (value) => String(value ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ");
 
 const normalizeFilterValue = (value) => String(value ?? "").trim().toLowerCase();
@@ -188,7 +185,6 @@ const getEmptyStateCopy = (hasFilters) =>
 
 const ExportScopeDialog = ({
   open,
-  formatLabel,
   currentSessionLabel,
   hasCurrentSession,
   onOpenChange,
@@ -198,7 +194,7 @@ const ExportScopeDialog = ({
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="submission-export-dialog" overlayClassName="pointer-events-none" showCloseButton={false}>
       <DialogHeader className="submission-export-dialog-header">
-        <DialogTitle>Choose {formatLabel} export scope</DialogTitle>
+        <DialogTitle>Choose Excel export scope</DialogTitle>
         <DialogDescription>
           Pick whether to export the session open in the drawer or the full filtered session list. You can keep this open and click a session row behind it if you need to select one first.
         </DialogDescription>
@@ -218,7 +214,7 @@ const ExportScopeDialog = ({
             <span className="submission-export-option-title">Export selected/current session only</span>
             <span className="submission-export-option-description">
               {hasCurrentSession
-                ? `Export ${currentSessionLabel} as a ${formatLabel} file.`
+                ? `Export ${currentSessionLabel} as an Excel file.`
                 : "No session is currently selected in the drawer. Open one to enable this option."}
             </span>
           </span>
@@ -234,9 +230,7 @@ const ExportScopeDialog = ({
           </span>
           <span className="submission-export-option-copy">
             <span className="submission-export-option-title">Export all sessions</span>
-            <span className="submission-export-option-description">
-              Export every session in the current filtered list as a {formatLabel} file.
-            </span>
+            <span className="submission-export-option-description">Export every session in the current filtered list as an Excel file.</span>
           </span>
         </button>
       </div>
@@ -269,7 +263,6 @@ export default function SessionReviewPage() {
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null);
   const [drawerFocus, setDrawerFocus] = useState("overview");
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState("csv");
 
   const showDemoSubmission = useCallback((message) => {
     if (!mockSubmissions.length) return;
@@ -448,7 +441,6 @@ export default function SessionReviewPage() {
   const currentExportSubmissionLabel = currentExportSubmission
     ? currentExportSubmission.submissionId || getSubmissionId(currentExportSubmission) || "selected session"
     : "";
-  const exportFormatLabel = exportFormat === "excel" ? "Excel" : "CSV";
 
   const hasFilters =
     Boolean(searchQuery.trim()) ||
@@ -484,12 +476,11 @@ export default function SessionReviewPage() {
     setDrawerFocus("overview");
   };
 
-  const openExportDialog = (format) => {
-    setExportFormat(format);
+  const openExportDialog = () => {
     setExportDialogOpen(true);
   };
 
-  const handleExportRows = (rows, format = "csv", fileName = "submission-review") => {
+  const handleExportRows = (rows, fileName = "submission-review") => {
     const headers = [
       "Submission ID",
       "Date / Time",
@@ -501,7 +492,7 @@ export default function SessionReviewPage() {
       "Submitted Via",
     ];
 
-    const delimiter = format === "excel" ? "\t" : ",";
+    const delimiter = "\t";
     const rowsText = [
       headers.join(delimiter),
       ...rows.map((row) =>
@@ -515,13 +506,13 @@ export default function SessionReviewPage() {
           row.runGroup,
           row.submittedVia,
         ]
-          .map(format === "excel" ? escapeTsvValue : escapeCsvValue)
+          .map(escapeTsvValue)
           .join(delimiter),
       ),
     ].join("\n");
 
-    const mimeType = format === "excel" ? "application/vnd.ms-excel;charset=utf-8;" : "text/csv;charset=utf-8;";
-    const extension = format === "excel" ? "xls" : "csv";
+    const mimeType = "application/vnd.ms-excel;charset=utf-8;";
+    const extension = "xls";
     const blob = new Blob([rowsText], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -544,10 +535,10 @@ export default function SessionReviewPage() {
 
     const exportSubmissions = scope === "current" ? [currentExportSubmission] : filteredSubmissions;
     const rows = buildSubmissionExportRows(exportSubmissions);
-    handleExportRows(rows, exportFormat, "submission-review-dashboard");
+    handleExportRows(rows, "submission-review-dashboard");
     setNotice({
       tone: "success",
-      message: `Exported ${rows.length} session${rows.length === 1 ? "" : "s"} to ${exportFormatLabel}.`,
+      message: `Exported ${rows.length} session${rows.length === 1 ? "" : "s"} to Excel.`,
     });
     setExportDialogOpen(false);
   };
@@ -555,7 +546,7 @@ export default function SessionReviewPage() {
   const handleExportSubmissionExcel = (submission) => {
     const submissionId = getSubmissionId(submission) || "session";
     const rows = buildSubmissionExportRows([submission]);
-    handleExportRows(rows, "excel", `submission-${submissionId}`);
+    handleExportRows(rows, `submission-${submissionId}`);
     setNotice({
       tone: "success",
       message: `Exported ${submissionId} to Excel.`,
@@ -721,11 +712,7 @@ export default function SessionReviewPage() {
             </button>
             {!drawerOpen ? (
               <>
-                <button type="button" className="fleet-btn fleet-btn-secondary" onClick={() => openExportDialog("csv")}>
-                  <DownloadOutlinedIcon fontSize="inherit" />
-                  Export CSV
-                </button>
-                <button type="button" className="fleet-btn fleet-btn-primary" onClick={() => openExportDialog("excel")}>
+                <button type="button" className="fleet-btn fleet-btn-primary" onClick={openExportDialog}>
                   <DownloadOutlinedIcon fontSize="inherit" />
                   Export Excel
                 </button>
@@ -941,7 +928,6 @@ export default function SessionReviewPage() {
 
       <ExportScopeDialog
         open={exportDialogOpen}
-        formatLabel={exportFormatLabel}
         currentSessionLabel={currentExportSubmissionLabel}
         hasCurrentSession={Boolean(currentExportSubmission)}
         onOpenChange={setExportDialogOpen}

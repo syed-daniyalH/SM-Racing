@@ -194,49 +194,49 @@ async function openSessionReviewPage(page) {
 }
 
 test.describe("session review exports", () => {
-  test("asks for scope before CSV export and respects the current session selection", async ({ page }) => {
+  test("asks for scope before Excel export and respects the current session selection", async ({ page }) => {
     await mockSessionReviewRoutes(page);
 
     await openSessionReviewPage(page);
     await expect(page.getByRole("heading", { name: "Session Review" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open session SUB-A" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Export CSV" }).click();
+    await page.getByRole("button", { name: "Export Excel" }).click();
 
-    const csvDialog = page.getByRole("dialog", { name: /Choose CSV export scope/i });
-    await expect(csvDialog).toBeVisible();
-    await expect(csvDialog.getByRole("button", { name: /Export selected\/current session only/i })).toBeDisabled();
-    await expect(csvDialog.getByText(/No session is currently selected in the drawer/i)).toBeVisible();
+    const excelDialog = page.getByRole("dialog", { name: /Choose Excel export scope/i });
+    await expect(excelDialog).toBeVisible();
+    await expect(excelDialog.getByRole("button", { name: /Export selected\/current session only/i })).toBeDisabled();
+    await expect(excelDialog.getByText(/No session is currently selected in the drawer/i)).toBeVisible();
 
     await page.keyboard.press("Escape");
-    await expect(csvDialog).toBeHidden();
+    await expect(excelDialog).toBeHidden();
 
     await page.getByRole("button", { name: "Open session SUB-A" }).click();
     await expect(page.getByRole("heading", { name: "Session Details" })).toBeVisible();
 
     const drawer = page.getByRole("dialog", { name: "Session Details" });
-    await drawer.getByRole("button", { name: "Export CSV" }).click();
-    await expect(csvDialog).toBeVisible();
+    await drawer.getByRole("button", { name: "Export Excel" }).click();
+    await expect(excelDialog).toBeVisible();
 
-    const csvDownloadPromise = page.waitForEvent("download");
-    await csvDialog.getByRole("button", { name: /Export selected\/current session only/i }).click();
-    const csvDownload = await csvDownloadPromise;
+    const excelDownloadPromise = page.waitForEvent("download");
+    await excelDialog.getByRole("button", { name: /Export selected\/current session only/i }).click();
+    const excelDownload = await excelDownloadPromise;
 
-    expect(csvDownload.suggestedFilename()).toMatch(/\.csv$/);
-    const csvText = await readDownloadText(csvDownload);
-    const csvLines = csvText.split(/\r?\n/);
+    expect(excelDownload.suggestedFilename()).toMatch(/\.xls$/);
+    const excelText = await readDownloadText(excelDownload);
+    const excelLines = excelText.split(/\r?\n/);
 
-    expect(csvLines[0]).toBe("Submission ID,Date / Time,Driver,Vehicle,Event,Track,Run Group,Submitted Via");
-    expect(csvLines).toHaveLength(2);
+    expect(excelLines[0]).toBe("Submission ID\tDate / Time\tDriver\tVehicle\tEvent\tTrack\tRun Group\tSubmitted Via");
+    expect(excelLines).toHaveLength(2);
 
-    const csvRow = csvLines[1].slice(1, -1).split('","');
-    expect(csvRow).toHaveLength(8);
-    expect(csvRow[0]).toBe("SUB-A");
-    expect(csvRow[2]).toBe("Alex Stone");
-    expect(csvRow[3]).toBe("Apex GT4");
-    expect(csvRow[4]).toBe("Alpha Event");
-    expect(csvRow[5]).toBe("Alpha Circuit");
-    expect(csvRow[6]).toBe("A");
+    const excelRow = excelLines[1].split("\t");
+    expect(excelRow).toHaveLength(8);
+    expect(excelRow[0]).toBe("SUB-A");
+    expect(excelRow[2]).toBe("Alex Stone");
+    expect(excelRow[3]).toBe("Apex GT4");
+    expect(excelRow[4]).toBe("Alpha Event");
+    expect(excelRow[5]).toBe("Alpha Circuit");
+    expect(excelRow[6]).toBe("A");
   });
 
   test("exports the filtered session list as Excel", async ({ page }) => {

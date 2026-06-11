@@ -741,10 +741,9 @@ const buildAttachmentList = (record, draftAnalysis = {}) => {
   return normalized;
 };
 
-const csvEscape = (value) =>
-  `"${String(value ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ").trim()}"`;
+const escapeTsvValue = (value) => String(value ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 
-const buildSubmissionCsv = ({ record, draftPayload, draftAnalysis, timeline, attachments }) => {
+const buildSubmissionExcel = ({ record, draftPayload, draftAnalysis, timeline, attachments }) => {
   const row = {
     "Submission ID": record.submissionId || formatEntityId("SUB", record.id),
     "Submission Status": normalizeStatus(record).label,
@@ -774,8 +773,8 @@ const buildSubmissionCsv = ({ record, draftPayload, draftAnalysis, timeline, att
   };
 
   const headers = Object.keys(row);
-  const values = headers.map((header) => csvEscape(row[header]));
-  return `${headers.map(csvEscape).join(",")}\n${values.join(",")}\n`;
+  const values = headers.map((header) => escapeTsvValue(row[header]));
+  return `${headers.map(escapeTsvValue).join("\t")}\n${values.join("\t")}\n`;
 };
 
 const humanizeFieldKey = (value) => {
@@ -1652,7 +1651,7 @@ export default function SubmissionDetailScreen({
       return;
     }
 
-    const csv = buildSubmissionCsv({
+    const excel = buildSubmissionExcel({
       record: {
         ...workingRecord,
         rawText: draftSource.raw_text,
@@ -1664,14 +1663,14 @@ export default function SubmissionDetailScreen({
       attachments: attachmentList,
     });
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([excel], { type: "application/vnd.ms-excel;charset=utf-8;" });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${submissionId || "submission"}.csv`;
+    link.download = `${submissionId || "submission"}.xls`;
     link.click();
     window.URL.revokeObjectURL(url);
-    setNotice({ tone: "success", message: "Session exported as CSV." });
+    setNotice({ tone: "success", message: "Session exported as Excel." });
   };
 
   const handleBackToReview = () => {
@@ -1818,7 +1817,7 @@ export default function SubmissionDetailScreen({
               onClick={handleExport}
             >
               <DownloadOutlinedIcon fontSize="inherit" />
-              Export
+              Export Excel
             </button>
           </div>
 
