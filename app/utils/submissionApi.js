@@ -19,6 +19,79 @@ const unwrapSubmission = (data) =>
 const unwrapSubmissionList = (data) =>
   normalizeList(data?.submissions || data?.data || data, normalizeSubmission);
 
+const normalizeAiSummaryEntry = (entry) => {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const summary = String(entry.summary || "").trim();
+  if (!summary) {
+    return null;
+  }
+
+  return {
+    summaryId: entry.summaryId || entry.summary_id || null,
+    generatedAt: entry.generatedAt || entry.generated_at || null,
+    summary,
+    keyObservations: Array.isArray(entry.keyObservations || entry.key_observations)
+      ? (entry.keyObservations || entry.key_observations)
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    needsReview: Array.isArray(entry.needsReview || entry.needs_review)
+      ? (entry.needsReview || entry.needs_review)
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    recommendedActions: Array.isArray(entry.recommendedActions || entry.recommended_actions)
+      ? (entry.recommendedActions || entry.recommended_actions)
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    generatedBy: entry.generatedBy || entry.generated_by || null,
+    model: entry.model || null,
+  };
+};
+
+export const normalizeStoredAiSummary = (analysisResult) => {
+  const analysis = isPlainObject(analysisResult) ? analysisResult : {};
+  const history = Array.isArray(analysis.ai_summary_history)
+    ? analysis.ai_summary_history.map(normalizeAiSummaryEntry).filter(Boolean)
+    : [];
+  const current = normalizeAiSummaryEntry(analysis.ai_summary_current) || history[0] || null;
+
+  if (!current) {
+    return null;
+  }
+
+  return {
+    ...current,
+    summaryHistory: history.length ? history : [current],
+  };
+};
+
+const normalizeAiSummaryResponse = (data) => {
+  const payload = data?.data || data || {};
+  const current = normalizeAiSummaryEntry(payload);
+  const history = Array.isArray(payload.summaryHistory || payload.summary_history)
+    ? (payload.summaryHistory || payload.summary_history)
+        .map(normalizeAiSummaryEntry)
+        .filter(Boolean)
+    : [];
+
+  if (!current) {
+    return normalizeStoredAiSummary(payload.submission?.analysis_result || payload.submission?.analysisResult);
+  }
+
+  return {
+    ...current,
+    submissionId: payload.submissionId || payload.submission_id || null,
+    submissionRef: payload.submissionRef || payload.submission_ref || null,
+    submission: payload.submission ? unwrapSubmission(payload.submission) : null,
+    summaryHistory: history.length ? history : [current],
+  };
+};
+
 const buildNetworkErrorMessage = (error, fallbackMessage) => {
   if (error.response) {
     return null;
@@ -719,6 +792,22 @@ export const getSubmissionById = async (submissionId) => {
       data: error.response?.data,
     });
     throw error.response?.data || error.message;
+  }
+};
+
+export const generateSessionAiSummary = async (submissionId) => {
+  try {
+    const response = await axiosInstance.post(
+      `/admin/submissions/${encodeURIComponent(submissionId)}/ai-summary`,
+    );
+    return normalizeAiSummaryResponse(response.data);
+  } catch (error) {
+    console.error("Generate Session AI Summary API Error:", {
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw buildApiError(error, "Could not generate AI summary. Please try again.");
   }
 };
 

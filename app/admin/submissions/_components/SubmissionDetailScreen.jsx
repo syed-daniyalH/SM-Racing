@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
@@ -32,9 +33,13 @@ import {
   formatEntityId,
   getApiErrorMessage,
 } from "../../fleet/_components/fleetManagementHelpers";
-import { updateSubmission } from "../../../utils/submissionApi";
-import { sendChatbotQuery } from "../../../utils/chatbotApi";
+import {
+  generateSessionAiSummary,
+  normalizeStoredAiSummary,
+  updateSubmission,
+} from "../../../utils/submissionApi";
 import ProtectedAudioPlayer from "./ProtectedAudioPlayer";
+import AiSessionSummaryModal from "./AiSessionSummaryModal";
 import {
   buildSubmissionMonitorRecord,
   getSubmissionDriverLabel,
@@ -404,6 +409,44 @@ function HistoryIcon(props) {
 }
 
 const cloneJson = (value) => JSON.parse(JSON.stringify(value ?? {}));
+
+const toStoredAiSummaryEntry = (summary) => {
+  if (!summary?.summary) {
+    return null;
+  }
+
+  return {
+    summary_id: summary.summaryId || null,
+    generated_at: summary.generatedAt || new Date().toISOString(),
+    summary: summary.summary,
+    key_observations: Array.isArray(summary.keyObservations) ? summary.keyObservations : [],
+    needs_review: Array.isArray(summary.needsReview) ? summary.needsReview : [],
+    recommended_actions: Array.isArray(summary.recommendedActions) ? summary.recommendedActions : [],
+    generated_by: summary.generatedBy || null,
+    model: summary.model || null,
+  };
+};
+
+const mergeAiSummaryIntoAnalysis = (analysis, summary) => {
+  const entry = toStoredAiSummaryEntry(summary);
+  if (!entry) {
+    return cloneJson(analysis);
+  }
+
+  const existingAnalysis = cloneJson(analysis);
+  const historySource = Array.isArray(summary.summaryHistory) ? summary.summaryHistory : [summary];
+  const history = historySource.map(toStoredAiSummaryEntry).filter(Boolean);
+  const nextHistory = history.length ? history : [entry];
+
+  return {
+    ...existingAnalysis,
+    ai_summary_current: entry,
+    ai_summary_history: nextHistory,
+    ai_summary_count: nextHistory.length,
+    ai_summary_last_generated_at: entry.generated_at,
+    ai_summary_last_generated_by: entry.generated_by,
+  };
+};
 
 const isFilled = (value) => {
   if (value === null || value === undefined) return false;
@@ -1323,8 +1366,14 @@ export default function SubmissionDetailScreen({
     submission?.analysisResult?.comments ||
     "",
   );
-  const [aiSummary, setAiSummary] = useState(null);
+  const [isAiSummaryOpen, setIsAiSummaryOpen] = useState(false);
+  const [aiSummary, setAiSummary] = useState(() =>
+    normalizeStoredAiSummary(submission?.analysis_result || submission?.analysisResult || {}),
+  );
+  const [aiSummaryError, setAiSummaryError] = useState("");
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [isSavingAiSummaryToNotes, setIsSavingAiSummaryToNotes] = useState(false);
+  const [savedNotesBaseline, setSavedNotesBaseline] = useState(null);
 
   const record = useMemo(
     () => buildSubmissionMonitorRecord(liveSubmission, allSubmissions),
@@ -1375,7 +1424,9 @@ export default function SubmissionDetailScreen({
         "",
     );
     setActiveTab("setup");
-    setAiSummary(null);
+    setAiSummary(normalizeStoredAiSummary(record.analysisResult || record.analysis_result || liveSubmission?.analysis_result || {}));
+    setAiSummaryError("");
+    setSavedNotesBaseline(null);
     setNotice(null);
   }, [liveSubmission?.payload, liveSubmission?.analysis_result, liveSubmission?.raw_text, liveSubmission?.image_url, liveSubmission?.rawText, liveSubmission?.imageUrl, record]);
 
@@ -1489,15 +1540,17 @@ export default function SubmissionDetailScreen({
       0,
     );
 
-    const commentChanged = hasValueChanged(baseComment, draftComment) ? 1 : 0;
+    const commentBaseline = savedNotesBaseline ?? baseComment;
+    const commentChanged = hasValueChanged(commentBaseline, draftComment) ? 1 : 0;
     return payloadChanges + commentChanged;
-  }, [baseComment, basePayload, baseSource, draftComment, draftPayload, draftSource, setupSections]);
+  }, [baseComment, basePayload, baseSource, draftComment, draftPayload, draftSource, savedNotesBaseline, setupSections]);
 
   const isDirty = trackedChangeCount > 0;
   const attachmentList = useMemo(
     () => buildAttachmentList(workingRecord, workingAnalysis),
     [workingAnalysis, workingRecord],
   );
+  const aiSummaryHistory = Array.isArray(aiSummary?.summaryHistory) ? aiSummary.summaryHistory : [];
   const auditTimeline = useMemo(
     () => buildAuditTimeline(workingRecord, workingAnalysis),
     [workingAnalysis, workingRecord],
@@ -1526,7 +1579,9 @@ export default function SubmissionDetailScreen({
     setDraftSource(cloneJson(baseSource));
     setDraftAnalysis(cloneJson(baseAnalysis));
     setDraftComment(baseComment);
-    setAiSummary(null);
+    setAiSummary(normalizeStoredAiSummary(baseAnalysis));
+    setAiSummaryError("");
+    setSavedNotesBaseline(null);
     setNotice(null);
     setActiveTab("setup");
   };
@@ -1653,35 +1708,75 @@ export default function SubmissionDetailScreen({
       return;
     }
 
+    if (aiSummaryLoading) {
+      return;
+    }
+
+    const targetSubmissionId = record.id || record._id || record.submissionId || getSubmissionId(record);
+    if (!targetSubmissionId) {
+      setAiSummaryError("Not enough session data is available to generate a useful summary.");
+      setIsAiSummaryOpen(true);
+      return;
+    }
+
+    setIsAiSummaryOpen(true);
+    setAiSummaryError("");
     setAiSummaryLoading(true);
 
     try {
-      const response = await sendChatbotQuery({
-        message: "Summarize this session for the admin editor.",
-        session_id: String(record.submissionId || record.id || getSubmissionId(record) || ""),
-        event_id: record.event?.id || record.event_id || record.eventId || null,
-        driver_id: record.driver?.driver_id || record.driver_id || null,
-        vehicle_id: record.vehicle?.vehicle_id || record.vehicle_id || null,
-        car_number: record.vehicle?.registrationNumber || record.vehicle?.registration_number || record.vehicle_id || null,
-        limit: 5,
-      });
-
-      const payload = response.response || response;
-      setAiSummary({
-        title: payload.title || "AI Summary",
-        summary: payload.summary || payload.answer || "No summary returned.",
-        answer: payload.answer || payload.summary || "",
-        dataSource: payload.data_source || payload.source_label || "AI Race Assistant",
-        generatedAt: payload.generated_at || new Date().toISOString(),
-      });
+      const generatedSummary = await generateSessionAiSummary(targetSubmissionId);
+      setAiSummary(generatedSummary);
+      setDraftAnalysis((current) => mergeAiSummaryIntoAnalysis(current, generatedSummary));
       setNotice({ tone: "success", message: "AI summary generated for this session." });
+      toast.success("Session summary generated.");
     } catch (error) {
-      setNotice({
-        tone: "error",
-        message: getApiErrorMessage(error, "Unable to generate an AI summary right now."),
-      });
+      const message = getApiErrorMessage(error, "Could not generate AI summary. Please try again.");
+      setAiSummaryError(message);
+      setNotice({ tone: "error", message });
+      toast.error(message);
     } finally {
       setAiSummaryLoading(false);
+    }
+  };
+
+  const handleSaveAiSummaryToNotes = async (summaryText) => {
+    if (!record || !summaryText || isSavingAiSummaryToNotes) {
+      return;
+    }
+
+    const targetSubmissionId = record.id || record._id || record.submissionId || getSubmissionId(record);
+    if (!targetSubmissionId) {
+      toast.error("Could not save summary to notes.");
+      return;
+    }
+
+    setIsSavingAiSummaryToNotes(true);
+
+    try {
+      const existingComment = String(draftComment || "").trim();
+      const nextComment = existingComment
+        ? `${existingComment}\n\n${summaryText.trim()}`
+        : summaryText.trim();
+      const nextAnalysis = mergeAiSummaryIntoAnalysis({
+        ...(workingAnalysis || {}),
+        admin_comment: nextComment,
+        comments: nextComment,
+        ai_summary_last_saved_to_notes_at: new Date().toISOString(),
+        ai_summary_last_saved_to_notes_by: user?.name || user?.email || "Owner",
+      }, aiSummary);
+
+      await updateSubmission(targetSubmissionId, { analysis_result: nextAnalysis });
+      setDraftAnalysis(nextAnalysis);
+      setDraftComment(nextComment);
+      setSavedNotesBaseline(nextComment);
+      setNotice({ tone: "success", message: "Summary saved to notes." });
+      toast.success("Summary saved to notes.");
+    } catch (error) {
+      const message = getApiErrorMessage(error, "Could not save summary to notes.");
+      setNotice({ tone: "error", message });
+      toast.error(message);
+    } finally {
+      setIsSavingAiSummaryToNotes(false);
     }
   };
 
@@ -2300,13 +2395,15 @@ export default function SubmissionDetailScreen({
 
             <section className="submission-section submission-detail-section-card submission-edit-actions-card">
               <SectionHeader
-                icon={OpenInNewOutlinedIcon}
+                icon={AutoAwesomeOutlinedIcon}
                 eyebrow="Actions"
                 title="Quick Actions"
-                description="Open, summarize, save, or cancel the current edit session."
+                description="Open, update, summarize, or save the current session."
                 meta={
                   isDirty ? (
                     <span className="submission-edit-unsaved-chip">Unsaved: {trackedChangeCount}</span>
+                  ) : aiSummaryHistory.length ? (
+                    <StatusBadge label={`${aiSummaryHistory.length} AI summaries`} tone="success" />
                   ) : null
                 }
               />
@@ -2314,69 +2411,120 @@ export default function SubmissionDetailScreen({
               <div className="submission-edit-actions-grid">
                 <button
                   type="button"
-                  className="fleet-btn fleet-btn-secondary"
+                  className="submission-detail-action-button"
                   onClick={handleOpenSession}
                 >
-                  <OpenInNewOutlinedIcon fontSize="inherit" />
-                  Open Session
+                  <span className="submission-detail-action-icon">
+                    <OpenInNewOutlinedIcon fontSize="inherit" />
+                  </span>
+                  <span>
+                    <strong>Open Session</strong>
+                    <small>View session record</small>
+                  </span>
                 </button>
 
                 <button
                   type="button"
-                  className="fleet-btn fleet-btn-secondary"
+                  className="submission-detail-action-button"
+                  onClick={handleEnterEditMode}
+                  disabled={isEditing}
+                >
+                  <span className="submission-detail-action-icon">
+                    <EditOutlinedIcon fontSize="inherit" />
+                  </span>
+                  <span>
+                    <strong>Update Session</strong>
+                    <small>{isEditing ? "Editing enabled" : "Enable editing"}</small>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className="submission-detail-action-button submission-detail-action-button-ai"
                   onClick={handleAiSummary}
                   disabled={aiSummaryLoading}
                 >
-                  <AutoAwesomeOutlinedIcon fontSize="inherit" />
-                  {aiSummaryLoading ? "Generating..." : "AI Summary"}
+                  <span className="submission-detail-action-icon">
+                    <AutoAwesomeOutlinedIcon fontSize="inherit" />
+                  </span>
+                  <span>
+                    <strong>AI Summary</strong>
+                    <small>{aiSummaryLoading ? "Generating session summary..." : "Generate session summary"}</small>
+                  </span>
                 </button>
-
-                {!isEditing ? (
-                  <button
-                    type="button"
-                    className="fleet-btn fleet-btn-secondary"
-                    onClick={handleEnterEditMode}
-                  >
-                    <EditOutlinedIcon fontSize="inherit" />
-                    Edit Session
-                  </button>
-                ) : null}
 
                 <button
                   type="button"
-                  className="fleet-btn fleet-btn-primary"
+                  className="submission-detail-action-button submission-detail-action-button-primary"
                   onClick={handleSaveDraft}
                   disabled={isSaving || !isEditing || !isDirty}
                 >
-                  <SaveOutlinedIcon fontSize="inherit" />
-                  {isSaving ? "Saving..." : "Save Changes"}
+                  <span className="submission-detail-action-icon">
+                    <SaveOutlinedIcon fontSize="inherit" />
+                  </span>
+                  <span>
+                    <strong>{isSaving ? "Saving..." : "Save Changes"}</strong>
+                    <small>Persist current edits</small>
+                  </span>
                 </button>
 
                 <button
                   type="button"
-                  className="fleet-btn fleet-btn-secondary"
+                  className="submission-detail-action-button submission-detail-action-button-muted"
                   onClick={handleCancelChanges}
                 >
-                  <CancelOutlinedIcon fontSize="inherit" />
-                  Cancel
+                  <span className="submission-detail-action-icon">
+                    <CancelOutlinedIcon fontSize="inherit" />
+                  </span>
+                  <span>
+                    <strong>Cancel</strong>
+                    <small>Discard draft edits</small>
+                  </span>
                 </button>
               </div>
             </section>
 
-            {aiSummary ? (
-              <section className="submission-section submission-detail-section-card submission-edit-ai-card">
-                <SectionHeader
-                  icon={AutoAwesomeOutlinedIcon}
-                  eyebrow="AI Summary"
-                  title={aiSummary.title || "AI Summary"}
-                  description={`Generated by ${aiSummary.dataSource || "AI Race Assistant"}`}
-                />
+            <section className="submission-section submission-detail-section-card submission-edit-ai-card">
+              <SectionHeader
+                icon={AutoAwesomeOutlinedIcon}
+                eyebrow="AI Summary"
+                title="Summary History"
+                description="Previously generated summaries for this submission."
+                meta={aiSummary?.generatedAt ? <StatusBadge label="Latest available" tone="success" /> : null}
+              />
 
-                <div className="submission-detail-admin-note-readonly submission-edit-ai-summary">
-                  {aiSummary.summary}
-                </div>
-              </section>
-            ) : null}
+              <div className="submission-detail-ai-history-list">
+                {aiSummaryHistory.length ? (
+                  aiSummaryHistory.slice(0, 3).map((item, index) => (
+                    <button
+                      type="button"
+                      key={item.summaryId || `${item.generatedAt}-${index}`}
+                      className="submission-detail-ai-history-item"
+                      onClick={() => {
+                        setAiSummary({ ...item, summaryHistory: aiSummaryHistory });
+                        setAiSummaryError("");
+                        setIsAiSummaryOpen(true);
+                      }}
+                    >
+                      <span>
+                        <strong>{formatDateTime(item.generatedAt) || "Generated summary"}</strong>
+                        <small>{item.summary}</small>
+                      </span>
+                      {index === 0 ? <StatusBadge label="Latest" tone="success" /> : null}
+                    </button>
+                  ))
+                ) : (
+                  <div className="submission-detail-ai-history-empty">
+                    No AI summaries generated yet.
+                  </div>
+                )}
+              </div>
+              {aiSummaryHistory.length > 3 ? (
+                <p className="submission-detail-ai-history-more">
+                  {aiSummaryHistory.length - 3} older summaries are available in the AI Summary modal.
+                </p>
+              ) : null}
+            </section>
           </aside>
         </div>
       </div>
@@ -2408,6 +2556,19 @@ export default function SubmissionDetailScreen({
           </div>
         </div>
       ) : null}
+
+      <AiSessionSummaryModal
+        open={isAiSummaryOpen}
+        onClose={() => setIsAiSummaryOpen(false)}
+        submissionLabel={submissionId}
+        summary={aiSummary}
+        history={aiSummaryHistory}
+        isLoading={aiSummaryLoading}
+        error={aiSummaryError}
+        onRegenerate={handleAiSummary}
+        onSaveToNotes={handleSaveAiSummaryToNotes}
+        isSavingToNotes={isSavingAiSummaryToNotes}
+      />
     </div>
   );
 }

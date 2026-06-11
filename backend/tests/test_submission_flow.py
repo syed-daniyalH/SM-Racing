@@ -2,7 +2,7 @@
 
 import base64
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -26,6 +26,12 @@ JPEG_SIGNATURE_BASE64 = "/9j/AA=="
 
 
 def _dt(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+    # Keep the OCR preview event window open while remaining independent of the calendar.
+    now = datetime.now(timezone.utc)
+    if (year, month, day) == (2026, 5, 10):
+        return now - timedelta(days=1)
+    if (year, month, day) == (2026, 5, 20):
+        return now + timedelta(days=30)
     return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
 
 
@@ -2899,6 +2905,7 @@ def test_analyze_submission_image_uses_gpt_54_primary_model(monkeypatch):
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
             openai_request_timeout_seconds=8.0,
         ),
     )
@@ -3014,6 +3021,7 @@ def test_analyze_submission_image_uses_fallback_model_when_primary_fails(monkeyp
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
             openai_request_timeout_seconds=8.0,
         ),
     )
@@ -3080,6 +3088,7 @@ def test_analyze_submission_image_handles_malformed_json_without_crashing(monkey
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model=None,
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
             openai_request_timeout_seconds=8.0,
         ),
     )
@@ -3167,6 +3176,7 @@ def test_analyze_submission_image_uses_relaxed_salvage_when_strict_schema_fails(
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model=None,
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
             openai_request_timeout_seconds=8.0,
         ),
     )
@@ -3433,6 +3443,7 @@ def test_analyze_submission_image_uses_fallback_when_primary_result_is_too_spars
             openai_api_key="test-key",
             openai_vision_model="gpt-5.4",
             openai_fallback_model="gpt-5.5",
+            make_ocr_webhook_url="https://hook.make.com/ocr-preview",
             openai_request_timeout_seconds=8.0,
         ),
     )
