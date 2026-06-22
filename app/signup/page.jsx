@@ -344,7 +344,7 @@ export default function Signup() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="Enter your email address"
                     className="login-input"
-                    autoComplete="off"
+                    autoComplete="email"
                     autoCapitalize="none"
                     autoCorrect="off"
                     inputMode="email"
