@@ -1,53 +1,85 @@
-# Race Control
+# SM Racing
 
-Next.js frontend plus the canonical FastAPI backend used by local development,
-CI, and production deployment.
+## Overview
 
-## Source Of Truth
+SM Racing is a full stack race-operations web application built to support motorsport event management, structured submissions, admin review workflows, and AI-assisted data handling. The project combines a Next.js frontend with a FastAPI backend and is designed for race teams or operations staff who need cleaner event data, faster review cycles, and more reliable reporting workflows.
 
-- Frontend app: `C:\Users\Tech\Desktop\Alex Racing\apps\frontend`
-- Backend app: `C:\Users\Tech\Desktop\Alex Racing\apps\frontend\backend`
+## Key Features
 
-If you still have a sibling folder at `C:\Users\Tech\Desktop\Alex Racing\apps\backend`,
-treat it as a deprecated local leftover and do not edit or run it.
+- Event, driver, track, vehicle, and run-group management
+- Participant-facing submission and event workflow screens
+- Voice submission and structured note capture flows
+- OCR review and staged intake for image-based data extraction
+- Admin dashboard for reviewing and managing race submissions
+- AI-assisted chatbot and support workflows for internal review use cases
+- JWT-based authentication and role-aware admin flows
+- PostgreSQL-backed FastAPI API with Alembic migrations
+- Optional Make.com, OpenAI, and Deepgram integration points
 
-## Install
+## Tech Stack
+
+- Next.js
+- React
+- JavaScript
+- Material UI
+- FastAPI
+- PostgreSQL
+- SQLAlchemy
+- Alembic
+- Playwright
+
+## Business Use Case
+
+This repository fits teams or organizations that need a specialized web application for race operations, structured field-data capture, workflow automation, admin review, and reporting support around live events.
+
+## Repository Structure
+
+- `app/` - Next.js frontend routes and user/admin workflows
+- `backend/` - FastAPI backend, database models, and business services
+- `components/` - shared frontend UI components
+- `tests/` - end-to-end test coverage
+- `scripts/` - local development helpers
+
+## Setup
+
+Install frontend dependencies:
 
 ```bash
 npm install
 ```
 
-## Run Frontend Only
+Install backend dependencies:
 
 ```bash
-npm run dev
+python -m pip install -r backend/requirements.txt
 ```
 
-The frontend will be available at `http://localhost:3000`.
-
-## Run Backend Only
-
-```bash
-npm run dev:backend
-```
-
-The backend will be available at `http://127.0.0.1:8000`.
-
-## Run Frontend And Backend Together
+Run both frontend and backend together:
 
 ```bash
 npm run dev:full
 ```
 
-## Build
+Useful alternatives:
 
 ```bash
-npm run build
-npm run start
+npm run dev
+npm run dev:backend
 ```
 
-## Notes
+## Project Status
 
-- Local, CI, and deploy should all use the backend inside this repo.
-- The local `/api/v1` rewrite proxies to `http://127.0.0.1:8000` by default.
-- Vercel should point `NEXT_PUBLIC_API_URL` at the deployed Render API URL.
+Active full stack product in development. The repository already contains substantial frontend, backend, admin, and automation workflows, with the backend in `backend/` serving as the canonical API implementation.
+
+## Future Improvements
+
+- Expanded analytics and reporting for events and submissions
+- Broader mobile-first capture workflows for trackside use
+- Additional deployment and infrastructure documentation
+- More screenshot-driven product documentation for GitHub visitors
+
+## Developer Credit
+
+Built by Nexol Tech Solutions.
+
+- GitHub: [syed-daniyalH](https://github.com/syed-daniyalH)
