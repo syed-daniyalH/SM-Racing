@@ -80,6 +80,4 @@ Active full stack product in development. The repository already contains substa
 
 ## Developer Credit
 
-Built by Nexol Tech Solutions.
-
 - GitHub: [syed-daniyalH](https://github.com/syed-daniyalH)
